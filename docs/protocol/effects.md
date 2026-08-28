@@ -23,4 +23,4 @@ Effects are requested mutations delegated to ports/adapters.
 | `FX-BLOCK-WORK` | BlockWork | WorkGraphPort |
 | `FX-NOTIFY-OPERATOR` | NotifyOperator | optional attention/notification adapter |
 
-All state-changing effects MUST satisfy `INV-020`.
+All state-changing effects MUST satisfy `INV-020`, including its idempotency-key derivation rule.

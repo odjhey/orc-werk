@@ -18,6 +18,23 @@ Expose authoritative logical Work topology and dispatch eligibility without expo
 ### PORT-WORK-001 `create`
 Create Work records for a DeliveryRun from an explicit plan or deterministic single-work plan.
 
+Portable plan input shape:
+
+```json
+{
+  "works": [
+    {
+      "work_id": "string",
+      "deps": [
+        {"work_id": "string", "condition": "accepted"}
+      ]
+    }
+  ]
+}
+```
+
+`condition: "accepted"` is the only v0 dependency condition, consistent with the committed-completion unlock rule in `INV-016`. The deterministic single-work plan is the degenerate one-element form: `works` with a single entry and an empty `deps` list.
+
 ### PORT-WORK-002 `snapshot`
 Return the current bounded canonical work topology for a DeliveryRun.
 

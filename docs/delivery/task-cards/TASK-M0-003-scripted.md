@@ -20,6 +20,10 @@ verifies:
 
 Implement deterministic scripted adapters with no external integrations.
 
+## Depends on
+
+`TASK-M0-001`, `TASK-M0-006`.
+
 ## Acceptance
 
 Pass applicable `CONF-EXEC-*`, `CONF-CAND-*`, and `CONF-ASSURE-*` requirements and prove stale candidate evidence is not reused.

@@ -52,6 +52,8 @@ A candidate-changing mutation MUST invalidate all prior assurance whose subject 
 
 Every orchestrator-directed state-changing action MUST have an attributable Decision.
 
+Mechanical orchestrator steps that translate a prior fact into canonical state without a policy choice — for example `FX-CREATE-WORK` from a submitted intent, or `FX-IDENTIFY-CANDIDATE` — are mechanics per `P-007`, not policy choices, and MAY emit facts/effects without an accompanying Decision. A Decision is required only for policy-driven state transitions (the `DEC-*` choices in `PROTOCOL-DECISIONS`).
+
 ## INV-012 — Decisions cite their basis
 
 A Decision MUST record the canonical facts or state snapshot on which it was based.
@@ -87,3 +89,5 @@ Policy MUST define a finite retry budget or an equivalent terminal/escalation co
 ## INV-020 — Effects are idempotency-addressable
 
 State-changing Effects MUST carry a stable idempotency key or effect identity so crash/retry behavior can be deterministic.
+
+Idempotency keys MUST be deterministically derivable from durable canonical state: `(delivery_run_id, work_id, attempt_number, effect_id)`, plus `candidate_fingerprint` for assurance-targeting effects (`FX-START-ASSURANCE`). Idempotency keys MUST NOT be derived from randomness, wall-clock time, or process/runtime identity, so that journal replay (`PORT-JOURNAL-005`) reproduces identical keys.
