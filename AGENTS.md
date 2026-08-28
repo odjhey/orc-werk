@@ -16,3 +16,17 @@ Before implementation:
 10. Canonical serialized shapes must use portable JSON-compatible data with explicit schema/version semantics where persistence or interchange is involved.
 11. Self-healing behavior must come from explicit journal replay, reconciliation, idempotent effects, bounded retry/replan policy, and capability-aware fallback—not implementation-language magic.
 12. Run `python3 scripts/docs_check.py` before committing documentation changes.
+
+## Delivery workflow
+
+Implementation ("ship") agents work in isolated git worktrees under
+`.worktrees/<branch-name>` (gitignored), one branch/PR per task card. This
+keeps concurrent task cards from colliding in a single checkout and keeps
+`master` untouched while work is in flight. PRs are reviewed and merged by
+the watchtower session — implementation agents open PRs but do not merge
+them.
+
+The local gate is `bash scripts/check.sh`; CI mirrors it exactly via the
+single required `ci-required` status check (see
+`.github/workflows/ci-required.yml`), so a green `scripts/check.sh` locally
+means a green PR remotely.
