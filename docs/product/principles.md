@@ -42,4 +42,8 @@ Attempts, facts, decisions, and evidence are retained rather than overwritten.
 
 ## P-009 — Implementation languages are replaceable
 
-Orc Werk's canonical domain, protocol, journal, port, scenario, and conformance semantics must not depend on implementation-language-specific behavior. Python is the initial reference implementation, not a product semantic; a future implementation language must conform to the same contracts rather than redefine them.
+Orc Werk's canonical domain, protocol, persistence, and port semantics must not depend on implementation-language-specific behavior. Python is the v0.x reference implementation, not part of the product contract.
+
+## P-010 — Specialized semantics extend rather than contaminate the core
+
+A concept that is useful to a provider/workflow but is not required by the generic delivery state machine should use `CONTRACT-EXTENSIONS` instead of becoming a mandatory core field. Extension semantics must not override canonical Orc Werk semantics.
