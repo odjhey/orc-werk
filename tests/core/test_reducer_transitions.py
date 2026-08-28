@@ -13,7 +13,7 @@ import unittest
 from orc_werk.core.decisions import DEC_ACCEPT, DEC_BLOCK, DEC_DISPATCH, DEC_REQUEST_ASSURANCE, DEC_RETRY
 from orc_werk.core.effects import FX_BLOCK_WORK, FX_COMPLETE_WORK, FX_START_ASSURANCE, FX_START_EXECUTION
 from orc_werk.core.errors import CoreError
-from orc_werk.core.facts import FACT_EXEC_STARTED, FACT_WORK_CANCELLED, make_fact
+from orc_werk.core.facts import FACT_EXEC_STARTED, FACT_WORK_CANCELLED, FACT_WORK_CLAIMED, make_fact
 from orc_werk.core.policy import decide
 from orc_werk.core.reducer import apply_fact, reduce
 from orc_werk.core.state import (
@@ -49,6 +49,32 @@ class ReadyToExecutingTest(unittest.TestCase):
         facts.append(make_fact(FACT_EXEC_STARTED, delivery_run_id=DRID, work_id="w1", execution_id="e1"))
         proj = reduce(facts, delivery_run_id=DRID)
         self.assertEqual(proj.works["w1"].state, STATE_EXECUTING)
+
+
+class ReadyClaimTest(unittest.TestCase):
+    """READY | FACT-WORK-CLAIMED | (no policy Decision) | READY, claim_ref recorded.
+
+    PORT-WORK-004 `claim` is orchestration/execution bookkeeping, not a
+    STATE-DELIVERY transition row: it is legal only from READY, does not
+    move the Work to a different state, and simply records `claim_ref` on
+    the projection (imported by fixtures.py but previously exercised by no
+    test -- P1 review nit)."""
+
+    def test_claim_from_ready_is_non_transitioning_and_records_claim_ref(self) -> None:
+        facts = fixtures.created_and_ready(delivery_run_id=DRID, work_id="w1")
+        facts.append(
+            make_fact(FACT_WORK_CLAIMED, delivery_run_id=DRID, work_id="w1", claim_ref="claim-1")
+        )
+        proj = reduce(facts, delivery_run_id=DRID)
+        wp = proj.works["w1"]
+        self.assertEqual(wp.state, STATE_READY)
+        self.assertEqual(wp.claim_ref, "claim-1")
+
+    def test_claim_illegal_outside_ready(self) -> None:
+        facts = fixtures.dispatched(delivery_run_id=DRID, work_id="w1", execution_id="e1")
+        claimed = make_fact(FACT_WORK_CLAIMED, delivery_run_id=DRID, work_id="w1", claim_ref="claim-1")
+        with self.assertRaises(CoreError):
+            reduce(facts + [claimed], delivery_run_id=DRID)
 
 
 class ExecutingToAssuringTest(unittest.TestCase):

@@ -81,9 +81,28 @@ def fact_from_envelope(envelope: Mapping[str, Any]) -> Fact:
     )
 
 
+DECISION_RESERVED_DATA_KEYS = frozenset({"work_id", "attribution", "basis"})
+EFFECT_RESERVED_DATA_KEYS = frozenset({"work_id", "idempotency_key"})
+
+
+def _assert_disjoint_reserved_keys(
+    data: Mapping[str, Any], *, reserved: frozenset[str], record_id: str
+) -> None:
+    clobbered = reserved & set(data)
+    if clobbered:
+        raise validation_error(
+            f"{record_id} data uses reserved envelope key(s): {sorted(clobbered)}",
+            record_id=record_id,
+            reserved_keys=sorted(clobbered),
+        )
+
+
 def decision_to_envelope(
     decision: Decision, *, seq: int, schema_version: int = SCHEMA_VERSION
 ) -> dict[str, Any]:
+    _assert_disjoint_reserved_keys(
+        decision.data, reserved=DECISION_RESERVED_DATA_KEYS, record_id=decision.id
+    )
     data = {
         "work_id": decision.work_id,
         "attribution": decision.attribution,
@@ -119,6 +138,9 @@ def decision_from_envelope(envelope: Mapping[str, Any]) -> Decision:
 
 
 def effect_to_envelope(effect: Effect, *, seq: int, schema_version: int = SCHEMA_VERSION) -> dict[str, Any]:
+    _assert_disjoint_reserved_keys(
+        effect.data, reserved=EFFECT_RESERVED_DATA_KEYS, record_id=effect.id
+    )
     data = {
         "work_id": effect.work_id,
         "idempotency_key": effect.idempotency_key,
