@@ -1,0 +1,9 @@
+{
+  "run_id": "s4c-inconclusive",
+  "max_attempts": 3,
+  "attempts": {
+    "work-1": [
+      {"outcome": "completed", "candidate": {"label": "Y1"}, "assurance": {"verdict": "inconclusive"}}
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "run_id": "s8f-dup",
+  "plan": {"works": [
+    {"work_id": "a", "deps": []},
+    {"work_id": "a", "deps": []}
+  ]},
+  "attempts": {"a": [{"outcome": "completed", "candidate": {"x":1}, "assurance": {"verdict": "accepted"}}]}
+}

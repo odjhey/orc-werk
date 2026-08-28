@@ -1,0 +1,8 @@
+{
+  "run_id": "s8h-missing",
+  "plan": {"works": [
+    {"work_id": "a", "deps": []},
+    {"work_id": "b", "deps": []}
+  ]},
+  "attempts": {"a": [{"outcome": "completed", "candidate": {"x":1}, "assurance": {"verdict": "accepted"}}]}
+}

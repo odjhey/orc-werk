@@ -1,0 +1,11 @@
+{
+  "run_id": "s8e-cycle",
+  "plan": {"works": [
+    {"work_id": "a", "deps": [{"work_id": "b", "condition": "accepted"}]},
+    {"work_id": "b", "deps": [{"work_id": "a", "condition": "accepted"}]}
+  ]},
+  "attempts": {
+    "a": [{"outcome": "completed", "candidate": {"x":1}, "assurance": {"verdict": "accepted"}}],
+    "b": [{"outcome": "completed", "candidate": {"x":2}, "assurance": {"verdict": "accepted"}}]
+  }
+}

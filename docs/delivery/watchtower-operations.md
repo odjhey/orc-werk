@@ -16,6 +16,7 @@ This playbook records the delivery operating model used to ship M0 and expected 
 - **Scouts** (reconnaissance) — read-only agents that map contracts before implementation: produce the contract map, decomposition proposal, and — critically — the list of ambiguities that must be resolved in docs before code. Also used for proposal/issue assessments (compatibility, feasibility, alignment).
 - **Ship agents** — implementation agents. One task card, one worktree under `.worktrees/<branch>`, one branch, one PR. They receive governing contract IDs and a checkable definition of done; they must not invent semantics — genuine ambiguity is reported back in the PR body ("Ambiguities encountered"), not silently resolved. They never merge.
 - **Verification scouts** — adversarial read-only auditors that run on every implementation PR before merge. They audit both directions: does the diff respect the governing contracts (checked against actual doc text, not plausibility), and did implementation expose gaps in the docs that need amendment. Verdicts: MERGE / MERGE-WITH-FOLLOW-UPS / FIX-BEFORE-MERGE, with findings, doc-amendment deadlines, and explicit confirmations of what was positively verified.
+- **Dogfood checker** — a read-only, user-perspective agent run against the real CLI, not the test suite. It selects and executes the slice of `dogfood/` (`DOGFOOD-CORPUS`) whose concern tags intersect a shipped change, then reports PASS / BUG / FRICTION per scenario with evidence (commands, exit codes, `status`/`history` excerpts). It never fixes anything itself — no code, no docs, no issues filed directly; routing the healing (a fix PR, an issue, a docs amendment) is the watchtower's job, per `DELIVERY-STANCE`'s "dogfood feedback is the backlog."
 
 ## Pipeline
 
@@ -26,6 +27,7 @@ This playbook records the delivery operating model used to ship M0 and expected 
 5. **Merge** — watchtower only, squash merges, branch refreshed against master first (the single required `ci-required` status check is strict). Doc amendments merge before the code they govern whenever possible.
 6. **Consolidate** doc amendments produced by a round of audits into one docs PR rather than many.
 7. At integration gates, run a **falsifiability pass**: hand-picked contract-violating mutants applied to a scratch copy; every mutant must turn the suite red, and any survivor becomes a mandatory test addition.
+8. After a major merge, run the concerned slice of `dogfood/` (`DOGFOOD-CORPUS`) via the dogfood checker. Findings route per `DELIVERY-STANCE`: a deterministic, contract-relevant finding becomes an issue and/or a fix PR; a legibility/output-quality finding (FRICTION) becomes an issue or a docs amendment; either way the finding is recorded, never left as an unfiled observation.
 
 ## Task sizing
 

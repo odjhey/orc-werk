@@ -1,0 +1,9 @@
+{
+  "run_id": "s4d-override1",
+  "max_attempts": 3,
+  "attempts": {
+    "work-1": [
+      {"outcome": "failed"}
+    ]
+  }
+}

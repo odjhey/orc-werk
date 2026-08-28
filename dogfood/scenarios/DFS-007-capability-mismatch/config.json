@@ -1,0 +1,11 @@
+{
+  "run_id": "s5-capmismatch",
+  "max_attempts": 3,
+  "resume_capability": "CAP-EXEC-RESUME-EXACT",
+  "execution_capabilities": ["CAP-EXEC-RESUME-BEST-EFFORT"],
+  "attempts": {
+    "work-1": [
+      {"outcome": "completed", "candidate": {"label": "Z"}, "assurance": {"verdict": "accepted"}}
+    ]
+  }
+}

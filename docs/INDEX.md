@@ -67,6 +67,9 @@ description: Flat documentation index.
 - [Watchtower operations playbook](delivery/watchtower-operations.md)
 - [Delivery stance](delivery/delivery-stance.md)
 
+## Dogfooding
+- [Dogfood scenario corpus](../dogfood/README.md)
+
 ## M0 task cards
 - [TASK-M0-001](delivery/task-cards/TASK-M0-001-core.md)
 - [TASK-M0-002](delivery/task-cards/TASK-M0-002-work.md)
