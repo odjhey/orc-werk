@@ -64,7 +64,38 @@ from orc_werk.app.orchestrator import DEFAULT_WORK_ID, RunConfig
 from orc_werk.core.effects import FX_START_EXECUTION
 from orc_werk.core.errors import validation_error
 from orc_werk.core.idempotency import idempotency_key
+from orc_werk.core.portable import is_portable
 from orc_werk.ports.capabilities import validate_capabilities
+
+
+def _require_portable(value: Any, *, path: str) -> None:
+    """Recursively confirm a parsed config value is portable/JSON-compatible
+    (`orc_werk.core.portable.is_portable`), raising canonical `ERR-VALIDATION`
+    naming the exact offending path.
+
+    BUG-1 dogfood finding: Python's `json.loads` accepts the bare
+    `NaN`/`Infinity`/`-Infinity` tokens even though they have no JSON
+    literal (`core/portable.py` module docstring), so a hand-authored
+    config like `{"score": NaN}` parses without error and only fails much
+    later -- deep inside adapter construction, as an uncaught `TypeError`/
+    `ValueError` from `core.portable` -- producing a raw Python traceback
+    instead of this CLI's documented "never a Python traceback" canonical
+    error contract (`main.py` module docstring). Checking portability of
+    the whole config at load time, before any of it reaches a canonical
+    shape, catches this at the boundary that owns the guarantee.
+    """
+    if is_portable(value):
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _require_portable(item, path=f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _require_portable(item, path=f"{path}[{index}]")
+    raise validation_error(
+        f"config value at {path} is not portable/JSON-compatible: {value!r}",
+        path=path,
+    )
 
 
 def load_config(path: str) -> Mapping[str, Any]:
@@ -75,6 +106,7 @@ def load_config(path: str) -> Mapping[str, Any]:
         raise validation_error(f"config file is not valid JSON: {path}", path=path) from exc
     if not isinstance(data, Mapping):
         raise validation_error(f"config file must contain a JSON object: {path}", path=path)
+    _require_portable(data, path="<config>")
     return data
 
 
@@ -134,8 +166,32 @@ def build_scripted_adapters(
     return execution, candidate, assurance
 
 
+def _validate_max_attempts(value: Any, *, source: str) -> int:
+    """`INV-019` requires any configured attempt budget be finite (and, by
+    the same "budget" intent, positive -- a run that can never attempt
+    anything is not a bounded budget, it is a broken one). BUG-2 dogfood
+    finding: 0 is falsy in Python, so a naive `x or default` precedence
+    chain silently discards an explicit `max_attempts: 0` (or
+    `--max-attempts 0`) and replaces it with the default instead of
+    rejecting it -- fail closed with a canonical error instead."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise validation_error(
+            f"max_attempts ({source}) must be a positive integer, got {value!r}",
+            source=source,
+            max_attempts=value,
+        )
+    return value
+
+
 def build_run_config(config: Mapping[str, Any], *, max_attempts_override: int | None) -> RunConfig:
-    max_attempts = max_attempts_override or config.get("max_attempts") or RunConfig().max_attempts
+    # BUG-2: explicit `is not None` precedence (flag > config > default) --
+    # NOT `or`-chaining, which would treat an explicit 0 as absent.
+    if max_attempts_override is not None:
+        max_attempts = _validate_max_attempts(max_attempts_override, source="--max-attempts flag")
+    elif config.get("max_attempts") is not None:
+        max_attempts = _validate_max_attempts(config["max_attempts"], source="config max_attempts")
+    else:
+        max_attempts = RunConfig().max_attempts
     resume_capability = config.get("resume_capability")
     return RunConfig(max_attempts=max_attempts, resume_capability=resume_capability)
 
