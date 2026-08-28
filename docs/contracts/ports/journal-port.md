@@ -61,7 +61,7 @@ Every persisted/interchanged journal record (fact, decision, or effect record) M
 
 ### Durable-journal recovery
 
-A durable JournalPort adapter (one backed by an on-disk or otherwise reopenable log) MUST, on reopen: tolerate a single unparseable FINAL record as a torn write — ignore it, and continue the journal from the last good record before it — while rejecting any earlier malformed record with `ERR-VALIDATION`, failing closed on real corruption rather than silently skipping it.
+A durable JournalPort adapter (one backed by an on-disk or otherwise reopenable log) MUST, on reopen: tolerate a single unparseable FINAL record as a torn write — ignore it, and continue the journal from the last good record before it — while rejecting any earlier malformed record with `ERR-VALIDATION`, failing closed on real corruption rather than silently skipping it. This torn-tail tolerance applies only when at least one valid record precedes the unparseable FINAL record in the same journal (watchtower ruling on issue #18). A file containing no valid records at all is not a journal: reading it MUST reject with `ERR-VALIDATION` rather than presenting an empty history — this closes the silent-success-on-wrong-file hole (e.g. a stray or misdirected path resolving to garbage content) while keeping genuine crash recovery, where a real prefix of good records exists, intact.
 
 ### Run-id restrictions
 
