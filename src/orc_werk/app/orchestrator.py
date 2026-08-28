@@ -463,6 +463,11 @@ class Orchestrator:
                 work_id=work_id,
                 execution_id=wp.current_execution_id,
                 outcome=observation.outcome,
+                # CONF-EXT-003: transport ExecutionObservation.extensions
+                # losslessly into the journal envelope -- the orchestrator
+                # never inspects/branches on them (CONF-EXT-006), only
+                # carries them through.
+                extensions=dict(observation.extensions),
             )
         )
         if observation.outcome == "completed":
@@ -484,6 +489,10 @@ class Orchestrator:
                 assurance_id=wp.current_assurance_id,
                 candidate_fingerprint=observation.candidate_fingerprint,
                 verdict=observation.verdict,
+                # CONF-EXT-003: transport AssuranceObservation.extensions
+                # losslessly (e.g. EXT-REVIEW-FINDINGS-V1); CONF-EXT-006:
+                # never inspected/branched on here.
+                extensions=dict(observation.extensions),
             )
         )
         return True
