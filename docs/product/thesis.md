@@ -23,3 +23,5 @@ The first usable product surface is a CLI that can accept an intent, dispatch wo
 Python 3.11+ is the v0.x reference implementation so the project can dogfood quickly, instrument failures, and experiment with self-healing/recovery. The language is not part of Orc Werk's canonical product semantics; a future implementation in Go or another language must conform to the same contracts and scenarios.
 
 Specialized provider/workflow semantics that are not required by the generic delivery state machine should be carried through `CONTRACT-EXTENSIONS` rather than becoming mandatory core fields.
+
+The kernel's guarantees are the product; who fills the execution and assurance seats — operator, agents, adapters — is a staged identity, an adoption rung climbed at the deployer's own pace (`PRODUCT-ADOPTION`). Full autonomy is the top of that ladder, not the entry fee for using Orc Werk at all.
