@@ -520,6 +520,11 @@ class Orchestrator:
                 assurance_id=wp.current_assurance_id,
                 candidate_fingerprint=observation.candidate_fingerprint,
                 verdict=observation.verdict,
+                **(
+                    {"evidence_refs": list(observation.evidence_refs)}
+                    if observation.evidence_refs
+                    else {}
+                ),
                 # CONF-EXT-003: transport AssuranceObservation.extensions
                 # losslessly (e.g. EXT-REVIEW-FINDINGS-V1); CONF-EXT-006:
                 # never inspected/branched on here.
