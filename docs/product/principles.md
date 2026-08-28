@@ -39,3 +39,7 @@ Policy decides what should happen. The kernel validates and records decisions. A
 ## P-008 — Durable history is append-preserving
 
 Attempts, facts, decisions, and evidence are retained rather than overwritten.
+
+## P-009 — Implementation languages are replaceable
+
+Orc Werk's canonical domain, protocol, journal, port, scenario, and conformance semantics must not depend on implementation-language-specific behavior. Python is the initial reference implementation, not a product semantic; a future implementation language must conform to the same contracts rather than redefine them.
