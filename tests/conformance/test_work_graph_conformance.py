@@ -168,6 +168,49 @@ class WorkGraphConformanceMixin:
             with self._assert_unsupported_capability():
                 graph.claim(work_id="w")
 
+    def test_conf_work_004_claim_requires_current_eligibility(self) -> None:
+        # Fail-closed claim (watchtower ruling on the TASK-M0-002 review):
+        # claim MUST reject with ERR-CONFLICT when the Work is not
+        # currently eligible per the same criteria ready() uses, so an
+        # early claim can never poison a not-yet-unlocked Work.
+        graph = self.make_graph()
+        graph.create(delivery_run_id=DELIVERY_RUN_ID, plan=_fanin_plan())
+
+        if not graph.supports(CAP_WORK_ATOMIC_CLAIM):
+            with self._assert_unsupported_capability():
+                graph.claim(work_id="c")
+            return
+
+        # C's deps (A, B) are not committed-complete yet.
+        with self._assert_conflict():
+            graph.claim(work_id="c")
+
+        graph.complete(work_id="a")
+        # Still ineligible: B has not committed completion.
+        with self._assert_conflict():
+            graph.claim(work_id="c")
+
+        graph.complete(work_id="b")
+        claimed = graph.claim(work_id="c")
+        self.assertEqual(claimed["work_id"], "c")  # type: ignore[attr-defined]
+
+    def test_conf_work_004_claim_rejects_completed_and_blocked_work(self) -> None:
+        graph = self.make_graph()
+        graph.create(delivery_run_id=DELIVERY_RUN_ID, plan=_fanin_plan())
+
+        if not graph.supports(CAP_WORK_ATOMIC_CLAIM):
+            with self._assert_unsupported_capability():
+                graph.claim(work_id="a")
+            return
+
+        graph.complete(work_id="a")
+        graph.block(work_id="b", reason="blocked-for-test")
+
+        with self._assert_conflict():
+            graph.claim(work_id="a")
+        with self._assert_conflict():
+            graph.claim(work_id="b")
+
     # -- SCN-005 fan-in shape. --
 
     def test_scn_005_fanin_c_waits_for_both_a_and_b(self) -> None:
@@ -310,6 +353,9 @@ class MemoryWorkGraphAdapterTest(unittest.TestCase):
         self.assertEqual(graph.capabilities(), frozenset({CAP_WORK_ATOMIC_CLAIM}))
 
     def test_claim_ref_is_deterministic_no_randomness_or_clock(self) -> None:
+        # Once-per-lineage claim: exactly one claim ever per Work, so the
+        # claim_ref is a counterless pure function of work_id -- identical
+        # across independent instances/replays (INV-020).
         first = MemoryWorkGraph()
         first.create(delivery_run_id="dr-det", plan=_chain_plan())
         second = MemoryWorkGraph()
@@ -318,6 +364,7 @@ class MemoryWorkGraphAdapterTest(unittest.TestCase):
         claimed_first = first.claim(work_id="w")
         claimed_second = second.claim(work_id="w")
         self.assertEqual(claimed_first["claim_ref"], claimed_second["claim_ref"])
+        self.assertEqual(claimed_first["claim_ref"], "claim:w")
 
     def test_ready_raises_not_found_for_unknown_delivery_run(self) -> None:
         graph = MemoryWorkGraph()

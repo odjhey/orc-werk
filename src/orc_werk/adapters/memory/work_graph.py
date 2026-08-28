@@ -3,8 +3,8 @@
 Dependency-free reference implementation: stdlib + `orc_werk.core` +
 `orc_werk.ports` only (`ARCH-REPOSITORY-STRUCTURE`). No provider
 vocabulary, no randomness, no wall-clock reads -- `claim_ref` is derived
-deterministically from `work_id` and a per-work claim counter so replay
-(`PORT-JOURNAL-005`) reproduces identical values (`INV-020`).
+deterministically from `work_id` alone so replay (`PORT-JOURNAL-005`)
+reproduces identical values (`INV-020`).
 
 Design decisions (also recorded in the TASK-M0-002 PR body):
 
@@ -16,12 +16,19 @@ Design decisions (also recorded in the TASK-M0-002 PR body):
   every dependency's `condition` ("accepted", the only v0 condition) is
   satisfied by that dependency's committed `completed` state -- never by
   mere upstream Execution settlement (`SCN-005`).
-- `claim` advertises `CAP-WORK-ATOMIC-CLAIM` and is atomic: claiming an
-  already-claimed, completed, or blocked Work raises `ERR-CONFLICT`.
-  `claim` does not itself re-check dependency eligibility -- gating
-  dispatch on `ready()`/`INV-015` is the app/policy layer's job, not
-  restated inside this port operation (least-commitment stopgap; see PR
-  body "Ambiguities encountered").
+- `claim` advertises `CAP-WORK-ATOMIC-CLAIM` and is atomic and
+  fail-closed: it requires current eligibility per the exact criteria
+  `ready()` uses, so claiming an already-claimed, completed, or blocked
+  Work -- or one whose dependencies are not yet committed-complete --
+  raises `ERR-CONFLICT` (an early claim can never poison a
+  not-yet-unlocked Work).
+- Claim semantics are once-per-lineage (watchtower ruling on the
+  TASK-M0-002 review): the claim holder owns the Work across all retry
+  attempts; `ready()` is the discovery surface for unclaimed eligible
+  work; retries are driven by the holder from journal state, never by
+  re-claiming. A second claim on the same Work is therefore always
+  `ERR-CONFLICT`, and `claim_ref` is simply `f"claim:{work_id}"` --
+  opaque, deterministic, replay-stable.
 - `complete` is idempotent: completing an already-completed Work is a
   no-op that returns the same `Work` rather than raising (chosen over the
   "deterministically conflicting" alternative `CONF-WORK-003` also
@@ -58,8 +65,6 @@ class MemoryWorkGraph(WorkGraphPort):
     def __init__(self) -> None:
         # delivery_run_id -> work_id -> mutable work-graph state.
         self._runs: dict[str, dict[str, MutableMapping[str, Any]]] = {}
-        # work_id -> next claim counter (deterministic claim_ref derivation).
-        self._claim_counters: dict[str, int] = {}
 
     def capabilities(self) -> frozenset[str]:
         return validate_capabilities({CAP_WORK_ATOMIC_CLAIM})
@@ -118,7 +123,7 @@ class MemoryWorkGraph(WorkGraphPort):
 
     def claim(self, *, work_id: str) -> Mapping[str, Any]:
         self._require_capability(CAP_WORK_ATOMIC_CLAIM, operation="claim", work_id=work_id)
-        state, _ = self._find_work(work_id)
+        state, delivery_run_id = self._find_work(work_id)
 
         if state["claimed"]:
             raise conflict_error(f"work is already claimed: {work_id!r}", work_id=work_id)
@@ -126,12 +131,20 @@ class MemoryWorkGraph(WorkGraphPort):
             raise conflict_error(f"cannot claim a completed work: {work_id!r}", work_id=work_id)
         if state["blocked_reason"] is not None:
             raise conflict_error(f"cannot claim a blocked work: {work_id!r}", work_id=work_id)
+        # Fail-closed: claim requires current eligibility per the exact
+        # criteria ready() uses (INV-015). A Work whose dependencies are
+        # not yet committed-complete cannot be claimed early and poisoned.
+        if not self._deps_satisfied(self._runs[delivery_run_id], state["deps"]):
+            raise conflict_error(
+                f"cannot claim a work whose dependencies are not committed-complete: {work_id!r}",
+                work_id=work_id,
+            )
 
-        counter = self._claim_counters.get(work_id, 0) + 1
-        self._claim_counters[work_id] = counter
-        claim_ref = f"claim:{work_id}:{counter}"
         state["claimed"] = True
-        return {"work_id": work_id, "claim_ref": claim_ref}
+        # Once-per-lineage claim: one claim ever per Work, so the
+        # deterministic opaque claim_ref needs no counter (INV-020:
+        # replay-stable, no randomness/wall-clock).
+        return {"work_id": work_id, "claim_ref": f"claim:{work_id}"}
 
     def complete(self, *, work_id: str) -> Work:
         state, delivery_run_id = self._find_work(work_id)
