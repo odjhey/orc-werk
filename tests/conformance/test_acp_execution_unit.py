@@ -29,8 +29,57 @@ import unittest
 from pathlib import Path
 
 from orc_werk.adapters.acp.execution import AcpExecution, session_name_for_idempotency_key
+from orc_werk.core.errors import CoreError
 from orc_werk.ports.base import LIFECYCLE_STATE_RUNNING, LIFECYCLE_STATE_SETTLED
 from tests.conformance.support_acpx_stub import AcpxStubWorld
+
+
+class AcpExecutionModelPinTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._world = AcpxStubWorld(Path(self._tmp.name))
+        self._adapter = AcpExecution(env=self._world.env())
+
+    def _start(self, requested: str, *, key: str, models: list[str]) -> str:
+        session_name = session_name_for_idempotency_key(key)
+        self._world.seed_models(session_name, models)
+        self._adapter.start(
+            work_id="model-work",
+            execution_request={"prompt": "hi", "model": requested},
+            idempotency_key=key,
+        )
+        return session_name
+
+    def test_exact_match_pins_exact_advertised_id(self) -> None:
+        exact = "openai-codex/gpt-5.6-luna"
+        session_name = self._start(exact, key="model-exact", models=[exact, "vendor/sol"])
+        record = self._world.session_record(session_name)
+        self.assertIn({"key": "model", "value": exact}, record["config_sets"])
+
+    def test_unique_case_insensitive_substring_resolves_and_pins(self) -> None:
+        resolved = "openai-codex/gpt-5.6-luna"
+        session_name = self._start(
+            "LUNA", key="model-substring", models=[resolved, "openai-codex/gpt-5.6-sol"]
+        )
+        record = self._world.session_record(session_name)
+        self.assertIn({"key": "model", "value": resolved}, record["config_sets"])
+
+    def test_unknown_model_fails_closed_and_lists_advertised_ids(self) -> None:
+        models = ["vendor/luna", "vendor/sol"]
+        with self.assertRaises(CoreError) as caught:
+            self._start("terra", key="model-unknown", models=models)
+        self.assertIn("advertised ids", str(caught.exception))
+        for model_id in models:
+            self.assertIn(model_id, str(caught.exception))
+
+    def test_ambiguous_model_fails_closed_and_lists_advertised_ids(self) -> None:
+        models = ["vendor/luna", "vendor/luna-preview", "vendor/sol"]
+        with self.assertRaises(CoreError) as caught:
+            self._start("luna", key="model-ambiguous", models=models)
+        self.assertIn("ambiguous", str(caught.exception))
+        for model_id in models:
+            self.assertIn(model_id, str(caught.exception))
 
 
 class AcpExecutionUnobservabilityTest(unittest.TestCase):

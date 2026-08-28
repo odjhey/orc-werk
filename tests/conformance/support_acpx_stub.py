@@ -138,10 +138,21 @@ _STUB_SOURCE = textwrap.dedent(
                 # pi-acp@0.0.31, docs/adapters/acp/mapping.md).
                 "last_prompt_at": None,
                 "messages": [],
+                "available_models": [
+                    "openai-codex/gpt-5.6-luna",
+                    "openai-codex/gpt-5.6-sol",
+                    "vendor/luna-preview",
+                ],
+                "current_model_id": "openai-codex/gpt-5.6-sol",
+                "config_sets": [],
             }
             pending = PENDING_DIR / f"{name}.json"
             if pending.exists():
-                rec["script"] = json.loads(pending.read_text()).get("script", [])
+                pending_data = json.loads(pending.read_text())
+                rec["script"] = pending_data.get("script", [])
+                rec["available_models"] = pending_data.get(
+                    "available_models", rec["available_models"]
+                )
                 pending.unlink()
             _stream_path(name).write_text("")
             _save(name, rec)
@@ -187,7 +198,10 @@ _STUB_SOURCE = textwrap.dedent(
                 "closed": rec["closed"],
                 "eventLog": {"active_path": str(_stream_path(name))},
                 "lastAgentExitCode": last_exit_code,
-                "acpx": {"current_model_id": "stub-model"},
+                "acpx": {
+                    "current_model_id": rec["current_model_id"],
+                    "available_models": rec["available_models"],
+                },
                 # Issue #57 cross-process idempotency signal (see
                 # cmd_prompt): null/[] until a prompt is queued, then set
                 # -- mirrors real acpx's lastPromptAt/messages fields.
@@ -224,6 +238,10 @@ _STUB_SOURCE = textwrap.dedent(
         rec = _load(name)
         if rec is None:
             _fail(f"no session {name}", code=1)
+        rec.setdefault("config_sets", []).append({"key": key, "value": value})
+        if key == "model" and value in rec["available_models"]:
+            rec["current_model_id"] = value
+        _save(name, rec)
         _emit({"action": "config_set", "configId": key, "value": value, "acpxRecordId": rec["id"]})
 
 
@@ -322,12 +340,21 @@ class AcpxStubWorld:
             "HOME": os.environ.get("HOME", ""),
         }
 
+    def seed_models(self, session_name: str, model_ids: list[str]) -> None:
+        """Set the model ids advertised by a session before it is ensured."""
+        pending_path = self.world_dir / "pending" / f"{session_name}.json"
+        pending = json.loads(pending_path.read_text()) if pending_path.exists() else {}
+        pending["available_models"] = model_ids
+        pending_path.write_text(json.dumps(pending))
+
     def seed_script(self, session_name: str, script: list[Mapping[str, Any]]) -> None:
         """Queue the scripted turn outcome(s) for a session that may not
         exist yet -- consumed by the fake `acpx`'s `sessions ensure`
         handler the first time it creates that session's record."""
         pending_path = self.world_dir / "pending" / f"{session_name}.json"
-        pending_path.write_text(json.dumps({"script": list(script)}))
+        pending = json.loads(pending_path.read_text()) if pending_path.exists() else {}
+        pending["script"] = list(script)
+        pending_path.write_text(json.dumps(pending))
 
     def append_script(self, session_name: str, entry: Mapping[str, Any]) -> None:
         """Append one more scripted turn outcome to an ALREADY-created

@@ -444,12 +444,25 @@ class AcpExecution(ExecutionPort):
                 "execution_request['prompt'] must be a non-empty string",
                 execution_request=execution_request,
             )
-        model = execution_request.get("model")
+        requested_model = execution_request.get("model")
 
         if self._thought_level is not None:
             self._set_config_option(session_name, "thought_level", self._thought_level)
-        if model is not None:
-            self._set_config_option(session_name, "model", str(model))
+        if requested_model is not None:
+            resolved_model = self._resolve_model(show, requested_model)
+            try:
+                self._run(["set", "model", resolved_model, "-s", session_name])
+            except _AcpxInvocationError as exc:
+                # A requested model is a pin, not a preference.  If acpx
+                # cannot apply the validated id, running at the session
+                # default would be an unsafe silent substitution.
+                raise self._translate_invocation_error(
+                    exc,
+                    operation="start.model",
+                    session_name=session_name,
+                    requested_model=requested_model,
+                    resolved_model=resolved_model,
+                ) from exc
 
         try:
             self._run(
@@ -468,10 +481,44 @@ class AcpExecution(ExecutionPort):
         self._submitted_turns[execution_id] = 1
         return execution
 
+    @staticmethod
+    def _resolve_model(show: Mapping[str, Any], requested_model: Any) -> str:
+        advertised = (show.get("acpx") or {}).get("available_models")
+        available_ids = (
+            [model_id for model_id in advertised if isinstance(model_id, str)]
+            if isinstance(advertised, list)
+            else []
+        )
+        if not isinstance(requested_model, str) or not requested_model:
+            raise validation_error(
+                "execution_request['model'] must be a non-empty string matching an "
+                f"advertised model id; advertised ids: {available_ids}",
+                requested_model=requested_model,
+                advertised_model_ids=available_ids,
+            )
+
+        if requested_model in available_ids:
+            return requested_model
+
+        requested_folded = requested_model.casefold()
+        matches = [
+            model_id for model_id in available_ids if requested_folded in model_id.casefold()
+        ]
+        if len(matches) == 1:
+            return matches[0]
+
+        reason = "not advertised" if not matches else "ambiguous"
+        raise validation_error(
+            f"requested model {requested_model!r} is {reason}; advertised ids: {available_ids}",
+            requested_model=requested_model,
+            advertised_model_ids=available_ids,
+            matching_model_ids=matches,
+        )
+
     def _set_config_option(self, session_name: str, key: str, value: str) -> None:
-        # thought_level/model are settable non-interactively per session
-        # (mapping-doc footgun); pinned explicitly on every start() rather
-        # than trusting the agent's own default. Best-effort: a set
+        # thought_level is settable non-interactively per session and is
+        # pinned explicitly rather than trusting the agent's own default.
+        # Best-effort: a set
         # failure here should not abort the whole start() -- the session
         # already exists and is usable, just possibly not at the pinned
         # config -- so this is deliberately swallowed into a soft no-op
