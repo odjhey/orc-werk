@@ -135,6 +135,49 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.assertEqual(ctx.exception.error["error"], "ERR-VALIDATION")
 
 
+class CrewReportNoSideEffectsBeforeValidationTest(unittest.TestCase):
+    """Attempt-2 review finding: the #17/#18 invariant PR #32 established
+    for the main CLI commands applies to this adapter too -- a read-only
+    query, or an append rejected by validation, must never create the log
+    directory as a side effect. Directory creation is deferred to the
+    first actual (validated) write."""
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        # A directory that does NOT exist yet -- the whole point.
+        self.directory = Path(self._tmpdir.name) / "orc-not-yet"
+
+    def test_construction_alone_creates_nothing(self) -> None:
+        CrewReportLog(self.directory)
+        self.assertFalse(self.directory.exists())
+
+    def test_list_on_missing_directory_returns_empty_and_creates_nothing(self) -> None:
+        log = CrewReportLog(self.directory)
+        self.assertEqual(log.list_reports(delivery_run_id=DRID), ())
+        self.assertFalse(self.directory.exists())
+
+    def test_rejected_append_creates_nothing(self) -> None:
+        log = CrewReportLog(self.directory)
+        with self.assertRaises(CoreError):
+            log.append(
+                delivery_run_id=DRID, execution_id="e1", report={"turn": 1, "claimed_verdict": "bogus"}
+            )
+        with self.assertRaises(CoreError):
+            log.append(
+                delivery_run_id="../escape", execution_id="e1", report={"turn": 1, "claimed_verdict": "done"}
+            )
+        self.assertFalse(self.directory.exists())
+
+    def test_valid_append_creates_the_directory_and_writes(self) -> None:
+        log = CrewReportLog(self.directory)
+        log.append(
+            delivery_run_id=DRID, execution_id="e1", report={"turn": 1, "claimed_verdict": "done"}
+        )
+        self.assertTrue((self.directory / f"{DRID}.reports.jsonl").exists())
+        self.assertEqual(len(log.list_reports(delivery_run_id=DRID)), 1)
+
+
 class CrewReportValidationTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()

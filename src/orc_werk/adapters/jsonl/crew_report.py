@@ -154,8 +154,14 @@ class CrewReportLog:
     adapter-owned log itself as the contract."""
 
     def __init__(self, directory: str | os.PathLike[str]) -> None:
+        # No filesystem side effects at construction time (the #17/#18
+        # invariant PR #32 established for the CLI's main commands: a
+        # read-only query, or an input rejected by validation, must never
+        # leave a stray directory behind). Unlike `JSONLJournal.__init__`
+        # (which predates that ruling and is guarded at the CLI layer
+        # instead), this adapter defers directory creation to the first
+        # actual write -- see `append`.
         self._directory = Path(directory)
-        self._directory.mkdir(parents=True, exist_ok=True)
 
     def _path_for(self, delivery_run_id: str) -> Path:
         tailsafe.ensure_safe_run_id(
@@ -193,6 +199,12 @@ class CrewReportLog:
             ) from exc
 
         path = self._path_for(delivery_run_id)
+        # Only now -- with every validation above passed and the record
+        # fully serialized -- touch the filesystem at all: the deferred
+        # directory creation (see `__init__`) happens here, immediately
+        # before the first actual write, so a rejected append never
+        # creates a stray directory as a side effect.
+        self._directory.mkdir(parents=True, exist_ok=True)
         # Torn-tail rule reused by reference (module docstring): rescan for
         # a pending repair before every append rather than caching it
         # across calls (see module docstring's "Mechanics reused" section).
@@ -209,7 +221,14 @@ class CrewReportLog:
         records for that execution are returned -- filtering by
         `execution_id`, per `EXT-CREW-REPORT-V1` README's "one file per
         `DeliveryRun`, `execution_id` per record" rationale, without
-        needing a separate per-execution log."""
+        needing a separate per-execution log.
+
+        Strictly read-only: never creates the directory or the file (the
+        #17/#18 no-side-effects-on-query invariant -- see `__init__`). A
+        run with no report log yet returns an empty sequence, matching
+        `JSONLJournal.history`'s "nonexistent path means no records yet,
+        not an error" stance -- distinct from a log file that exists but
+        contains no valid records, which raises `ERR-VALIDATION`."""
         path = self._path_for(delivery_run_id)
         records, _repair = tailsafe.scan_tolerant(path, noun="crew-report log")
         if execution_id is not None:
