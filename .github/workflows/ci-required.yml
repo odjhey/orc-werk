@@ -1,0 +1,143 @@
+name: ci-required
+
+# One required status check for the whole repo. A path selector picks the
+# suite; a fail-closed aggregate is the only job branch protection requires,
+# because requiring conditionally-skipped jobs directly would deadlock PRs
+# whose paths do not select them.
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-required-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: select suite
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Fail safe: anything we cannot classify with confidence selects the full
+      # suite. A wrong "docs-only" answer skips real checks; a wrong "full"
+      # answer only costs time.
+      - id: classify
+        name: classify changed paths
+        run: |
+          set -uo pipefail
+          base=""
+          case "${{ github.event_name }}" in
+            pull_request) base="${{ github.event.pull_request.base.sha }}" ;;
+            push)         base="${{ github.event.before }}" ;;
+          esac
+
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "no usable base ref — selecting full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "base $base not present — selecting full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! changed=$(git diff --name-only "$base" "${{ github.sha }}"); then
+            echo "diff failed — selecting full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ -z "$changed" ]; then
+            echo "no changed paths reported — selecting full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          echo "changed paths:"; echo "$changed" | sed 's/^/  /'
+          # Counted explicitly rather than with `grep -qv`: that combination exits
+          # differently across grep implementations, and the disagreement lands on
+          # the unsafe side (a mixed change read as docs-only skips real checks).
+          total=$(printf '%s\n' "$changed" | grep -c '' || true)
+          prose=$(printf '%s\n' "$changed" | grep -cE '^docs/' || true)
+          echo "paths: total=$total under-docs=$prose"
+
+          # docs/ in this repo holds only prose contracts (no docs/scripts/ or
+          # similar gate code lives under it — see docs/README.md's structure).
+          # scripts/ (the gate's own code) and root-level *.md both fall
+          # outside docs/, so they naturally select the full suite.
+          if [ "$total" -gt 0 ] && [ "$prose" -eq "$total" ]; then
+            echo "→ docs-only suite"
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "→ full workspace suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  docs-suite:
+    name: docs suite
+    needs: select
+    if: needs.select.outputs.docs_only == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Zero-dependency on purpose: this suite needs no install, which is the
+      # whole reason a docs-only path is worth having.
+      - name: docs contract check
+        run: python3 scripts/docs_check.py
+
+  workspace-suite:
+    name: workspace suite
+    timeout-minutes: 10
+    needs: select
+    if: needs.select.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # No pip step: src/orc_werk/core and the reference test suite are
+      # stdlib-only by contract (CLAUDE.md/AGENTS.md rule 8), so the gate
+      # never installs anything.
+      - name: check
+        run: bash scripts/check.sh
+
+  ci-required:
+    name: ci-required
+    needs: [select, docs-suite, workspace-suite]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # Fail closed: every selected suite must have succeeded. A skipped suite
+      # is only acceptable when the selector did not choose it.
+      - name: assert selected suites succeeded
+        env:
+          DOCS_ONLY: ${{ needs.select.outputs.docs_only }}
+          SELECT: ${{ needs.select.result }}
+          DOCS: ${{ needs.docs-suite.result }}
+          WORKSPACE: ${{ needs.workspace-suite.result }}
+        run: |
+          set -euo pipefail
+          echo "select=$SELECT docs_only=$DOCS_ONLY docs-suite=$DOCS workspace-suite=$WORKSPACE"
+
+          [ "$SELECT" = "success" ] || { echo "::error::selector did not succeed"; exit 1; }
+
+          if [ "$DOCS_ONLY" = "true" ]; then
+            expected_docs=success; expected_workspace=skipped
+          else
+            expected_docs=skipped; expected_workspace=success
+          fi
+
+          fail=0
+          [ "$DOCS" = "$expected_docs" ] || { echo "::error::docs-suite is '$DOCS', expected '$expected_docs'"; fail=1; }
+          [ "$WORKSPACE" = "$expected_workspace" ] || { echo "::error::workspace-suite is '$WORKSPACE', expected '$expected_workspace'"; fail=1; }
+          exit $fail
