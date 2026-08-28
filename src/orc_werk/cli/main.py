@@ -53,6 +53,7 @@ from orc_werk.cli.journal_reading import (
     resolve_journal_dir,
 )
 from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint
+from orc_werk.cli.refs import cmd_refs
 from orc_werk.cli.report import cmd_report
 from orc_werk.core.errors import CoreError, validation_error
 from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, WorkProjection
@@ -654,6 +655,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
     )
     status_parser.set_defaults(func=cmd_status)
+
+    refs_parser = subparsers.add_parser(
+        "refs",
+        help="list every resolvable reference in a run with its resolve command",
+        description="Pure journal projection: list every resolvable reference recorded for one "
+        "run (execution-session/v1 session/transcript refs, assurance evidence_refs, candidate "
+        "identity, the Beads mirror when configured), each with a runnable resolve command. "
+        "Read-only; resolve commands are display strings only, never executed "
+        "(docs/contracts/durability-responsibilities.md, CONTRACT-DURABILITY).",
+        epilog="examples:\n"
+        "  orc refs my-run-id\n"
+        "  orc refs ./.orc/my-run-id.jsonl\n\n"
+        "defaults: a bare run id resolves against --journal, $ORC_JOURNAL_DIR, or ./.orc",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    refs_parser.add_argument("target", help="journal path (dir or <run>.jsonl) or bare run id")
+    refs_parser.add_argument(
+        "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
+    refs_parser.set_defaults(func=cmd_refs)
 
     history_parser = subparsers.add_parser(
         "history",
