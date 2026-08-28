@@ -1,13 +1,13 @@
 ---
 id: ADAPTER-GIT
 type: adapter
-status: draft
+status: current
 authority: informative
-description: Planned Git adapter for exact Candidate identity.
+description: Git adapter for exact Candidate identity (GitDiffCandidate).
 ---
 
 # Git candidate adapter
 
-Intended role: first real implementation of `PORT-CANDIDATE` for software-delivery work.
+Implemented (`TASK-M1-005`): `src/orc_werk/adapters/git/candidate.py`'s `GitDiffCandidate` is the first real `PORT-CANDIDATE` implementation for software-delivery work. It fingerprints a real `git` worktree/ref — the exact commit (`head_sha`) plus a digest of uncommitted worktree changes relative to it (`diff_digest`) — rather than a scripted subject.
 
-The adapter may use commit/tree/base/merge-base or other exact Git identities internally, but the core receives only canonical subject identity and fingerprint.
+The adapter uses `git rev-parse`/`git diff` internally; the core receives only the canonical `subject_identity`/`fingerprint` shape (`PORT-CANDIDATE`'s `Candidate`). Full field rationale, decline conditions, and fingerprinting details: `docs/adapters/git/mapping.md`. Conformance status: `docs/adapters/git/conformance.md`.
