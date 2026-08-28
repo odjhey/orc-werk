@@ -40,6 +40,31 @@ Tasks are sized by reviewability and decision count, not implementation effort:
 - **Checkable definition of done** — enumerable conformance requirements and scenarios, never "make it work".
 - **Disjoint file territory** for anything dispatched in parallel.
 
+## Dormant-feature lifecycle
+
+Every "if ever" feature follows the same lifecycle: **recon → rulings → recorded
+shape → dormant until pulled.**
+
+1. **Recon** — a scout produces the evidence-grounded picture (what exists, what
+   maps, what conflicts) before anyone commits to anything.
+2. **Rulings** — the judgment-heavy questions the recon surfaces are decided by
+   the operator/watchtower while context is freshest, including consequence
+   analysis for the contested ones.
+3. **Recorded shape** — the implementation design (invocation model, op mapping,
+   testing pattern, slice boundaries) is written down where the eventual
+   implementer will find it (issue thread, task card, or adapter doc stub),
+   fully pre-decided minus any explicitly-named open questions.
+4. **Dormant until pulled** — nothing is built until real usage demands it, and
+   every dormant item MUST name its pull trigger. When the trigger fires, the
+   executing agent inherits a complete design instead of an open debate.
+
+The point: the decision cost is paid exactly once, at the moment of maximum
+context — nothing is built speculatively, and nothing is re-litigated. This
+extends the deferred-decision ledger (Audit trail, below) from deferred
+*decisions* to pre-decided *features*. A dormant item without a named trigger
+is a defect in this lifecycle, the same way an unrecorded rough edge is a
+defect under `DELIVERY-STANCE`.
+
 ## Audit trail
 
 Every decision must be reconstructable after the fact:
