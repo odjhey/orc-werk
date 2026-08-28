@@ -99,6 +99,40 @@ adapter's own module docstring as
 predicts each attempt's `execution_id` up front via the same public
 `orc_werk.core.idempotency.idempotency_key` derivation so a human-authored
 config never has to spell out a hash by hand.
+
+## Beads mirror (optional, write-only, `TASK-M2-006`)
+
+A further optional top-level object wires an optional, write-only
+projection of run/work state and briefs into a shared `bd` database
+(`docs/adapters/beads/mapping.md` has the full design):
+
+```json
+{
+  "mirror": {"adapter": "beads", "workspace": "/abs/bd-initialized/dir", "bd_bin": "bd"},
+  "briefs": {"work-1": "per-work brief text, becomes the bd issue description"}
+}
+```
+
+- `mirror` is entirely optional; ABSENT means no mirror is built at all --
+  zero behavior change for every existing config (`build_mirror` returns
+  `None`, and `cmd_dispatch` skips every mirror call). `mirror.adapter`:
+  only `"beads"` is defined today. `mirror.workspace` is REQUIRED when
+  `mirror` is present -- the directory an operator has already run `bd
+  init` in (this CLI never runs `bd init` itself, mirroring the
+  `no-mistakes` adapter's own "never `axi init`s a repo" precedent).
+  `mirror.bd_bin` optionally overrides the `bd` binary name/path (default
+  `"bd"`, resolved via `PATH`).
+- `briefs` is a CLI-owned, non-canonical sibling to `plan` (`PORT-WORK-001`
+  itself carries no brief/description field -- `CONTRACT-DURABILITY`'s
+  multi-work-brief row stays adapter-owned, not core) keyed by `work_id`.
+  A work with no entry falls back to the run's own intent text -- never an
+  empty description when the run-level intent text is available (see the
+  mapping doc's brief-fallback note).
+- A degraded mirror (one or more `bd` invocations failed) is NEVER a
+  dispatch failure: `cmd_dispatch` prints a `mirror: degraded (...)` note
+  to stderr and returns the SAME exit code the run would have had without
+  a mirror configured at all (mirror failures MUST NEVER break the
+  delivery loop, per the task card).
 """
 
 from __future__ import annotations
@@ -109,6 +143,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
 from orc_werk.adapters.acp.execution import AcpExecution
+from orc_werk.adapters.beads.mirror import BeadsMirror
 from orc_werk.adapters.git.candidate import GitDiffCandidate
 from orc_werk.adapters.no_mistakes.assurance import NoMistakesAssurance
 from orc_werk.adapters.scripted.assurance import ScriptedAssurance
@@ -144,6 +179,8 @@ _TOP_LEVEL_KEYS = frozenset(
         "execution",
         "candidate",
         "assurance",
+        "mirror",
+        "briefs",
     }
 )
 _ATTEMPT_ENTRY_KEYS = frozenset({"outcome", "candidate", "assurance", "states", "artifact_refs", "extensions"})
@@ -162,6 +199,15 @@ _CANDIDATE_CONFIG_KEYS = frozenset({"adapter", "repo_path"})
 _CANDIDATE_ADAPTERS = frozenset({"scripted", "git"})
 _ASSURANCE_CONFIG_KEYS = frozenset({"adapter", "repo_path"})
 _ASSURANCE_ADAPTERS = frozenset({"scripted", "no-mistakes"})
+# `mirror` (`TASK-M2-006`, module docstring "Beads mirror" section): unlike
+# execution/candidate/assurance, there is no "scripted" default -- absent
+# `mirror` means no mirror at all, not a null-object adapter. `workspace`
+# is keyed exactly to `BeadsMirror`'s one required constructor parameter;
+# `bd_bin` maps to its optional one. No `timeout_s` key exposed at this
+# layer either, matching the no-mistakes precedent's "don't expose every
+# constructor parameter" restraint (`CLAUDE.md` #3).
+_MIRROR_CONFIG_KEYS = frozenset({"adapter", "workspace", "bd_bin"})
+_MIRROR_ADAPTERS = frozenset({"beads"})
 
 
 def _require_portable(value: Any, *, path: str) -> None:
@@ -454,6 +500,68 @@ def _validate_assurance_config(value: Any) -> None:
         )
 
 
+def _validate_mirror_config(value: Any) -> None:
+    """`mirror` (`TASK-M2-006`): unlike execution/candidate/assurance,
+    ABSENT (`None`) is the only "no mirror" spelling -- there is no
+    `"scripted"`/null-adapter fallback to reject a stray `repo_path`-style
+    key against, so this function's shape is a little simpler than its
+    three siblings above."""
+    if value is None:
+        return
+    if not isinstance(value, Mapping):
+        raise validation_error(
+            f"config value at <config>.mirror must be a JSON object, got {type(value).__name__}",
+            path="<config>.mirror",
+        )
+    unknown = sorted(set(value) - _MIRROR_CONFIG_KEYS)
+    if unknown:
+        raise validation_error(
+            f"config value at <config>.mirror has unknown key(s): {', '.join(unknown)}",
+            path="<config>.mirror",
+            unknown_keys=unknown,
+            known_keys=sorted(_MIRROR_CONFIG_KEYS),
+        )
+    adapter = value.get("adapter", "beads")
+    if adapter not in _MIRROR_ADAPTERS:
+        raise validation_error(
+            f"config value at <config>.mirror.adapter is not one of {sorted(_MIRROR_ADAPTERS)}: {adapter!r}",
+            path="<config>.mirror.adapter",
+        )
+    workspace = value.get("workspace")
+    if not isinstance(workspace, str) or not workspace:
+        raise validation_error(
+            "config value at <config>.mirror.workspace is required (a non-empty string) when "
+            "'mirror' is present -- the directory an operator has already run 'bd init' in",
+            path="<config>.mirror.workspace",
+        )
+    if "bd_bin" in value and (not isinstance(value["bd_bin"], str) or not value["bd_bin"]):
+        raise validation_error(
+            "config value at <config>.mirror.bd_bin must be a non-empty string when present",
+            path="<config>.mirror.bd_bin",
+        )
+
+
+def _validate_briefs(value: Any) -> None:
+    """`briefs` (`TASK-M2-006`): a CLI-owned, non-canonical `work_id ->
+    brief text` mapping, entirely optional and independent of `mirror` --
+    a config MAY supply briefs even when no mirror is configured (they are
+    simply unused in that case), matching how `attempts` is validated
+    independently of which ports are real."""
+    if value is None:
+        return
+    if not isinstance(value, Mapping):
+        raise validation_error(
+            f"config 'briefs' must be a JSON object keyed by work_id, got {type(value).__name__}",
+            path="<config>.briefs",
+        )
+    for work_id, brief in value.items():
+        if not isinstance(brief, str):
+            raise validation_error(
+                f"config value at <config>.briefs.{work_id} must be a string, got {type(brief).__name__}",
+                path=f"<config>.briefs.{work_id}",
+            )
+
+
 def _validate_execution_candidate_combo(execution_cfg: Any, candidate_cfg: Any) -> None:
     """`execution.adapter == 'acp'` REQUIRES `candidate.adapter == 'git'`
     (module docstring, "Real-port selection"): a real agent execution's
@@ -511,6 +619,8 @@ def load_config(path: str) -> Mapping[str, Any]:
     _validate_execution_config(data.get("execution"))
     _validate_candidate_config(data.get("candidate"))
     _validate_assurance_config(data.get("assurance"))
+    _validate_mirror_config(data.get("mirror"))
+    _validate_briefs(data.get("briefs"))
     _validate_execution_candidate_combo(data.get("execution"), data.get("candidate"))
     _validate_assurance_candidate_combo(data.get("assurance"), data.get("candidate"))
     execution_adapter = (data.get("execution") or {}).get("adapter", "scripted")
@@ -857,6 +967,23 @@ def build_dispatch_ports(
     return execution, candidate, assurance
 
 
+def build_mirror(config: Mapping[str, Any]) -> Optional[BeadsMirror]:
+    """`mirror` (`TASK-M2-006`): `None` when the `mirror` key is absent (or
+    `null`) -- the zero-behavior-change default every existing config
+    already satisfies. `BeadsMirror` is constructed, never a `WorkGraphPort`
+    -- this is not part of `build_dispatch_ports`'s `(execution, candidate,
+    assurance)` triple; it is an independent, optional, write-only observer
+    `cmd_dispatch` consults separately, after the ordinary dispatch loop has
+    already run and journaled everything it is going to journal."""
+    mirror_cfg = config.get("mirror")
+    if not mirror_cfg:
+        return None
+    kwargs: dict[str, Any] = {"workspace": mirror_cfg["workspace"]}
+    if "bd_bin" in mirror_cfg:
+        kwargs["bd_bin"] = mirror_cfg["bd_bin"]
+    return BeadsMirror(**kwargs)
+
+
 def _validate_max_attempts(value: Any, *, source: str) -> int:
     """`INV-019` requires any configured attempt budget be finite (and, by
     the same "budget" intent, positive -- a run that can never attempt
@@ -889,6 +1016,7 @@ def build_run_config(config: Mapping[str, Any], *, max_attempts_override: int | 
 
 __all__ = [
     "build_dispatch_ports",
+    "build_mirror",
     "build_real_assurance_script",
     "build_run_config",
     "build_scripted_adapters",

@@ -29,7 +29,13 @@ from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.adapters.memory.work_graph import MemoryWorkGraph
 from orc_werk.app.orchestrator import Orchestrator, is_pending
 from orc_werk.cli.affordances import render_next_block
-from orc_werk.cli.config import build_dispatch_ports, build_run_config, build_scripted_adapters, load_config
+from orc_werk.cli.config import (
+    build_dispatch_ports,
+    build_mirror,
+    build_run_config,
+    build_scripted_adapters,
+    load_config,
+)
 from orc_werk.cli.hyperlink import hyperlink_path
 from orc_werk.cli.journal_reading import (
     BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED,
@@ -216,6 +222,37 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     orchestrator.bootstrap(intent_id=run_id, text=args.intent, plan=plan)
     projection = orchestrator.run()
     history = journal.history(delivery_run_id=run_id)
+
+    # `TASK-M2-006`: optional, write-only Beads mirror -- absent `mirror`
+    # config (the default) means `build_mirror` returns `None` and this
+    # block never runs at all, so every existing config's dispatch output
+    # is byte-identical to before this task. Placed AFTER `orchestrator.
+    # run()` so it only ever projects durable, already-journaled state
+    # (module docstring, `orc_werk.adapters.beads.mirror`: a projection
+    # consumer of journal-derived state, never a driver of dispatch
+    # decisions). A degraded mirror (one or more `bd` calls failed) is
+    # reported to stderr only -- never a dispatch failure, never a change
+    # to `exit_code` (mirror failures MUST NEVER break the delivery loop,
+    # per the task card).
+    mirror = build_mirror(config)
+    if mirror is not None:
+        mirror_report = mirror.project_run(
+            delivery_run_id=run_id,
+            history=history,
+            projection=projection,
+            briefs=config.get("briefs"),
+            intent_text=args.intent,
+        )
+        if mirror_report.degraded:
+            failed = len(mirror_report.errors)
+            total = len(mirror_report.calls)
+            print(
+                f"mirror: degraded ({failed} of {total} bd call(s) failed) -- "
+                "kernel/journal state is unaffected; see stderr detail below",
+                file=sys.stderr,
+            )
+            for call in mirror_report.errors:
+                print(f"mirror: bd {' '.join(call.argv[1:])} -> exit {call.returncode}: {call.stderr.strip()}", file=sys.stderr)
 
     if is_first_dispatch or args.config:
         # "on first dispatch" (always persist once) OR "explicit --config
