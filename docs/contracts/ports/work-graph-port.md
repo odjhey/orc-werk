@@ -70,22 +70,30 @@ This is the graph topology (mirroring the `PORT-WORK-001` create plan shape) plu
 ### PORT-WORK-003 `ready`
 Return Work eligible for dispatch now.
 
-Semantics: eligibility is authoritative. The core MUST obey `INV-015` and `INV-016`.
+Semantics: eligibility is authoritative. The core MUST obey `INV-015` and `INV-016`. `ready` is a discovery surface for claimants: it returns Work that is both eligible (per `INV-015`/`INV-016`) and unclaimed.
 
 ### PORT-WORK-004 `claim`
 Claim one Work item for orchestration/execution when supported.
+
+A claim is once per Work lineage: the claim holder owns the Work across all retry attempts within that lineage and drives them from journal state. Retries within a lineage MUST NOT re-claim.
+
+`claim` MUST reject with `ERR-CONFLICT` when the named Work is not currently eligible to be claimed — deps not committed-complete (`INV-016`), or the Work is already claimed, completed, or blocked.
 
 Output: a portable mapping `{work_id, claim_ref}`, where `claim_ref` is a provider-issued opaque string.
 
 ### PORT-WORK-005 `complete`
 Commit the completion condition required to unlock dependents.
 
+`complete` on a Work that is already completed is idempotent: it MUST succeed and MUST NOT re-run completion side effects.
+
 ### PORT-WORK-006 `block`
 Commit a non-terminal or terminal block reason according to policy/provider capability.
 
+`block` on a Work that is already blocked is idempotent when the given reason matches the recorded block reason; it MUST reject with `ERR-CONFLICT` when the given reason differs from the recorded one.
+
 ## Required errors
 
-Use canonical errors from `CONTRACT-ERRORS`.
+Use canonical errors from `CONTRACT-ERRORS`. In particular, across all operations on this port: an operation naming an unknown `work_id` MUST reject with `ERR-NOT-FOUND`; a mutation (`claim`, `complete`, `block`) against a Work that is already in a terminal state (completed or blocked) MUST reject with `ERR-CONFLICT`, except for the `complete`-on-completed and matching-reason `block`-on-blocked idempotent cases stated above.
 
 ## Explicit non-semantics
 
