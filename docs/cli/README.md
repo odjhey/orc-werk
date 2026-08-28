@@ -368,48 +368,6 @@ path as the visible text) so supporting terminals make it clickable
 capturing output programmatically -- the plain path prints byte-identical,
 with zero escape bytes.
 
-### `orc crew-report append` / `orc crew-report list`
-
-Append or list `crew-report/v1` narrative records for a run/execution --
-claims about progress (`claimed_verdict`, deliberately not `verdict`), never
-a canonical settlement/candidate/verdict. See `docs/extensions/crew-report/README.md`
-(`EXT-CREW-REPORT-V1`) for the schema and canonical status of this channel.
-
-```text
-usage: orc crew-report append [-h] --execution-id EXECUTION_ID
-                               --payload PAYLOAD [--journal JOURNAL]
-                               run_id
-```
-
-| Flag | Default | Notes |
-|---|---|---|
-| `run_id` (positional) | required | `delivery_run_id` |
-| `--execution-id` | required | `execution_id` this report describes |
-| `--payload` | required | `crew-report/v1` payload as a portable JSON object |
-| `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory the report log sits beside |
-
-```bash
-orc crew-report append my-run-id --execution-id exec-1 --payload '{"turn": 1, "claimed_verdict": "waiting"}'
-```
-
-```text
-usage: orc crew-report list [-h] [--execution-id EXECUTION_ID]
-                             [--journal JOURNAL] [--limit LIMIT]
-                             run_id
-```
-
-| Flag | Default | Notes |
-|---|---|---|
-| `run_id` (positional) | required | `delivery_run_id` |
-| `--execution-id` | none | restrict to reports for one `execution_id` |
-| `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory the report log sits beside |
-| `--limit` | `30` | most-recent reports to show; `0` for all |
-
-```bash
-orc crew-report list my-run-id
-orc crew-report list my-run-id --execution-id exec-1 --limit 0
-```
-
 ## Exit codes
 
 | Code | Meaning |
@@ -461,7 +419,6 @@ directory layout**: `<journal-dir>/<run_id>/` holding
   line with `schema_version` on each; portable, `jq`-readable, no
   orc-werk imports required to read it.
 - `times.jsonl` -- observed-at sidecar (`CONTRACT-DURABILITY`).
-- `reports.jsonl` -- crew reports (`EXT-CREW-REPORT-V1`).
 - `report.html` -- this run's default `orc report` output.
 - `config.json` -- the persisted effective dispatch config (issue #55 H2;
   see `orc dispatch`'s "Config persistence" section above).
@@ -480,10 +437,13 @@ A **legacy flat `.orc` directory from before issue #55 keeps working
 unmodified** -- every read path (bare `orc` index, `status`/`history` by
 bare run id, `report`/`report --index`/`--all`/`--match`, sidecar
 discovery) accepts both layouts, and each artifact (journal, times
-sidecar, crew-report log) is decided independently per its own legacy
-filename's existence. The `+` character (`<run_id>+reports.jsonl`,
-`<run_id>+times.jsonl`) is reserved for legacy sidecars and cannot appear
-in a run id. Full detail, including the run-id namespace convention
+sidecar) is decided independently per its own legacy filename's
+existence. The `+` character (`<run_id>+times.jsonl`) is reserved for
+legacy sidecars and cannot appear in a run id (a pre-removal run may also
+still hold a legacy `<run_id>+reports.jsonl` `crew-report/v1` sidecar,
+`EXT-CREW-REPORT-V1`, superseded, issue #100 part 2 -- inert; `orc` no
+longer reads or writes it, but the `+` exclusion still keeps it out of the
+run-id sweep). Full detail, including the run-id namespace convention
 (`m1.task-005`-style dot-separated prefixes for `--match` grouping), is in
 `docs/playbooks/cli-usage.md`'s "Journal layout" and "Run-id namespace
 convention" sections -- this reference does not duplicate it.
@@ -498,8 +458,8 @@ convention" sections -- this reference does not duplicate it.
 - `.agents/skills/orc-ledger/SKILL.md` -- fresh-session onboarding skill.
 - `docs/scenarios/SCN-007-pending-settlement.md` (`SCN-007`) -- normative
   spec for exit `3` / pending-settlement behavior.
-- `docs/extensions/crew-report/README.md` (`EXT-CREW-REPORT-V1`) -- the
-  narrative crew-report channel's schema.
+- `docs/extensions/crew-report/README.md` (`EXT-CREW-REPORT-V1`, superseded)
+  -- the removed narrative-report sidecar; historical reference only.
 - `src/orc_werk/cli/config.py` -- config schema source of truth.
 - `docs/contracts/durability-responsibilities.md` (`CONTRACT-DURABILITY`)
   -- the reference-first doctrine `orc refs` projects

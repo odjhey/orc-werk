@@ -53,8 +53,11 @@ the run's `next:` affordance), then advanced by re-running the same dispatch
 command. Merge-only edits: append your own work's attempt entries; never
 touch sibling works' entries or the `plan` key. Concurrent dispatch of the
 same run is forbidden — one party re-dispatches at a time. If no adapter
-journals your seat, identify your model/tool, session reference, and role via
-`orc crew-report append` per `EXT-CREW-REPORT-V1`.
+journals your seat, identify your model/tool, session reference, and role in
+a small payload under your execution attempt entry's `extensions` key — it
+transports losslessly into the settled fact and is visible via `orc
+history`/`orc refs` (PLAYBOOK-AGENT-CLI §2, "Executor identity when no
+adapter journals the seat").
 
 ## 5. New work
 

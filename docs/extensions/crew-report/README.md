@@ -1,11 +1,13 @@
 ---
 id: EXT-CREW-REPORT-V1
 type: extension
-status: current
+status: superseded
 authority: normative
 version: 1
 description: Append-only, claim-only handoff report extension for execution turns, with an adapter-owned durable log.
 ---
+
+> **Superseded** (operator ruling, issue #100 part 2, "reference-first narrative doctrine" — issue #65's amended ruling). `crew-report/v1` and its CLI (`orc crew-report append`/`list`), render path, and adapter-owned log are **removed**, pre-v1, no backward compat: narrative/report content is provider-owned, and the ledger journals a durable, resolvable *reference* to it instead. The replacement surfaces are `execution-session/v1` (`EXT-EXECUTION-SESSION-V1`) and `evidence_refs` on `FACT-ASSURE-SETTLED` (`EXT-REVIEW-FINDINGS-V1` for structured findings), both exposed read-only via `orc refs`. Executor self-identification re-routes to a config-entry `extensions` payload on the recorded execution outcome (`docs/playbooks/agent-cli-usage.md`, per issues #105/#106). This page and its schema/semantics/examples are **retained as historical reference only** — existing delivery-run journals may still carry legacy `<run_id>+reports.jsonl`/`<run_id>/reports.jsonl` sidecar files (inert; `orc` no longer reads or writes them) and this schema is what a reader needs to interpret their contents.
 
 # `crew-report/v1`
 

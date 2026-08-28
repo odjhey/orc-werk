@@ -36,7 +36,7 @@ description: Flat documentation index.
 - [Extension registry](extensions/README.md)
 - [`review-findings/v1`](extensions/review-findings/README.md)
 - [`execution-session/v1`](extensions/execution-session/README.md)
-- [`crew-report/v1`](extensions/crew-report/README.md)
+- [`crew-report/v1`](extensions/crew-report/README.md) (superseded — removed, historical reference only)
 
 ## Verification
 - [Golden scenarios](scenarios/README.md)
