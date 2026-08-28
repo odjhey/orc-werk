@@ -24,7 +24,7 @@ If you are unsure which seat you are in, stop and ask rather than guess — reco
 
 ## 3. Ship-agent protocol
 
-1. **Confirm the work is claimed before starting.** A claim is once per Work lineage (`PORT-WORK-004`, `INV-020`'s reduced-key form) — it is held by its claimant across all retry attempts and is never re-acquired on retry. Check `orc status` for the Work; if it is not yet claimed, claim it. If it is already claimed by someone else, `claim` rejects with `ERR-CONFLICT` — do not proceed as if you owned the Work.
+1. **Claiming is orchestrator-mechanical, not something you invoke.** There is no `orc claim` command. A claim is once per Work lineage (`PORT-WORK-004`, `INV-020`'s reduced-key form) — it is held by its claimant across all retry attempts and is never re-acquired on retry — but the CLI journals `FACT-WORK-CLAIMED` automatically at dispatch, as part of the ordinary `FX-CLAIM-WORK` effect; you do not, and cannot, issue a separate claim step. Your discipline is instead: **do not dispatch/work a run, or a Work within a shared-config run, that another agent is actively working.** If you are unsure whether a run or Work is already in flight, check `orc history <run>` for a recent `FACT-WORK-CLAIMED`/`FACT-EXEC-STARTED` you did not produce yourself, and hold off rather than racing it.
 2. **Do the work.**
 3. **Record the outcome and candidate** for the config/backing store the ExecutionPort reads (see Mechanics below) — not prose. Candidate content MUST be **externally resolvable identity**: a PR number, a head sha, a run URL — anything a stranger with no access to your reasoning could independently fetch and check. Never record a description of what you did as the candidate; a sentence is not verifiable, an artifact reference is.
 4. **Re-dispatch** (`orc dispatch`, same command, same journal) to advance the run. This is always safe — see Mechanics.
@@ -49,7 +49,30 @@ If you are unsure which seat you are in, stop and ask rather than guess — reco
   - **`3`** — run non-terminal, pending input. The output names which Work is waiting and for what (`execution-outcome` or `assurance-verdict`). If it's waiting on an execution outcome and you are the ship agent for that Work, record it (protocol §3). If it's waiting on an assurance verdict and you are the verification agent, record it (protocol §4). If it's waiting on the *other* seat's input, you are done for now — do not fill in the other seat's record yourself.
 - **Re-running the same dispatch is safe (idempotent) and is the crash-recovery move.** Idempotency keys are derived from durable canonical state (`INV-020`), never randomness or wall-clock time, so replaying `orc dispatch` after a crash — yours or the process's — reproduces identical keys and never duplicates a fact or effect. If you are unsure whether your last recording landed, the answer is always: record it (or re-record it — idempotent) and re-dispatch. Never invent a workaround to "force" a stuck-looking run past exit `3`; pending is correct until the real outcome is known and recorded.
 
-## 6. Worked example — task-m1-003
+## 6. Multi-work etiquette (shared-config runs)
+
+Watchtower ruling, normative for this playbook. Applies whenever multiple
+Works in the **same** run share one config/journal (a multi-work plan, not
+several unrelated single-work runs):
+
+- **Merge only your own Work's `attempts` entries.** When you edit the
+  config/backing store to record your settlement or verdict (per §5's
+  Mechanics), your edit MUST be append/merge-only and scoped to the
+  `attempts` entries for the Work you are recording for. Never touch a
+  sibling Work's entries, and never touch the `plan` key. A shared-config
+  multi-work run has one config file serving every Work in the plan; your
+  write discipline must not assume you are its only writer.
+- **Concurrent `orc dispatch` of the *same* run is forbidden.** Re-dispatch
+  is one-party-at-a-time: the journal is single-writer (§5's "one writer
+  per run journal at a time" already says this for the journal itself —
+  this ruling makes the same constraint explicit for the *config* side of
+  a shared multi-work run, where the temptation to have two agents record
+  outcomes and dispatch in parallel is higher). If you are unsure whether
+  another agent is mid-dispatch on the same run, do not race it — check
+  `orc history <run>` first (see §3 item 1) and wait if a recent record you
+  did not produce suggests another party is active.
+
+## 7. Worked example — task-m1-003
 
 This is the real record sequence from a completed run in this repository's own delivery history (`.orc/task-m1-003.jsonl`), tracking `TASK-M1-003`'s own CLI-UX PR through the ledger. It predates this playbook and was recorded through the same config/backing-store observation path an agent uses under this playbook (§5) — it is the exact loop a ship agent and a verification agent perform under push mode, summarized here rather than dumped record-for-record:
 
@@ -61,9 +84,23 @@ This is the real record sequence from a completed run in this repository's own d
 
 Notice what the two agent seats did and did not do: the ship agent recorded a settlement and a resolvable candidate, never a verdict on its own work; the verification agent recorded a verdict derived from its own independent fetch, never copied from the settlement record; neither agent recorded any `DEC-*`. That is the whole loop.
 
-## 7. Forward pointer — narrative reports are a separate channel
+## 8. The crew-report log — a separate, already-live channel
 
-Everything above is canonical observation: settlements, candidates, verdicts. Your own turn-by-turn narration — what you believe you did, what's still pending, what you think the outcome is — is a different, non-canonical channel: `crew-report/v1` (`EXT-CREW-REPORT-V1`, sequenced as `TASK-M1-007`). Once that log is wired up, agents append reports there (`claimed_verdict`, not `verdict` — deliberately, so it can never be mistaken for an assurance verdict) beside, not inside, the settlement/candidate/verdict observations this playbook governs. A crew report is a claim about your own progress; it MUST NOT affect canonical state, decisions, or transitions, and it never substitutes for the settlement, candidate, or verdict recording described above.
+Everything above is canonical observation: settlements, candidates,
+verdicts. Your own turn-by-turn narration — what you believe you did,
+what's still pending, what you think the outcome is — is a different,
+non-canonical channel: `crew-report/v1` (`EXT-CREW-REPORT-V1`). This log
+**exists and is live** (`TASK-M1-007`, shipped): `orc crew-report append`
+and `orc crew-report list` are real CLI subcommands today, not a forward
+pointer to future work. Agents MAY append narrative turn reports there —
+`claimed_verdict`, not `verdict`, deliberately, so it can never be mistaken
+for an assurance verdict — beside, not inside, the settlement/candidate/
+verdict observations this playbook governs. A crew report is a claim about
+your own progress; it MUST NOT affect canonical state, decisions, or
+transitions, and it never substitutes for the settlement, candidate, or
+verdict recording described above. `claimed_verdict` is always a claim,
+never a verdict recording — recording one is not, and never becomes,
+assurance.
 
 ## Related
 
