@@ -12,6 +12,7 @@ description: Flat documentation index.
 - [Thesis](product/thesis.md)
 - [Principles](product/principles.md)
 - [Boundaries](product/boundaries.md)
+- [Adoption guide](product/adoption.md)
 
 ## Domain
 - [Ubiquitous language](domain/ubiquitous-language.md)
