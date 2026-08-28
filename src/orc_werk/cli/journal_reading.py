@@ -158,7 +158,8 @@ def _resolve_journal(target: str, explicit_journal_dir: Optional[str] = None) ->
         # the new-layout interpretation even though a legacy run named
         # "journal" could produce the same basename in a flat directory.
         if path.name == layout.JOURNAL_FILENAME:
-            return path.parent.parent, path.parent.name
+            resolved_path = path.resolve()
+            return resolved_path.parent.parent, resolved_path.parent.name
         return path.parent, path.stem
     if path.is_dir():
         # issue #55 H1: `target` may itself be one run's own new-layout

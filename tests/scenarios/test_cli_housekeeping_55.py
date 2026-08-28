@@ -90,6 +90,16 @@ class ExplicitJournalFileResolutionTest(unittest.TestCase):
             self.assertIn("run: status-file-run", result.stdout)
             self.assertIn("state=ACCEPTED", result.stdout)
 
+    def test_status_accepts_bare_journal_file_from_inside_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_path = self._dispatch(tmp_dir, "status-bare-file-run")
+
+            result = _run_cli(journal_path.parent, "status", "journal.jsonl")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("run: status-bare-file-run", result.stdout)
+            self.assertIn("state=ACCEPTED", result.stdout)
+
     def test_history_accepts_per_run_journal_file_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
