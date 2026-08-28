@@ -43,7 +43,7 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.log.append(
             delivery_run_id=DRID, execution_id="e1", report={"turn": 1, "claimed_verdict": "waiting"}
         )
-        report_path = self.directory / f"{DRID}.reports.jsonl"
+        report_path = self.directory / f"{DRID}+reports.jsonl"
         journal_path = self.directory / f"{DRID}.jsonl"
         self.assertTrue(report_path.exists())
         self.assertFalse(journal_path.exists())  # never created/merged by this adapter
@@ -55,7 +55,7 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.log.append(
             delivery_run_id=DRID, execution_id="e1", report={"turn": 2, "claimed_verdict": "done"}
         )
-        path = self.directory / f"{DRID}.reports.jsonl"
+        path = self.directory / f"{DRID}+reports.jsonl"
         lines = path.read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 2)
         for line in lines:
@@ -83,7 +83,7 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.log.append(
             delivery_run_id=DRID, execution_id="e1", report={"turn": 2, "claimed_verdict": "needs-action"}
         )
-        path = self.directory / f"{DRID}.reports.jsonl"
+        path = self.directory / f"{DRID}+reports.jsonl"
         with path.open("a", encoding="utf-8") as fh:
             fh.write('{"schema_version": 1, "delivery_run_id": "dr-crew-')  # torn write
 
@@ -100,7 +100,7 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.assertEqual([json.loads(line)["report"]["turn"] for line in lines], [1, 2, 3])
 
     def test_zero_valid_records_file_raises_err_validation(self) -> None:
-        path = self.directory / f"{DRID}.reports.jsonl"
+        path = self.directory / f"{DRID}+reports.jsonl"
         path.write_text("hello this is not json at all, just plain text\n", encoding="utf-8")
 
         reopened = CrewReportLog(self.directory)
@@ -109,7 +109,7 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.assertEqual(ctx.exception.error["error"], "ERR-VALIDATION")
 
     def test_torn_final_line_with_no_preceding_valid_record_raises_err_validation(self) -> None:
-        path = self.directory / f"{DRID}.reports.jsonl"
+        path = self.directory / f"{DRID}+reports.jsonl"
         path.write_text('{"schema_version": 1, "delivery_run_id": "dr-trunca', encoding="utf-8")
 
         reopened = CrewReportLog(self.directory)
@@ -124,7 +124,7 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.log.append(
             delivery_run_id=DRID, execution_id="e1", report={"turn": 2, "claimed_verdict": "done"}
         )
-        path = self.directory / f"{DRID}.reports.jsonl"
+        path = self.directory / f"{DRID}+reports.jsonl"
         lines = path.read_text(encoding="utf-8").splitlines()
         lines[0] = "NOT-JSON-CORRUPTION"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -174,7 +174,7 @@ class CrewReportNoSideEffectsBeforeValidationTest(unittest.TestCase):
         log.append(
             delivery_run_id=DRID, execution_id="e1", report={"turn": 1, "claimed_verdict": "done"}
         )
-        self.assertTrue((self.directory / f"{DRID}.reports.jsonl").exists())
+        self.assertTrue((self.directory / f"{DRID}+reports.jsonl").exists())
         self.assertEqual(len(log.list_reports(delivery_run_id=DRID)), 1)
 
 

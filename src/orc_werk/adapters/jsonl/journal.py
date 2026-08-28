@@ -71,7 +71,7 @@ once, shared with the crew-report log adapter (`TASK-M1-007`,
 journal-specific (`seq` assignment/caching, fact/decision/effect envelope
 construction).
 
-## Observed-at time sidecar (`<run_id>.times.jsonl`, issue #39,
+## Observed-at time sidecar (`<run_id>+times.jsonl`, issue #39,
 ## `CONTRACT-DURABILITY`'s "record observation wall-clock times" row)
 
 Canonical `PORT-JOURNAL-ENVELOPE` records carry no timestamp -- clock
@@ -80,7 +80,7 @@ values in the envelope would break the record-identical replay guarantee
 operator ran them must still produce byte-identical journals). Wall-clock
 observation time is nonetheless useful for a human reading `orc report`,
 so this adapter stamps it into a sidecar file beside -- never inside --
-the canonical journal: `<directory>/<delivery_run_id>.times.jsonl`, one
+the canonical journal: `<directory>/<delivery_run_id>+times.jsonl`, one
 `{"seq": N, "observed_at": "<iso8601Z>"}` line appended immediately after
 each successful canonical append, keyed by that record's own `seq` so a
 reader joins the two files by `seq` alone.
@@ -94,7 +94,7 @@ guarantee above is unchanged by it:
   reader, and it treats it as pure presentation enrichment.
 - **Creation deferred to first write.** `JSONLJournal.__init__` mkdirs the
   *directory* (unchanged, pre-existing behavior) but never creates a
-  `.times.jsonl` file itself; the file first appears on this run's first
+  `+times.jsonl` file itself; the file first appears on this run's first
   successful append.
 - **Best-effort, never fatal.** The stamp is written only after the
   canonical record above it has already been durably appended, and any
@@ -185,7 +185,7 @@ class JSONLJournal(JournalPort):
     def _times_path_for(self, delivery_run_id: str) -> Path:
         # delivery_run_id is already validated by _path_for/_scan before
         # this is ever reached from _append -- no redundant re-check.
-        return self._directory / f"{delivery_run_id}.times.jsonl"
+        return self._directory / f"{delivery_run_id}+times.jsonl"
 
     def _stamp_observed_at(self, delivery_run_id: str, seq: int) -> None:
         """Best-effort observed-at time sidecar stamp (module docstring's

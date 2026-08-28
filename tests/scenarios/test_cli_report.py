@@ -351,7 +351,7 @@ class TimesSidecarRenderingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             self._build_run(tmp_dir)
-            times_path = tmp_dir / ".orc" / f"{self.RUN_ID}.times.jsonl"
+            times_path = tmp_dir / ".orc" / f"{self.RUN_ID}+times.jsonl"
             self.assertTrue(times_path.exists())
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
@@ -366,7 +366,7 @@ class TimesSidecarRenderingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             self._build_run(tmp_dir)
-            times_path = tmp_dir / ".orc" / f"{self.RUN_ID}.times.jsonl"
+            times_path = tmp_dir / ".orc" / f"{self.RUN_ID}+times.jsonl"
             times_path.unlink()
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
@@ -380,7 +380,7 @@ class TimesSidecarRenderingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             self._build_run(tmp_dir)
-            times_path = tmp_dir / ".orc" / f"{self.RUN_ID}.times.jsonl"
+            times_path = tmp_dir / ".orc" / f"{self.RUN_ID}+times.jsonl"
             good_lines = times_path.read_text(encoding="utf-8").splitlines()
             # Corrupt one line, keep the rest valid.
             good_lines[0] = "not valid json at all"
@@ -402,7 +402,7 @@ class TimesSidecarRenderingTest(unittest.TestCase):
             history_before = _run_cli(tmp_dir, "history", self.RUN_ID)
             status_before = _run_cli(tmp_dir, "status", self.RUN_ID)
 
-            (tmp_dir / ".orc" / f"{self.RUN_ID}.times.jsonl").unlink()
+            (tmp_dir / ".orc" / f"{self.RUN_ID}+times.jsonl").unlink()
 
             history_after = _run_cli(tmp_dir, "history", self.RUN_ID)
             status_after = _run_cli(tmp_dir, "status", self.RUN_ID)
@@ -499,6 +499,100 @@ class WildcardAllRenderingTest(unittest.TestCase):
             self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
             error = json.loads(result.stderr)
             self.assertEqual(error["error"], "ERR-VALIDATION")
+
+
+class SidecarSeparatorCollisionRegressionTest(unittest.TestCase):
+    """Attempt-2 watchtower ruling on PR #46: the sidecar separator is
+    `+`, outside the safe run-id charset, so a legal dot-namespaced run id
+    whose last segment is `times` or `reports` (e.g. `m1.times`,
+    `foo.reports` -- which under the rejected dot-suffix scheme yielded
+    `m1.times.jsonl` and were misclassified as sidecars, vanishing from
+    `--all`/`--index` and bare-directory resolution) is fully visible
+    everywhere, alongside its own `+`-suffixed sidecars."""
+
+    def _build_run(self, tmp_dir: Path, run_id: str) -> None:
+        config = {
+            "run_id": run_id,
+            "attempts": {
+                "work-1": [{"outcome": "completed", "candidate": {"x": 1}, "assurance": {"verdict": "accepted"}}]
+            },
+        }
+        config_path = tmp_dir / f"{run_id}.config.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        dispatch = _run_cli(tmp_dir, "dispatch", f"intent for {run_id}", "--config", str(config_path))
+        self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+    def test_collision_prone_run_ids_fully_visible_everywhere(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            for run_id in ("m1.times", "foo.reports"):
+                self._build_run(tmp_dir, run_id)
+                # The run's own sidecar uses the reserved separator...
+                self.assertTrue((tmp_dir / ".orc" / f"{run_id}+times.jsonl").exists())
+                # ...so the run journal's name, despite ending in
+                # `.times`/`.reports`, never collides with a sidecar name.
+                self.assertTrue((tmp_dir / ".orc" / f"{run_id}.jsonl").exists())
+
+            # --all sees both runs.
+            result = _run_cli(tmp_dir, "report", "--all")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertTrue((tmp_dir / ".orc" / "m1.times.report.html").exists())
+            self.assertTrue((tmp_dir / ".orc" / "foo.reports.report.html").exists())
+
+            # --match selects them by namespace.
+            match = _run_cli(tmp_dir, "report", "--all", "--match", "m1.*")
+            self.assertEqual(match.returncode, 0, msg=match.stdout + match.stderr)
+            self.assertIn("m1.times.report.html", match.stdout)
+            self.assertNotIn("foo.reports.report.html", match.stdout)
+
+            # The index lists both.
+            index_html = (tmp_dir / ".orc" / "index.html").read_text(encoding="utf-8")
+            self.assertIn("m1.times", index_html)
+
+            # Direct report by run id works (no hard ERR-NOT-FOUND).
+            single = _run_cli(tmp_dir, "report", "m1.times")
+            self.assertEqual(single.returncode, 0, msg=single.stdout + single.stderr)
+
+    def test_bare_directory_resolution_sees_a_collision_prone_run(self) -> None:
+        # Exactly one run in the directory, named `m1.times`, with its own
+        # `+`-suffixed sidecar beside it: bare-directory resolution must
+        # find exactly one journal (the rejected dot-suffix scheme made
+        # this run invisible -> hard ERR-NOT-FOUND).
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            self._build_run(tmp_dir, "m1.times")
+            self.assertTrue((tmp_dir / ".orc" / "m1.times+times.jsonl").exists())
+
+            status = _run_cli(tmp_dir, "status", ".orc")
+            self.assertEqual(status.returncode, 0, msg=status.stdout + status.stderr)
+            self.assertIn("run: m1.times", status.stdout)
+
+    def test_crew_report_round_trips_with_new_suffix_for_collision_prone_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            self._build_run(tmp_dir, "foo.reports")
+            journal_path = tmp_dir / ".orc" / "foo.reports.jsonl"
+            records = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()]
+            (execution_id,) = {
+                r["data"]["execution_id"]
+                for r in records
+                if r["kind"] == "fact" and r["id"] == "FACT-EXEC-STARTED"
+            }
+            append = _run_cli(
+                tmp_dir, "crew-report", "append", "foo.reports",
+                "--execution-id", execution_id,
+                "--payload", json.dumps({"turn": 1, "claimed_verdict": "done"}),
+            )
+            self.assertEqual(append.returncode, 0, msg=append.stdout + append.stderr)
+            self.assertTrue((tmp_dir / ".orc" / "foo.reports+reports.jsonl").exists())
+
+            listed = _run_cli(tmp_dir, "crew-report", "list", "foo.reports")
+            self.assertEqual(listed.returncode, 0, msg=listed.stdout + listed.stderr)
+            self.assertIn("claimed_verdict", listed.stdout)
+
+            # And the run journal itself is still resolvable/reportable.
+            report = _run_cli(tmp_dir, "report", "foo.reports")
+            self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
 
 
 class AbsolutePathSweepTest(unittest.TestCase):

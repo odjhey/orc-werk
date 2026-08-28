@@ -208,7 +208,7 @@ class JSONLJournalFileShapeTest(unittest.TestCase):
 
 class ObservedAtTimeSidecarTest(unittest.TestCase):
     """Issue #39, `CONTRACT-DURABILITY`'s "record observation wall-clock
-    times" row: `JSONLJournal` stamps `<run_id>.times.jsonl` on each
+    times" row: `JSONLJournal` stamps `<run_id>+times.jsonl` on each
     append, beside -- never inside -- the canonical journal, and it must
     never affect `history`/`load_projection` (SCN-007's record-identity
     guarantee is untouched by the sidecar's presence or absence)."""
@@ -220,7 +220,7 @@ class ObservedAtTimeSidecarTest(unittest.TestCase):
         self.journal = JSONLJournal(self.directory)
 
     def _times_path(self, drid: str) -> Path:
-        return self.directory / f"{drid}.times.jsonl"
+        return self.directory / f"{drid}+times.jsonl"
 
     def test_creation_deferred_to_first_append(self) -> None:
         drid = "dr-times-deferred"

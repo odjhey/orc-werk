@@ -171,7 +171,7 @@ def _load_times_sidecar(directory: Path, run_id: str) -> tuple[dict[int, str], i
     surface a "N corrupt sidecar record(s) skipped" note (skip-with-note,
     never skip-silently) alongside the times.
     """
-    path = directory / f"{run_id}.times.jsonl"
+    path = directory / f"{run_id}+times.jsonl"
     times: dict[int, str] = {}
     skipped = 0
     if not path.exists():
