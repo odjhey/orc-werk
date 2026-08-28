@@ -65,6 +65,7 @@ description: Flat documentation index.
 ## Delivery
 - [M0 pure core](delivery/M0-pure-core.md)
 - [Watchtower operations playbook](delivery/watchtower-operations.md)
+- [Delivery stance](delivery/delivery-stance.md)
 
 ## M0 task cards
 - [TASK-M0-001](delivery/task-cards/TASK-M0-001-core.md)
