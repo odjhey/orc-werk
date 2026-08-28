@@ -83,6 +83,16 @@ The reference CLI's config format is explicitly non-normative, CLI-owned composi
 
 The canonical state machine, its invariants, the facts/decisions/effects vocabulary, and the portable record shapes are not customization surfaces. Cross-deployment interoperability and the product's guarantees exist precisely because these stay fixed across every adapter and extension. When one of them does not fit your case, that is a contract-change proposal upstream (`docs/README.md`'s authoring rules), not a local fork.
 
+### Onboarding sessions in an adopting repository
+
+Copy the `orc-ledger` project skill (`.agents/skills/orc-ledger/` plus the
+`.claude/skills -> .agents/skills` symlink, or place it directly under
+`.claude/skills/`) into the adopting repository. A fresh session then
+self-onboards: orient via bare `orc`, resume rather than duplicate pending
+runs, and follow `PLAYBOOK-AGENT-CLI`'s seat discipline before recording.
+The skill keeps onboarding to six rules because the CLI's affordances teach
+the rest in situ.
+
 ## 4. Worked example — a fleet control tower (Rozoro)
 
 Rozoro is a control-tower persona: an operator delegating parallel work to a fleet of coding agents, then watching, steering, and reaping what comes back. It is a useful worked example precisely because it is not itself an Orc Werk deployment — mapping it onto the four questions any adopter must answer (`PRODUCT-THESIS`) exposes both the fit and the honest gaps.

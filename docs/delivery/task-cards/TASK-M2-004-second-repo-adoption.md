@@ -11,6 +11,17 @@ verifies: []
 
 # TASK-M2-004 — orc as ledger for another repo
 
+### Gated — sequenced last (operator ruling, M2 reshape)
+
+**This card stays in M2 but is explicitly sequenced LAST, gated on the
+Beads mirror (`TASK-M2-006`) and the no-mistakes `PORT-ASSURANCE` adapter
+(`TASK-M2-001`) landing first.** Operator ruling: the second-repo adoption
+demo is only compelling with the automatic verdict seat (`TASK-M2-001` —
+no operator manually recording assurance) and the portfolio/briefs view
+(`TASK-M2-006`'s Beads mirror) already in place; running the adoption demo
+before either exists would demo a weaker ledger than the milestone
+otherwise delivers. See "Depends on" below.
+
 ## Outcome
 
 Run at least one real delivery for a repository other than orc-werk itself
@@ -35,6 +46,18 @@ Building bespoke tooling for the second repo beyond what any adopter would
 reasonably be expected to set up per `PRODUCT-ADOPTION`'s existing ladder.
 If a gap requires new tooling, that itself is the finding to report, not
 something to build quietly to make the card look clean.
+
+## Depends on
+
+**Gated (operator ruling, M2 reshape): `TASK-M2-001` (no-mistakes
+`PORT-ASSURANCE` adapter) and `TASK-M2-006` (Beads mirror) both land
+first.** This supersedes the original "no M2-internal dependency" framing
+(`docs/delivery/task-cards/README.md`'s original M2 sequencing note): the
+adoption demo's value case now explicitly rests on the second repo's
+delivery running with an automatic verdict seat, not an operator manually
+recording assurance, and being visible in the Beads portfolio view rather
+than only as raw journal files. Sequenced last among the M2 cards that
+remain in scope, regardless of numbering.
 
 ## Acceptance
 
