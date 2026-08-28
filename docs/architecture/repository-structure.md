@@ -127,6 +127,23 @@ Do not make these canonical:
 
 A future Go implementation should be able to read/replay the canonical journal and implement the same ports/scenarios without importing Python artifacts.
 
+## Idempotency doctrine (informative)
+
+The invariants above compose into one operating stance: **replay is the
+universal verb, and the durable record — never anyone's memory — decides
+whether something already happened.** Effects are addressable by derived keys
+(`INV-020`), so "did this happen?" is a lookup; the app reconciles by key
+before dispatching; adapters make each operation idempotent at the provider
+boundary from durable state. The boundary is sharp: idempotent *within* an
+attempt, deliberately novel *across* attempts (`INV-004` — a retry is a new
+identity, never a re-run). Idempotent never means overwrite: replaying the
+same operation converges to the same outcome; a conflicting operation is
+`ERR-CONFLICT`, not a silent replacement. Bounded retries plus this doctrine
+are the safety mechanism — they are why unclassified failures degrade to a
+visible, capped, replayable block rather than requiring retry-classification.
+Operator-facing consequence (`SCN-007`): re-running the same dispatch is
+always safe and is simultaneously the resume, poll, and crash-recovery verb.
+
 ## Self-healing boundary
 
 Self-healing in the Python phase must be designed as portable orchestration behavior:
