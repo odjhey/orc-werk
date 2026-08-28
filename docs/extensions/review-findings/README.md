@@ -55,6 +55,7 @@ The extension explains or enriches that verdict; the generic core does not deriv
 
 ## Related
 
+- `P-010`
 - `CONTRACT-EXTENSIONS`
 - `PORT-ASSURANCE`
 - `CAP-ASSURE-STRUCTURED-FINDINGS`
