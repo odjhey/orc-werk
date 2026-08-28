@@ -40,6 +40,9 @@ If you are unsure which seat you are in, stop and ask rather than guess — reco
 
 ## 5. Mechanics
 
+**Multi-work briefs are not durable.** In a multi-work run, the journal durably records the topology and every settlement/verdict — but NOT what each work meant. Per-work briefs live only in the dispatching party's instructions (`CONTRACT-DURABILITY`, adapter-owned row): put anything a future reader must know into the run-level intent text or the PR/artifact the candidate points at; never assume the journal carries your assignment.
+
+
 - **One writer per run journal at a time.** Concurrent writers to the same run's journal are not supported; if two agents believe they own the same run, that is a coordination bug upstream of the CLI, not something the CLI arbitrates.
 - **Outcomes are recorded into the config/backing store, not the journal directly.** In M1a/M1a+, the ExecutionPort and AssurancePort read their next-attempt outcome from the dispatch config's `attempts` entries (see `PLAYBOOK-CLI-USAGE`'s Config section). You edit that store; the kernel journals the resulting facts itself via the normal observation path on the next `orc dispatch` (`SCN-007`). You never hand-author journal records.
 - **Exit codes and what they obligate you to do next** (full contract: `PLAYBOOK-CLI-USAGE`):
