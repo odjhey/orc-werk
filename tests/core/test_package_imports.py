@@ -57,6 +57,27 @@ class PackageImportsTest(unittest.TestCase):
             f"orc_werk.core import pulled in non-stdlib modules: {third_party}",
         )
 
+    def test_core_import_pulls_in_no_forbidden_orc_werk_packages(self) -> None:
+        # ARCH-REPOSITORY-STRUCTURE forbids core -> ports/app/adapters/cli.
+        for name in list(sys.modules):
+            if name == "orc_werk" or name.startswith("orc_werk."):
+                del sys.modules[name]
+
+        importlib.import_module("orc_werk.core")
+
+        forbidden_prefixes = ("orc_werk.ports", "orc_werk.app", "orc_werk.adapters", "orc_werk.cli")
+        leaked = {
+            name
+            for name in sys.modules
+            if name.startswith(forbidden_prefixes)
+        }
+
+        self.assertEqual(
+            leaked,
+            set(),
+            f"orc_werk.core import pulled in forbidden orc_werk packages: {leaked}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
