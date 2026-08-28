@@ -23,7 +23,7 @@ Pending/incremental mode is the M1a **default** dispatch mode: a config with no 
 1. Operator runs `orc dispatch` (invocation 1) against the config above.
 2. `FACT-EXEC-STARTED` is journaled for attempt 1. No outcome is available yet, so no settlement fact is produced.
 3. Dispatch stops cleanly; the process may exit.
-4. Operator separately records the real outcome for attempt 1 — execution settlement `completed` and Candidate C1, then (once known) assurance verdict `accepted` — into the same run's durable state.
+4. Operator separately records the real outcome for attempt 1 — execution settlement `completed` and Candidate C1, then (once known) assurance verdict `accepted` — into the provider-backing store the ExecutionPort/AssurancePort read (in M1a, the config/scripted attempt store), NOT as a journal record: the kernel emits `FACT-EXEC-SETTLED` and the subsequent facts itself, via the normal observation path, on the next dispatch — which is what makes the journal-identical assertion in step 11 hold.
 5. Operator runs `orc dispatch` again (invocation 2) with the unchanged command against the same run/journal.
 
 ## Then
