@@ -1,0 +1,9 @@
+{
+  "run_id": "s9d-zeromax",
+  "max_attempts": 0,
+  "attempts": {
+    "work-1": [
+      {"outcome": "failed"}
+    ]
+  }
+}

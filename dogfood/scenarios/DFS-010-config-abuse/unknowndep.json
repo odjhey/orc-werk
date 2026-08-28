@@ -1,0 +1,7 @@
+{
+  "run_id": "s8g-unknowndep",
+  "plan": {"works": [
+    {"work_id": "a", "deps": [{"work_id": "ghost", "condition": "accepted"}]}
+  ]},
+  "attempts": {"a": [{"outcome": "completed", "candidate": {"x":1}, "assurance": {"verdict": "accepted"}}]}
+}

@@ -1,0 +1,11 @@
+{
+  "run_id": "s4a-failexhaust",
+  "max_attempts": 3,
+  "attempts": {
+    "work-1": [
+      {"outcome": "failed"},
+      {"outcome": "failed"},
+      {"outcome": "failed"}
+    ]
+  }
+}

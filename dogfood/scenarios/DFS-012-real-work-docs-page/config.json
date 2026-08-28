@@ -1,0 +1,30 @@
+{
+  "run_id": "s10-docs-page",
+  "max_attempts": 3,
+  "plan": {"works": [{"work_id": "write-docs-page", "deps": []}]},
+  "attempts": {
+    "write-docs-page": [
+      {
+        "outcome": "completed",
+        "candidate": {
+          "files": ["docs/scenarios/SCN-007-cli-dogfood.md"],
+          "summary": "Add SCN-007 covering CLI dispatch/status/history dogfood coverage.",
+          "diff_stat": {"insertions": 42, "deletions": 0}
+        },
+        "assurance": {
+          "verdict": "rejected",
+          "extensions": {"findings": ["missing frontmatter id/type/status/authority header"]}
+        }
+      },
+      {
+        "outcome": "completed",
+        "candidate": {
+          "files": ["docs/scenarios/SCN-007-cli-dogfood.md"],
+          "summary": "Add SCN-007 with correct frontmatter covering CLI dogfood coverage.",
+          "diff_stat": {"insertions": 48, "deletions": 0}
+        },
+        "assurance": {"verdict": "accepted"}
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "run_id": "s4b-rejexhaust",
+  "max_attempts": 3,
+  "attempts": {
+    "work-1": [
+      {"outcome": "completed", "candidate": {"label": "X1"}, "assurance": {"verdict": "rejected"}},
+      {"outcome": "completed", "candidate": {"label": "X2"}, "assurance": {"verdict": "rejected"}},
+      {"outcome": "completed", "candidate": {"label": "X3"}, "assurance": {"verdict": "rejected"}}
+    ]
+  }
+}
