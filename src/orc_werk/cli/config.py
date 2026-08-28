@@ -668,7 +668,7 @@ def _exec_entry_from_attempt(attempt: Mapping[str, Any]) -> dict[str, Any]:
     `build_scripted_adapters` (fully scripted) and `build_dispatch_ports`'
     scripted-execution/real-candidate combination (`execution.adapter ==
     'scripted'`, `candidate.adapter == 'git'`) -- the same per-attempt
-    `outcome`/`states`/`artifact_refs` fields regardless of which
+    `outcome`/`states`/`artifact_refs`/`extensions` fields regardless of which
     `CandidatePort` observes the resulting candidate."""
     outcome = attempt.get("outcome", "completed")
     exec_entry: dict[str, Any] = {"outcome": outcome}
@@ -676,6 +676,8 @@ def _exec_entry_from_attempt(attempt: Mapping[str, Any]) -> dict[str, Any]:
         exec_entry["states"] = attempt["states"]
     if "artifact_refs" in attempt:
         exec_entry["artifact_refs"] = attempt["artifact_refs"]
+    if "extensions" in attempt:
+        exec_entry["extensions"] = attempt["extensions"]
     return exec_entry
 
 
