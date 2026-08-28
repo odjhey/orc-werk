@@ -28,6 +28,10 @@ class PackageImportsTest(unittest.TestCase):
         module = importlib.import_module("orc_werk.adapters.scripted")
         self.assertIsNotNone(module)
 
+    def test_adapters_jsonl_imports(self) -> None:
+        module = importlib.import_module("orc_werk.adapters.jsonl")
+        self.assertIsNotNone(module)
+
     def test_core_import_pulls_in_no_third_party_modules(self) -> None:
         # Drop anything already imported under the orc_werk namespace so a
         # fresh import of orc_werk.core actually exercises its import graph,
