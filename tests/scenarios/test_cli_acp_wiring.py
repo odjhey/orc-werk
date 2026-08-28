@@ -243,25 +243,29 @@ class AcpWiringSmokeTest(unittest.TestCase):
         return session_name_for_idempotency_key(key)
 
     def _seed_first_attempt(self) -> None:
-        """Pre-seed the stub session's script for work-1's first attempt.
-        Entry 0 (`states=["running","settled"]`) never actually reaches
-        "settled" via ordinary polling -- see `AcpxStubWorld.force_settle`'s
-        docstring for why (`orc_werk.app.Orchestrator`'s unconditional
-        `FX-START-EXECUTION` replay resubmits the prompt on every fresh
-        dispatch process, resetting the stub's per-call materialization
-        progress before this test's second dispatch gets to observe it);
-        the first dispatch below still genuinely observes "running" from
-        it. Entry 1 is a safety net: that same replay-driven resubmission
-        also triggers one additional, spurious `sessions show`
-        materialization check against `script[1]` during the second
-        dispatch -- without a second entry present, the stub would index
-        past the end of `script` and crash instead of returning JSON."""
+        """Pre-seed the stub session's script for work-1's first attempt:
+        a single entry that reaches "settled" on its second `sessions
+        show` call. Before issue #57's fix this could not be relied on --
+        `Orchestrator._reconcile_ports`'s unconditional `FX-START-
+        EXECUTION` replay resubmitted the prompt on every fresh dispatch
+        process, which reset the stub's per-call materialization progress
+        before a second dispatch ever got to observe it, so the test used
+        `AcpxStubWorld.force_settle` to sidestep polling entirely (see the
+        fix's PR for the full trace). Now that `AcpExecution.start()` is
+        cross-process idempotent (no resubmission, `docs/adapters/acp/
+        mapping.md` "Idempotency behavior"), the states list genuinely
+        advances one step per real `sessions show` call across the two
+        dispatch processes below: dispatch 1 contributes the submit-time
+        pre-check show (my new durable-signal check in `start()`, before
+        `turns_submitted` advances -- doesn't consume a states index) plus
+        its own `inspect()` poll (states[0] == "running"); dispatch 2's
+        `_reconcile_ports` replay's own pre-submit durable check is the
+        SECOND materializing `sessions show` call and lands on
+        states[1] == "settled" -- no `force_settle`/wall-clock stand-in
+        needed."""
         self.world.seed_script(
             self._session_name(),
-            [
-                {"states": ["running", "settled"], "outcome": "completed"},
-                {"outcome": "completed"},
-            ],
+            [{"states": ["running", "settled"], "outcome": "completed"}],
         )
 
     def _write_config(self, *, attempts: dict | None = None) -> None:
@@ -288,17 +292,17 @@ class AcpWiringSmokeTest(unittest.TestCase):
         self.assertEqual(result1.returncode, 3, result1.stdout + result1.stderr)
         self.assertIn("awaiting=execution-outcome", result1.stdout)
 
-        # 2) Simulate real wall-clock time passing: Pi genuinely finishes
-        # the turn *between* two `orc dispatch` invocations (the way a real
-        # attempt actually settles -- see `force_settle`'s docstring for
-        # why this is a direct world mutation rather than one more poll of
-        # the still-"running" states list). Then poll (re-dispatch): the
-        # now-materialized result settles the execution, a REAL git
-        # candidate is identified (fingerprint "fp-..."), and assurance is
+        # 2) Poll (re-dispatch): `_reconcile_ports`'s replay of this
+        # attempt's `FX-START-EXECUTION` calls `AcpExecution.start()`
+        # again from a fresh instance -- issue #57's cross-process
+        # idempotency check consults the session's durable "already
+        # prompted" signal (no resubmit) and, as a side effect of that
+        # same `sessions show` call, genuinely advances the stub's states
+        # list to "settled" (see `_seed_first_attempt`). The now-
+        # materialized result settles the execution, a REAL git candidate
+        # is identified (fingerprint "fp-..."), and assurance is
         # requested but still pending (no verdict recorded yet) -- exit 3
         # again, now awaiting the assurance verdict.
-        self.world.force_settle(self._session_name(), outcome="completed")
-
         result2 = self._run_cli(
             "dispatch", "reply with the word ping",
             "--config", str(self.config_path), "--journal", str(self.journal_dir),

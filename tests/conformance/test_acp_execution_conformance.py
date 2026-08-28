@@ -42,6 +42,7 @@ from typing import Any, Iterable, Mapping
 
 from orc_werk.adapters.acp.execution import AcpExecution, session_name_for_idempotency_key
 from orc_werk.core.models import Execution
+from orc_werk.ports.base import LIFECYCLE_STATE_SETTLED
 from orc_werk.ports.execution import ExecutionObservation, ExecutionPort
 from tests.conformance.support_acpx_stub import AcpxStubWorld
 from tests.conformance.test_execution_conformance import ExecutionPortConformance
@@ -126,6 +127,101 @@ class AcpExecutionConformanceTest(ExecutionPortConformance, unittest.TestCase):
             "CAP-EXEC-RESUME-EXACT (capability-durability rule, unmeetable per "
             "the 2026-08-28 spike) -- there is no legal fixture for this test."
         )
+
+
+class AcpExecutionCrossProcessIdempotencyTest(unittest.TestCase):
+    """Issue #57 regression: `AcpExecution.start()` must be idempotent
+    across processes, not just within one. Each test constructs multiple
+    SEPARATE `AcpExecution` instances against one shared `AcpxStubWorld`
+    -- standing in for `Orchestrator._reconcile_ports` replaying
+    `FX-START-EXECUTION` from a fresh, empty-cache adapter instance on
+    every ordinary `orc dispatch` process (`docs/adapters/acp/mapping.md`
+    "Idempotency behavior") -- and asserts on the stub's own submission
+    counter (`AcpxStubWorld.prompt_submission_count`), never on either
+    instance's in-process cache, so the assertion cannot pass by
+    accident via CONF-EXEC-002's same-instance fast path."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._world = AcpxStubWorld(Path(self._tmp.name))
+
+    def _instance(self) -> AcpExecution:
+        # A fresh AcpExecution with an empty in-process cache -- the
+        # closest in-test stand-in for "a new orc dispatch process."
+        return AcpExecution(env=self._world.env())
+
+    def test_two_processes_racing_an_in_flight_attempt_submit_exactly_once(self) -> None:
+        # Edge case (a): session exists, prompt already submitted, still
+        # running -> the second "process" must not resubmit.
+        key = "idem-57-race"
+        session_name = session_name_for_idempotency_key(key)
+        # states=["running"] only, mirroring the wiring smoke test's
+        # never-advances-past-running fixture -- the outstanding turn is
+        # still genuinely in flight when the second instance polls.
+        self._world.seed_script(session_name, [{"states": ["running"], "outcome": "completed"}])
+
+        first = self._instance()
+        second = self._instance()
+
+        first_execution = first.start(
+            work_id="work-1", execution_request={"prompt": "reply with ping"}, idempotency_key=key
+        )
+        second_execution = second.start(
+            work_id="work-1", execution_request={"prompt": "reply with ping"}, idempotency_key=key
+        )
+
+        self.assertEqual(self._world.prompt_submission_count(session_name), 1)
+        self.assertEqual(first_execution.id, second_execution.id)
+
+    def test_crash_between_ensure_and_submit_still_submits_exactly_once(self) -> None:
+        # Edge case (d): sessions ensure ran (a session record exists)
+        # but the process that ran it died before ever queuing a prompt
+        # -- no lastPromptAt/messages yet. This is the legitimate replay
+        # case: the next process/instance MUST still submit once, not
+        # treat the bare session record as "already started."
+        key = "idem-57-crash"
+        session_name = session_name_for_idempotency_key(key)
+        self._world.seed_script(session_name, [{"outcome": "completed"}])
+
+        crashed = self._instance()
+        # Reach only as far as `sessions ensure` -- the adapter's own
+        # subprocess plumbing, exercised directly to simulate a process
+        # that died between `ensure` and the prompt submit that follows
+        # it in start(), without duplicating acpx's session-creation
+        # protocol by hand.
+        crashed._run(["sessions", "ensure", "-s", session_name])
+        self.assertEqual(self._world.prompt_submission_count(session_name), 0)
+
+        recovering = self._instance()
+        recovering.start(
+            work_id="work-2", execution_request={"prompt": "reply with ping"}, idempotency_key=key
+        )
+
+        self.assertEqual(self._world.prompt_submission_count(session_name), 1)
+
+    def test_completed_turn_is_not_resubmitted(self) -> None:
+        # Edge case (b): session exists, turn already completed -> no
+        # resubmit; inspect() (not start()) is what settles the Work.
+        key = "idem-57-done"
+        session_name = session_name_for_idempotency_key(key)
+        self._world.seed_script(session_name, [{"states": ["settled"], "outcome": "completed"}])
+
+        first = self._instance()
+        execution = first.start(
+            work_id="work-3", execution_request={"prompt": "reply with ping"}, idempotency_key=key
+        )
+        observation = first.inspect(execution_id=execution.id)
+        self.assertEqual(observation.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observation.outcome, "completed")
+        self.assertEqual(self._world.prompt_submission_count(session_name), 1)
+
+        second = self._instance()
+        second.start(
+            work_id="work-3", execution_request={"prompt": "reply with ping"}, idempotency_key=key
+        )
+
+        self.assertEqual(self._world.prompt_submission_count(session_name), 1)
 
 
 if __name__ == "__main__":

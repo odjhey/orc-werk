@@ -24,6 +24,18 @@ Design summary (full rationale: `docs/adapters/acp/mapping.md`):
   "recovering after my own submitter died" cases are the exact same code
   path in `inspect()` -- there is no separate blocking-wait code path to
   keep in sync.
+- `start()` is idempotent **across processes**, not just within one
+  (issue #57): `Orchestrator._reconcile_ports` replays `FX-START-
+  EXECUTION` -- i.e. calls `start()` again -- from a fresh adapter
+  instance on every ordinary `orc dispatch`, so an in-process-only
+  duplicate-submit guard resubmits the prompt on every poll of a
+  still-running attempt. After `sessions ensure`, `start()` consults
+  `sessions show`'s durable session record (`_session_already_prompted`:
+  `lastPromptAt`/`messages` presence, never a wall-clock comparison) and
+  skips the submit step -- returning the same stable `Execution` ref --
+  whenever this attempt's session has already seen a prompt, from any
+  process. See `docs/adapters/acp/mapping.md` "Idempotency behavior" for
+  the durable-signal choice and its failure modes.
 - `inspect()` derives settlement **only** from a recorded `result.stopReason`
   in the session's raw JSON-RPC event-log stream (`sessions show`'s
   `eventLog.active_path`) -- never from `acpx status`/`sessions show`'s
@@ -102,6 +114,32 @@ _STOP_REASON_TO_OUTCOME = {
     # (completed | failed | cancelled) and the mapping-doc footgun that a
     # permission-denied/refused turn MUST NOT be reported as success.
 }
+
+
+def _session_already_prompted(show: Mapping[str, Any]) -> bool:
+    """Cross-process `start()` idempotency signal (issue #57). Presence-
+    only, never wall-clock (`CONF-EXEC-001`'s no-randomness/no-wall-clock
+    spirit extended to this decision): does NOT compare `lastPromptAt`
+    against anything, only checks whether it is set at all.
+
+    Confirmed empirically against real `acpx@0.13.1`/`pi-acp@0.0.31`
+    (`docs/adapters/acp/mapping.md` "Idempotency behavior" records the
+    full probe): a session's `sessions show --format json` record carries
+    `lastPromptAt: null` and `messages: []` from the moment `sessions
+    ensure` creates it, until the *first* prompt is queued against it --
+    at which point `lastPromptAt` becomes a set (non-null) string and
+    `messages` gains the submitted turn's entry, both *before* the turn
+    settles (i.e. this is a submission signal, not a completion signal;
+    `inspect()`'s `stopReason`-in-the-stream check remains the only
+    settlement authority). Checking both fields is defense-in-depth, not
+    redundancy: either one being truthy is independently sufficient
+    evidence a prompt was submitted, so a caller/version-drift losing one
+    field does not silently disable the guard as long as the other
+    survives.
+    """
+    if show.get("lastPromptAt") is not None:
+        return True
+    return bool(show.get("messages"))
 
 
 def session_name_for_idempotency_key(idempotency_key: str) -> str:
@@ -344,15 +382,11 @@ class AcpExecution(ExecutionPort):
         if idempotency_key in self._by_idempotency_key:
             # CONF-EXEC-002: same idempotency key -> same Execution ref,
             # no duplicate logical execution, no new acpx session/turn.
+            # Fast path only -- NOT the correctness mechanism for
+            # cross-process de-duplication (issue #57): a fresh process
+            # always misses this cache, so the durable check below is
+            # what actually prevents a duplicate prompt.
             return self._by_idempotency_key[idempotency_key]
-
-        prompt = execution_request.get("prompt")
-        if not isinstance(prompt, str) or not prompt:
-            raise validation_error(
-                "execution_request['prompt'] must be a non-empty string",
-                execution_request=execution_request,
-            )
-        model = execution_request.get("model")
 
         session_name = session_name_for_idempotency_key(idempotency_key)
         execution_id = _execution_id(agent=self._agent, session_name=session_name, work_id=work_id)
@@ -363,6 +397,54 @@ class AcpExecution(ExecutionPort):
             raise self._translate_invocation_error(
                 exc, operation="start", session_name=session_name, work_id=work_id
             ) from exc
+
+        # Issue #57: `Orchestrator._reconcile_ports` replays FX-START-
+        # EXECUTION -- i.e. calls this method again -- from a FRESH
+        # process/instance on every ordinary `orc dispatch`, not just
+        # genuine crash recovery (`docs/adapters/acp/mapping.md`
+        # "Idempotency behavior"). The in-process cache above is empty in
+        # that fresh process, so cross-process idempotency MUST come from
+        # a durable acpx signal, consulted before ever touching the
+        # prompt: `sessions show`'s own session record. Because
+        # `session_name` is a deterministic 1:1 function of this
+        # attempt's idempotency key (`session_name_for_idempotency_key`),
+        # "this session has ever seen a prompt" is exactly "this
+        # attempt's start() already ran its submit step once" -- there is
+        # no other submitter that could have written that signal.
+        try:
+            show = self._run(["sessions", "show", session_name])
+        except _AcpxInvocationError as exc:
+            raise self._translate_invocation_error(
+                exc, operation="start", session_name=session_name, work_id=work_id
+            ) from exc
+
+        if _session_already_prompted(show):
+            # Edge cases (a) running and (b) completed both land here --
+            # inspect() (not start()) is the settlement authority either
+            # way, so returning the same stable ref without resubmitting
+            # is correct and sufficient for both. Deliberately does NOT
+            # validate/require execution_request['prompt'] on this path:
+            # a bare replay call (e.g. `Orchestrator._replay_effect_record`,
+            # which always calls start() with execution_request={}) must
+            # not raise ERR-VALIDATION just because it has no prompt text
+            # to offer -- it doesn't need one, nothing is being submitted.
+            attempt_index = self._attempt_counts_by_work.get(work_id, 0)
+            self._attempt_counts_by_work[work_id] = attempt_index + 1
+            execution = Execution(id=execution_id, work_id=work_id, attempt_number=attempt_index + 1)
+            self._by_idempotency_key[idempotency_key] = execution
+            return execution
+
+        # Edge case (c) fresh session, or (d) crash between `sessions
+        # ensure` and the prompt submit that follows -- either way, no
+        # prompt has ever reached this session, so this is the legitimate
+        # (at most once) submit.
+        prompt = execution_request.get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            raise validation_error(
+                "execution_request['prompt'] must be a non-empty string",
+                execution_request=execution_request,
+            )
+        model = execution_request.get("model")
 
         if self._thought_level is not None:
             self._set_config_option(session_name, "thought_level", self._thought_level)
