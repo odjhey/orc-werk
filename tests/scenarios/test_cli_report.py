@@ -63,7 +63,14 @@ class MissingRunTest(unittest.TestCase):
             self.assertEqual(error["error"], "ERR-NOT-FOUND")
             self.assertIn("totally-nonexistent-run-id", error["message"])
             self.assertFalse((tmp_dir / ".orc").exists())
-            self.assertEqual(result.stdout, "")
+            # issue #43's ERR-NOT-FOUND(run) affordance: stdout is no longer
+            # empty on this path -- a definitive "0 runs in <dir>" (no
+            # journal directory exists yet, so no *other* run to suggest)
+            # plus the dispatch affordance, printed before the canonical
+            # error (stderr JSON, exit 2, both unchanged above) propagates.
+            self.assertIn("0 runs in", result.stdout)
+            self.assertIn("next:", result.stdout)
+            self.assertIn("orc dispatch", result.stdout)
 
 
 class RejectRetryAcceptTest(unittest.TestCase):

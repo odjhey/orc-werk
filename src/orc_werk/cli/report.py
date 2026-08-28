@@ -51,9 +51,9 @@ from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.app.orchestrator import is_pending
 from orc_werk.cli.journal_reading import (
     DEFAULT_JOURNAL_DIR,
+    _available_run_ids,
     _awaiting_label,
     _intent_text,
-    _is_run_journal_path,
     _require_journal_file,
     _resolve_journal,
     _root_cause_for_work,
@@ -623,17 +623,12 @@ def _render_index_table(rows: Sequence[str], *, empty_message: str) -> str:
 def discover_run_ids(directory: Path, *, match: str = "*") -> list[str]:
     """Run ids under `directory` whose id `fnmatch`es `match` (`--all`/
     `--match`, issue #40), sorted. Strictly read-only: only lists
-    `directory`'s entries, never opens or writes anything. `_is_run_journal_path`
-    filters out this package's own non-journal `*.jsonl` sidecars (crew-report
-    log, observed-at times) so they are never mistaken for a run."""
-    run_ids = []
-    for path in sorted(directory.glob("*.jsonl")):
-        if not _is_run_journal_path(path):
-            continue
-        run_id = path.stem
-        if fnmatch.fnmatch(run_id, match):
-            run_ids.append(run_id)
-    return run_ids
+    `directory`'s entries, never opens or writes anything. Built on
+    `orc_werk.cli.journal_reading._available_run_ids` (issue #43), the same
+    sidecar-filtering run-id listing the ERR-NOT-FOUND(run) affordance and
+    the bare-`orc` index also use, so all three call sites agree on what
+    counts as "a run"."""
+    return [run_id for run_id in _available_run_ids(directory) if fnmatch.fnmatch(run_id, match)]
 
 
 def render_index(directory: Path, *, run_ids: Optional[Sequence[str]] = None) -> str:

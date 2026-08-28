@@ -97,6 +97,20 @@ def _is_run_journal_path(path: Path) -> bool:
     return path.name.endswith(".jsonl") and "+" not in path.stem
 
 
+def _available_run_ids(directory: Path) -> list[str]:
+    """Run ids under `directory` (sorted), filtered through
+    `_is_run_journal_path` so this package's own adapter sidecars
+    (crew-report log, observed-at times) are never listed as runs.
+    Read-only: a missing directory returns `[]` rather than raising or
+    creating anything. Shared by the `ERR-NOT-FOUND(run)` affordance below,
+    `orc_werk.cli.report.discover_run_ids`, and the bare-`orc` index
+    (issue #43) so the three call sites can never drift on what counts as
+    "a run"."""
+    if not directory.is_dir():
+        return []
+    return sorted(p.stem for p in directory.glob("*.jsonl") if _is_run_journal_path(p))
+
+
 _PATH_SEPARATORS = tuple({os.sep, os.altsep} - {None})
 
 
@@ -166,6 +180,24 @@ def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
     `.orc/` directory as a side effect."""
     path = directory / f"{run_id}.jsonl"
     if not path.exists():
+        # ERR-NOT-FOUND(run) affordance (issue #43's HATEOAS reframe): print
+        # a definitive list of what *does* exist under this journal dir --
+        # or, when empty, the dispatch affordance to create one -- to
+        # stdout before the canonical error propagates on stderr/exit 2
+        # (both unchanged). This is presentation only: the error value
+        # `status`/`history`/`report` ultimately raise is identical to
+        # before this round.
+        abs_dir = directory.resolve()
+        available = _available_run_ids(directory)
+        if available:
+            print(f"available runs in {abs_dir}: {', '.join(available)}")
+        else:
+            print(f"0 runs in {abs_dir}")
+        print("next:")
+        print(
+            f'  - orc dispatch "<intent text>" --config <path-to-dispatch-config.json> '
+            f"--journal {abs_dir}"
+        )
         raise not_found_error(
             f"no journal found for run id: {run_id}",
             delivery_run_id=run_id,
@@ -178,6 +210,7 @@ def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
 __all__ = [
     "BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED",
     "DEFAULT_JOURNAL_DIR",
+    "_available_run_ids",
     "_awaiting_label",
     "_intent_text",
     "_is_run_journal_path",
