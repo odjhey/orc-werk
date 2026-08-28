@@ -69,4 +69,5 @@ Self-healing/restart behavior introduced in M0 must be expressed through explici
 - web UI;
 - merge/integration port;
 - general policy DSL;
-- Go rewrite or a scheduled language migration.
+- Go rewrite or a scheduled language migration;
+- mutation testing (mutmut), property-based testing (hypothesis), and lint/typecheck tooling — deferred until after a working, dogfoodable MVP; see `tests/README.md`.

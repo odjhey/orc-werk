@@ -97,6 +97,6 @@ Idempotency keys MUST be deterministically derivable from durable canonical stat
 Key form per effect:
 
 - `FX-CREATE-WORK` precedes any attempt and creates all Work records for one plan, so it is keyed on `(delivery_run_id, effect_id)`. This is valid because v0 permits exactly one plan creation per DeliveryRun.
-- `FX-CLAIM-WORK` uses the standard tuple with `attempt_number` set to the upcoming attempt's index.
+- `FX-CLAIM-WORK` is once per Work lineage — analogous to `FX-CREATE-WORK`'s reduced form — because a claim is held by its claimant across all retry attempts and is never re-acquired on retry. It is keyed on `(delivery_run_id, work_id, effect_id)`, with no `attempt_number` component.
 - `FX-START-EXECUTION`, `FX-SEND-EXECUTION`, `FX-CANCEL-EXECUTION`, `FX-IDENTIFY-CANDIDATE`, `FX-COMPLETE-WORK`, and `FX-BLOCK-WORK` use the standard tuple.
 - `FX-START-ASSURANCE` (assurance-targeting) uses the standard tuple plus `candidate_fingerprint`.

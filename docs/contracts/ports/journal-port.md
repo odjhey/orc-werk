@@ -24,6 +24,8 @@ Append an immutable Decision including its basis.
 ### PORT-JOURNAL-003 `append_effect_record`
 Record requested effect identity, dispatch result, and canonical error/result.
 
+The persisted effect record's `data` MUST include a `dispatch_result` field carrying the dispatch outcome as portable data — the canonical result on success, or the canonical error value (per `CONTRACT-ERRORS`) on failure. `dispatch_result` is a reserved key within effect-record `data`: an effect payload MUST NOT define its own `dispatch_result` field, and an attempt to do so MUST be rejected with `ERR-VALIDATION`.
+
 ### PORT-JOURNAL-004 `history`
 Read ordered canonical history for one DeliveryRun.
 
@@ -56,3 +58,11 @@ Every persisted/interchanged journal record (fact, decision, or effect record) M
 - `data` carries the kind-specific required fields: per `PROTOCOL-FACTS` for facts, per `PROTOCOL-DECISIONS` (including basis, per `INV-012`) for decisions, and per `PORT-JOURNAL-003` (effect identity, idempotency key, dispatch result, canonical error/result) for effect records.
 - `extensions`, when present, MUST satisfy `CONTRACT-EXTENSIONS`.
 - The envelope MUST satisfy the portability constraints already specified by `ARCH-REPOSITORY-STRUCTURE` and `ADR-0003`; this document does not restate them.
+
+### Durable-journal recovery
+
+A durable JournalPort adapter (one backed by an on-disk or otherwise reopenable log) MUST, on reopen: tolerate a single unparseable FINAL record as a torn write — ignore it, and continue the journal from the last good record before it — while rejecting any earlier malformed record with `ERR-VALIDATION`, failing closed on real corruption rather than silently skipping it.
+
+### Run-id restrictions
+
+An adapter MAY restrict the representable `delivery_run_id` character set for storage safety (for example, characters that are unsafe in a filename or path segment). An adapter that does so MUST reject an out-of-range `delivery_run_id` with `ERR-VALIDATION`.
