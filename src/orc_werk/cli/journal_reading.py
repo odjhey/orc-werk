@@ -21,7 +21,7 @@ from typing import Any, Mapping, Optional, Sequence
 from orc_werk.adapters.jsonl import layout
 from orc_werk.cli.hyperlink import hyperlink_path
 from orc_werk.core.effects import FX_START_EXECUTION
-from orc_werk.core.errors import CoreError, not_found_error
+from orc_werk.core.errors import ERR_CONFLICT, CoreError, not_found_error, validation_error
 from orc_werk.core.facts import FACT_INTENT_SUBMITTED
 from orc_werk.core.state import STATE_ASSURING, STATE_EXECUTING, WorkProjection
 
@@ -179,23 +179,24 @@ def _resolve_journal(target: str, explicit_journal_dir: Optional[str] = None) ->
         run_ids = layout.discover_run_ids(path)
         if len(run_ids) == 1:
             return path, run_ids[0]
+        abs_path = path.resolve()
         if not run_ids:
-            raise CoreError(
-                {
-                    "error": "ERR-NOT-FOUND",
-                    "message": f"no run journals found under directory: {target}",
-                    "details": {"path": target},
-                }
+            raise not_found_error(
+                f"no run journals found under directory: {target}",
+                path=target,
+                next_steps=[
+                    f'orc dispatch "<intent text>" --config <path-to-dispatch-config.json> --journal {abs_path}',
+                ],
             )
-        raise CoreError(
-            {
-                "error": "ERR-VALIDATION",
-                "message": (
-                    f"directory {target!r} contains multiple journals; pass the exact "
-                    "run path or a bare run id instead"
-                ),
-                "details": {"path": target, "candidates": run_ids},
-            }
+        raise validation_error(
+            f"directory {target!r} contains multiple journals; pass the exact "
+            "run path or a bare run id instead",
+            path=target,
+            candidates=run_ids,
+            next_steps=[
+                f"pass one of these run ids: {', '.join(run_ids)}",
+                f"orc status <run-id> --journal {abs_path}",
+            ],
         )
     # FRICTION-5: a target that looks like a path (contains a path
     # separator, or ends in `.jsonl`) but doesn't exist must not fall
@@ -205,12 +206,14 @@ def _resolve_journal(target: str, explicit_journal_dir: Optional[str] = None) ->
     # ("... is not a safe JSONL journal filename component") instead of
     # naming the actually-missing path.
     if _looks_like_journal_path(target) and not path.exists():
-        raise CoreError(
-            {
-                "error": "ERR-NOT-FOUND",
-                "message": f"journal path does not exist: {target}",
-                "details": {"path": target},
-            }
+        raise not_found_error(
+            f"journal path does not exist: {target}",
+            path=target,
+            next_steps=[
+                "double check the path was typed correctly",
+                "orc (bare) lists every run id under the default journal dir, in case a bare "
+                "run id -- not a path -- was meant",
+            ],
         )
     return resolve_journal_dir(explicit_journal_dir), target
 
@@ -247,17 +250,49 @@ def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
         else:
             print(f"0 runs in {abs_dir_display}")
         print("next:")
-        print(
-            f'  - orc dispatch "<intent text>" --config <path-to-dispatch-config.json> '
-            f"--journal {abs_dir}"
+        dispatch_affordance = (
+            f'orc dispatch "<intent text>" --config <path-to-dispatch-config.json> --journal {abs_dir}'
         )
+        print(f"  - {dispatch_affordance}")
+        # issue #94: the same content just printed above (stdout, unchanged
+        # for backward compatibility -- existing callers scrape it) is ALSO
+        # normalized into the canonical error's `next` field below, so a
+        # caller reading only stderr JSON (the documented error channel)
+        # gets the identical guidance instead of this being "per-site luck"
+        # (the issue's own framing) available only to a stdout-scraper.
         raise not_found_error(
             f"no journal found for run id: {run_id}",
             delivery_run_id=run_id,
             path=str(path),
             target=target,
+            next_steps=[
+                (f"available runs in {abs_dir}: {', '.join(available)}" if available else f"0 runs in {abs_dir}"),
+                dispatch_affordance,
+            ],
         )
     return path
+
+
+def _diagnose_replay_conflict(exc: CoreError, *, run_id: str, self_is_status: bool = False) -> CoreError:
+    """issue #94: a journal replay failure (`ERR-CONFLICT`, `core/
+    reducer.py`'s per-Fact legal-transition check -- realistically a
+    corrupted or hand-edited journal, not ordinary CLI usage) otherwise
+    carries no guidance about where to look. `core/reducer.py` stays
+    generic mechanics with no CLI-affordance concept of its own (CLAUDE.md
+    #6/#8: provider/presentation concepts stay out of core); this CLI-owned
+    enrichment layer attaches the one guide every such failure shares --
+    `orc status <run>` replays the same history and names exactly which
+    Work state it stopped deriving at -- without editing core. Additive
+    only: an error that already carries `next` (none do yet from core) is
+    left alone. `self_is_status`, when the caller *is* `orc status` itself
+    hitting the conflict, points at `orc history <run>` (the full
+    seq-ordered record) instead of suggesting the command already running."""
+    error = exc.to_canonical()
+    if error.get("error") != ERR_CONFLICT or error.get("next"):
+        return exc
+    guide = f"orc history {run_id}" if self_is_status else f"orc status {run_id}"
+    error["next"] = [f"{guide} for the replay diagnosis"]
+    return CoreError(error)
 
 
 __all__ = [
@@ -266,6 +301,7 @@ __all__ = [
     "ORC_JOURNAL_DIR_ENV",
     "_available_run_ids",
     "_awaiting_label",
+    "_diagnose_replay_conflict",
     "_intent_text",
     "_is_run_journal_path",
     "_looks_like_journal_path",

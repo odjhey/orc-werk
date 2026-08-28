@@ -248,12 +248,12 @@ class JSONLJournal(JournalPort):
         path = self._path_for(delivery_run_id)
         # issue #55 H1: a brand-new run_id resolves to a path under its own
         # per-run directory (orc_werk.adapters.jsonl.layout), which does
-        # not exist on disk yet -- create it now, immediately before the
-        # first actual write, mirroring CrewReportLog's deferred-mkdir
-        # discipline (never before validation/`_path_for`'s safety check
-        # above has already passed). A no-op for every other case: a
-        # legacy-layout run's parent is `self._directory`, already created
-        # by `__init__`.
+        # not exist on disk yet -- create it now, deferred until immediately
+        # before the first actual write (never before validation/
+        # `_path_for`'s safety check above has already passed), so a
+        # rejected write never leaves a stray empty run directory behind. A
+        # no-op for every other case: a legacy-layout run's parent is
+        # `self._directory`, already created by `__init__`.
         path.parent.mkdir(parents=True, exist_ok=True)
         # M0 scripted-context durability stance (module docstring): the
         # shared `tailsafe.append_line` primitive flushes without

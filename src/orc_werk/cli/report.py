@@ -53,6 +53,7 @@ from orc_werk.cli.hyperlink import hyperlink_path
 from orc_werk.cli.journal_reading import (
     _available_run_ids,
     _awaiting_label,
+    _diagnose_replay_conflict,
     _intent_text,
     _require_journal_file,
     _resolve_journal,
@@ -684,8 +685,11 @@ def render_run_report(directory: Path, run_id: str) -> str:
     effect on a failed lookup."""
     _require_journal_file(directory, run_id, target=run_id)
     journal = JSONLJournal(directory)
-    history = journal.history(delivery_run_id=run_id)
-    projection = journal.load_projection(delivery_run_id=run_id)
+    try:
+        history = journal.history(delivery_run_id=run_id)
+        projection = journal.load_projection(delivery_run_id=run_id)
+    except CoreError as exc:
+        raise _diagnose_replay_conflict(exc, run_id=run_id) from exc
     times, skipped_times = _load_times_sidecar(directory, run_id)
 
     intent_text = _intent_text(history)
@@ -796,7 +800,12 @@ def render_index(
     necessarily happened yet."""
     if not directory.is_dir():
         raise not_found_error(
-            f"journal directory does not exist: {directory}", path=str(directory)
+            f"journal directory does not exist: {directory}",
+            path=str(directory),
+            next_steps=[
+                f'orc dispatch "<intent text>" --config <path-to-dispatch-config.json> '
+                f"--journal {directory}",
+            ],
         )
     journal = JSONLJournal(directory)
     scoped = run_ids is not None
@@ -842,7 +851,12 @@ def render_all(directory: Path, *, match: str, out_dir: Path) -> tuple[list[tupl
     leave a stray `--out-dir` behind."""
     if not directory.is_dir():
         raise not_found_error(
-            f"journal directory does not exist: {directory}", path=str(directory)
+            f"journal directory does not exist: {directory}",
+            path=str(directory),
+            next_steps=[
+                f'orc dispatch "<intent text>" --config <path-to-dispatch-config.json> '
+                f"--journal {directory}",
+            ],
         )
     run_ids = discover_run_ids(directory, match=match)
 
@@ -887,12 +901,23 @@ def cmd_report(args: argparse.Namespace) -> int:
     if args.all:
         if args.run:
             raise validation_error(
-                "orc report --all does not take a positional run argument", run=args.run
+                "orc report --all does not take a positional run argument",
+                run=args.run,
+                next_steps=[
+                    "orc report --all [--match GLOB] [--journal DIR]",
+                    "orc report <run-id> for one run",
+                ],
             )
         if args.index:
-            raise validation_error("orc report --all cannot be combined with --index")
+            raise validation_error(
+                "orc report --all cannot be combined with --index",
+                next_steps=["orc report --all for every run", "orc report --index for one unpaginated index"],
+            )
         if args.out:
-            raise validation_error("orc report --all uses --out-dir, not --out")
+            raise validation_error(
+                "orc report --all uses --out-dir, not --out",
+                next_steps=["orc report --all --out-dir <dir>"],
+            )
         directory = resolve_journal_dir(args.journal)
         out_dir = Path(args.out_dir) if args.out_dir else directory
         match = args.match if args.match is not None else "*"
@@ -903,14 +928,20 @@ def cmd_report(args: argparse.Namespace) -> int:
         return 0
 
     if args.match is not None:
-        raise validation_error("orc report --match requires --all")
+        raise validation_error(
+            "orc report --match requires --all", next_steps=["orc report --all --match <glob>"]
+        )
     if args.out_dir is not None:
-        raise validation_error("orc report --out-dir requires --all")
+        raise validation_error(
+            "orc report --out-dir requires --all", next_steps=["orc report --all --out-dir <dir>"]
+        )
 
     if args.index:
         if args.run:
             raise validation_error(
-                "orc report --index does not take a positional run argument", run=args.run
+                "orc report --index does not take a positional run argument",
+                run=args.run,
+                next_steps=["orc report --index", "orc report <run-id> for one run"],
             )
         directory = resolve_journal_dir(args.journal)
         html_text = render_index(directory)
@@ -920,7 +951,17 @@ def cmd_report(args: argparse.Namespace) -> int:
         return 0
 
     if not args.run:
-        raise validation_error("orc report requires a run id/path positional argument, or --index/--all")
+        # issue #94's named regression case: the operator finding that
+        # started this sweep -- a bare `orc report` named what was missing
+        # but not where to get it.
+        raise validation_error(
+            "orc report requires a run id/path positional argument, or --index/--all",
+            next_steps=[
+                "orc (bare) to list run ids",
+                "orc report --index for the portfolio",
+                "orc report <run-id> for one run",
+            ],
+        )
 
     directory, run_id = _resolve_report_target(args.run, args.journal)
     html_text = render_run_report(directory, run_id)

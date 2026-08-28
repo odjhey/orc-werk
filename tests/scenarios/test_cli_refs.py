@@ -32,7 +32,6 @@ from orc_werk.cli.refs import (
     _command_field,
     _evidence_ref_rows,
     _execution_session_rows,
-    _has_repo_context,
     _mirror_row,
     _session_resolve,
     collect_refs,
@@ -202,11 +201,16 @@ class CandidateRowsUnitTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].resolve, "-")
 
-    def test_pr_without_repo_context_has_no_resolve(self) -> None:
+    def test_pr_alone_yields_gh_resolve_unconditionally(self) -> None:
+        # issue #94 folded item / PR #104 verifier recommendation:
+        # `gh pr view <pr>` is surfaced whenever the candidate carries `pr`,
+        # with no same-`subject_identity` repo/URL sibling-field gate --
+        # matching orc_werk.cli.affordances._candidate_pr's own
+        # unconditional precedent for the ACCEPTED-state next: block.
         rows = _candidate_rows(self._history({"pr": 42}))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].kind, "candidate-pr")
-        self.assertEqual(rows[0].resolve, "-")
+        self.assertEqual(rows[0].resolve, "gh pr view 42")
 
     def test_pr_with_repo_context_field_yields_gh_resolve(self) -> None:
         rows = _candidate_rows(self._history({"pr": 42, "repo_path": "/abs/repo"}))
@@ -215,20 +219,6 @@ class CandidateRowsUnitTest(unittest.TestCase):
 
     def test_no_candidate_effect_yields_no_rows(self) -> None:
         self.assertEqual(_candidate_rows([]), [])
-
-
-class HasRepoContextUnitTest(unittest.TestCase):
-    def test_repo_path_key_counts_as_context(self) -> None:
-        self.assertTrue(_has_repo_context({"pr": 1, "repo_path": "/abs/repo"}))
-
-    def test_url_key_counts_as_context(self) -> None:
-        self.assertTrue(_has_repo_context({"pr": 1, "repo_url": "https://example.invalid/x"}))
-
-    def test_no_matching_key_is_false(self) -> None:
-        self.assertFalse(_has_repo_context({"pr": 1, "label": "x"}))
-
-    def test_pr_key_itself_never_counts(self) -> None:
-        self.assertFalse(_has_repo_context({"pr": 1}))
 
 
 class MirrorRowUnitTest(unittest.TestCase):
