@@ -50,6 +50,12 @@ scripts/     documentation integrity tooling
 
 See [`docs/architecture/repository-structure.md`](docs/architecture/repository-structure.md) for the concrete Python package layout and dependency rules.
 
+## Using the CLI
+
+The `orc` CLI is the reference way to dispatch and read delivery runs. See
+[`docs/cli/README.md`](docs/cli/README.md) for the full command reference
+(quickstart, flags, exit codes, config schema, journal layout).
+
 ## Documentation integrity
 
 Run:

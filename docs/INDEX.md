@@ -74,6 +74,7 @@ description: Flat documentation index.
 - [Delivery stance](delivery/delivery-stance.md)
 - [CLI usage guide](playbooks/cli-usage.md)
 - [Agent CLI usage playbook](playbooks/agent-cli-usage.md)
+- [CLI reference](cli/README.md)
 
 ## Dogfooding
 - [Dogfood scenario corpus](../dogfood/README.md)
