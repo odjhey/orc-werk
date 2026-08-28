@@ -280,6 +280,51 @@ layout" below):
 [0007] decision DEC-DISPATCH   {"attempt_number":1,"attribution":{"policy":"v0-deterministic"},"basis":[...],"work_id":"work-1"}
 ```
 
+### `orc refs`
+
+```text
+usage: orc refs [-h] [--journal JOURNAL] target
+```
+
+Pure journal projection (no new recording, no new storage -- `CONTRACT-
+DURABILITY`'s disposition sentence, "narrative/report content is
+provider-owned and the ledger journals resolvable references"): lists
+every resolvable reference recorded for one run, one row per reference,
+with columns `kind`, `provider`, `value`, and a runnable `resolve`
+command. Four independently optional sources, each silently absent when
+the run carries none of it -- never fabricated: `execution-session/v1`
+session/resume/transcript refs (`EXT-EXECUTION-SESSION-V1-SCHEMA`) off
+`FACT-EXEC-SETTLED`; assurance `evidence_refs` off `FACT-ASSURE-SETTLED`
+(`PROTOCOL-FACTS`); candidate identity (`head_sha`/`repo_path`/`pr`) off
+the journaled `FX-IDENTIFY-CANDIDATE` effect; and the Beads mirror's run
+label + workspace, read from the run's own persisted dispatch config when
+one configured a `mirror` block. Resolve commands are DISPLAY strings
+only -- `orc refs` never shells out to anything.
+
+| Flag | Default | Notes |
+|---|---|---|
+| `target` (positional) | required | journal path (dir or `<run>.jsonl`) or bare run id |
+| `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
+
+```bash
+orc refs my-run-id
+orc refs my-run-id --journal ./.orc
+```
+
+```text
+run: my-run-id
+session      acpx-pi          sess-9f2c  (resolve: acpx pi sessions history sess-9f2c)
+resume       acpx-pi          resume-ref-9f2c  (resolve: -)
+transcript   acpx-pi          /abs/path/transcript.log  (resolve: cat /abs/path/transcript.log)
+evidence     -                {"command":"no-mistakes axi status --run r1", ...}  (resolve: no-mistakes axi status --run r1)
+candidate    -                {"head_sha":"abc123","repo_path":"/abs/worktree"}  (resolve: git -C /abs/worktree show abc123 --stat)
+mirror       beads            label=run:my-run-id workspace=/abs/bd-workspace  (resolve: bd --json -C /abs/bd-workspace list --label run:my-run-id)
+```
+
+A run with no resolvable references at all prints a definitive `0 refs
+for <run-id>` plus a one-line pointer at `orc status <run-id>` (same
+"content first" empty-state convention as bare `orc`/`orc report`).
+
 ### `orc report`
 
 ```text
@@ -456,3 +501,7 @@ convention" sections -- this reference does not duplicate it.
 - `docs/extensions/crew-report/README.md` (`EXT-CREW-REPORT-V1`) -- the
   narrative crew-report channel's schema.
 - `src/orc_werk/cli/config.py` -- config schema source of truth.
+- `docs/contracts/durability-responsibilities.md` (`CONTRACT-DURABILITY`)
+  -- the reference-first doctrine `orc refs` projects
+  (`docs/extensions/execution-session/` is the schema its first source
+  reads).
