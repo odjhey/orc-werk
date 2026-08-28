@@ -131,6 +131,8 @@ Two additional acceptance items beyond the original scope:
 1. a stub-`acpx` conformance harness (subprocess stub pattern, matching the existing scripted-adapter test style) that proves `CONF-EXEC-001` through `CONF-EXEC-004` without requiring a live agent;
 2. a resolved live-spike answer to a crash-mid-turn observability question — whether a turn's final `stopReason` can be recovered after the process that submitted it dies, or whether that turn is instead pending-until-reprompted. Verifying Pi ACP adapter maturity (session-id fidelity, resume behavior, structured-lifecycle completeness) is part of this same M1b spike. These are recorded as open spike questions on the task card until the operator answers them; they are not blocking for this docs retarget but block the adapter's crash-boring claims.
 
+**Both M1b spikes are RESOLVED (2026-08-28)**: crash-mid-turn observability is confirmed recoverable in the queue-owner-survives branch, and native `agentSessionId` presence for Pi (`pi-acp@0.0.31`) is confirmed negative, keeping `CAP-EXEC-RESUME-EXACT` withheld — see the archived report at `docs/reports/2026-08-28-acpx-pi-spike.md` and the resolutions recorded on `TASK-M1-005`. This was the last docs gate before adapter implementation begins.
+
 ## Required contracts
 
 - `STATE-DELIVERY` (amended: pending-mode clause; mechanical fact sequencing item 6 unchanged)
