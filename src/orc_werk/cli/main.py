@@ -28,7 +28,7 @@ from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.adapters.memory.work_graph import MemoryWorkGraph
 from orc_werk.app.orchestrator import Orchestrator, is_pending
 from orc_werk.cli.affordances import render_next_block
-from orc_werk.cli.config import build_run_config, build_scripted_adapters, load_config
+from orc_werk.cli.config import build_dispatch_ports, build_run_config, build_scripted_adapters, load_config
 from orc_werk.cli.journal_reading import (
     BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED,
     DEFAULT_JOURNAL_DIR,
@@ -43,6 +43,7 @@ from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint
 from orc_werk.cli.report import cmd_report
 from orc_werk.core.errors import CoreError, validation_error
 from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, WorkProjection
+from orc_werk.ports.capabilities import validate_capabilities
 
 # TASK-M1-002/SCN-007: the distinct in-progress exit code -- additive to
 # the existing 0 (all ACCEPTED) / 1 (any BLOCKED) / 2 (canonical error)
@@ -129,11 +130,28 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     # max_attempts check) *before* constructing `JSONLJournal`, whose
     # `__init__` `mkdir`s the journal directory as a side effect -- a
     # rejected config must never leave a stray empty `.orc/` behind.
+    # `TASK-M1-005` CLI wiring: `validate_capabilities` here is a
+    # deliberate pre-check duplicate of the one `build_scripted_adapters`/
+    # `build_dispatch_ports` perform internally -- it is pure (no side
+    # effect) and lets an invalid `execution_capabilities` id fail closed
+    # before the journal mkdir on *every* adapter-selection path below,
+    # including the real-port path, which (per `build_dispatch_ports`'s own
+    # docstring) needs the journal to already exist so it can read the
+    # run's own history for the real-candidate assurance script.
     work_graph = MemoryWorkGraph()
-    execution, candidate, assurance = build_scripted_adapters(config, delivery_run_id=run_id)
+    validate_capabilities(config.get("execution_capabilities", ()))
     run_config = build_run_config(config, max_attempts_override=args.max_attempts)
 
-    journal = JSONLJournal(journal_dir)
+    execution_adapter = (config.get("execution") or {}).get("adapter", "scripted")
+    candidate_adapter = (config.get("candidate") or {}).get("adapter", "scripted")
+    if execution_adapter == "scripted" and candidate_adapter == "scripted":
+        execution, candidate, assurance = build_scripted_adapters(config, delivery_run_id=run_id)
+        journal = JSONLJournal(journal_dir)
+    else:
+        journal = JSONLJournal(journal_dir)
+        execution, candidate, assurance = build_dispatch_ports(
+            config, delivery_run_id=run_id, intent_text=args.intent, journal=journal
+        )
 
     orchestrator = Orchestrator(
         delivery_run_id=run_id,
@@ -425,9 +443,16 @@ def build_parser() -> argparse.ArgumentParser:
         "(terminal, or pending awaiting operator-recorded input).",
         epilog="examples:\n"
         '  orc dispatch "ship the widget" --config cfg.json\n'
-        '  orc dispatch "ship the widget" --config cfg.json --journal ./.orc --max-attempts 3\n\n'
+        '  orc dispatch "ship the widget" --config cfg.json --journal ./.orc --max-attempts 3\n'
+        '  orc dispatch "reply with the word ping" --config acp-cfg.json  # real Pi execution:\n'
+        '    # acp-cfg.json: {"execution": {"adapter": "acp", "cwd": "/abs/worktree"},\n'
+        '    #                "candidate": {"adapter": "git", "repo_path": "/abs/worktree"}}\n'
+        "    # exits 3 (pending) while Pi works; re-run the identical command to poll; once\n"
+        "    # settled, record the assurance verdict in the config's attempts and re-run again\n\n"
         "defaults: --journal ./.orc, --max-attempts 3 (policy default), --run-id derived "
-        "deterministically from the intent text when omitted",
+        "deterministically from the intent text when omitted; config execution.adapter="
+        "scripted, candidate.adapter=scripted (see docs/playbooks/cli-usage.md for the real "
+        "acp/git config schema)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     dispatch_parser.add_argument("intent", help="the intent text to submit")
