@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import tempfile
 import textwrap
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -40,20 +41,53 @@ _STUB_SOURCE = textwrap.dedent(
     import json
     import os
     import sys
+    import tempfile
+    import time
     from pathlib import Path
 
     WORLD = Path(os.environ["ORC_NM_STUB_WORLD"])
     STATE_PATH = WORLD / "runs.json"
 
+    EMPTY_STATE = {"runs": {}, "active_run_id": None, "next_head": None, "counter": 0, "branch": "stub-branch"}
+
 
     def _load():
-        if not STATE_PATH.exists():
-            return {"runs": {}, "active_run_id": None, "next_head": None, "counter": 0, "branch": "stub-branch"}
-        return json.loads(STATE_PATH.read_text())
+        # PR #80 fix round, finding A: reads must tolerate a concurrent
+        # writer. _save below is atomic (os.replace), so a torn read
+        # should no longer be observable on POSIX -- the brief retry loop
+        # is defense-in-depth only (e.g. a hypothetical filesystem where
+        # replace is not atomic for readers).
+        for _attempt in range(20):
+            if not STATE_PATH.exists():
+                return dict(EMPTY_STATE)
+            try:
+                return json.loads(STATE_PATH.read_text())
+            except ValueError:
+                time.sleep(0.01)
+        return dict(EMPTY_STATE)
 
 
     def _save(state):
-        STATE_PATH.write_text(json.dumps(state))
+        # PR #80 fix round, finding A: a plain write_text here was
+        # non-atomic -- the adapter's immediate post-spawn `axi status`
+        # poll races this detached `axi run` child's write and could
+        # observe a torn/partial runs.json (reproduced by the verifier at
+        # ~5% per request(): torn json.loads -> stub exit 1 ->
+        # ERR-TEMPORARY -> flaky check.sh). Write to a temp file in the
+        # same directory, then os.replace() onto runs.json -- atomic on
+        # POSIX, so a reader always sees either the old or the new
+        # complete document, never a partial write.
+        fd, tmp_path = tempfile.mkstemp(dir=str(STATE_PATH.parent), prefix=".runs-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                fh.write(json.dumps(state))
+            os.replace(tmp_path, STATE_PATH)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
 
     def _csv_field(value):
@@ -94,7 +128,7 @@ _STUB_SOURCE = textwrap.dedent(
         sys.stdout.write("\\n".join(lines) + "\\n")
 
 
-    def cmd_axi_run(intent):
+    def cmd_axi_run(intent, skip):
         state = _load()
         state["counter"] += 1
         run_id = f"STUB{state[\'counter\']:022d}"
@@ -105,6 +139,11 @@ _STUB_SOURCE = textwrap.dedent(
             "head": state.get("next_head"),
             "outcome": None,
             "gate": None,
+            # PR #80 fix round, finding B: record the exact --skip value
+            # this invocation carried (comma-split, [] when absent) so a
+            # test can assert the adapter's mechanical never-push
+            # guarantee -- that every spawn passes `--skip push`.
+            "skip": [s for s in (skip or "").split(",") if s],
         }
         state["active_run_id"] = run_id
         _save(state)
@@ -144,7 +183,8 @@ _STUB_SOURCE = textwrap.dedent(
                 sys.stderr.write("error: --intent is required\\n")
                 sys.exit(1)
             intent = rest[rest.index("--intent") + 1]
-            cmd_axi_run(intent)
+            skip = rest[rest.index("--skip") + 1] if "--skip" in rest else None
+            cmd_axi_run(intent, skip)
         elif sub == "status":
             run_id = None
             if "--run" in rest:
@@ -205,7 +245,24 @@ class NoMistakesStubWorld:
         return json.loads(self._state_path.read_text())
 
     def _save(self, state: Mapping[str, Any]) -> None:
-        self._state_path.write_text(json.dumps(dict(state)))
+        # PR #80 fix round, finding A: same atomic-replace discipline as
+        # the fake CLI's own _save (see _STUB_SOURCE) -- a detached `axi
+        # run` child spawned by the adapter can still be in flight when a
+        # test mutates world state, so this writer must not be tearable
+        # either.
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(self._state_path.parent), prefix=".runs-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w") as fh:
+                fh.write(json.dumps(dict(state)))
+            os.replace(tmp_path, self._state_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def set_next_head(self, head: Optional[str]) -> None:
         """Every subsequent `axi run` invocation stamps its new run with
@@ -230,6 +287,13 @@ class NoMistakesStubWorld:
         `AcpxStubWorld.prompt_submission_count`): a candidate whose run is
         already active must never cause a second spawn."""
         return len(self._load()["runs"])
+
+    def run_skip_args(self, run_id: str) -> list[str]:
+        """The exact `--skip` step list the fake `axi run` invocation that
+        created `run_id` carried (comma-split; `[]` when the flag was
+        absent) -- the finding-B mechanical never-push assertion: every
+        adapter spawn must include `push` here."""
+        return list(self._load()["runs"][run_id].get("skip", []))
 
     def set_gate(self, run_id: str, *, step: str, findings: Sequence[Mapping[str, Any]]) -> None:
         state = self._load()

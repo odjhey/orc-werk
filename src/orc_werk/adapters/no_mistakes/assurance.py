@@ -7,11 +7,16 @@ mapping.md`, per `INV-014` and `docs/adapters/README.md`.
 
 **Judge-only ruling (watchtower, `TASK-M2-001`, normative for this
 adapter)**: this adapter is a READ-ONLY JUDGE of the exact observed
-candidate. It NEVER passes `--yes` to `axi run`, and NEVER calls
+candidate. It NEVER passes `--yes` to `axi run`, NEVER calls
 `axi respond`/`axi sync` -- any operation that could let `no-mistakes`
-fix findings, auto-resolve a gate, or push. A candidate that `no-mistakes`
-would mutate (fix commits) is a DIFFERENT candidate than the one this
-adapter was asked to assure (`P-004`, `INV-007` through `INV-010`).
+fix findings or auto-resolve a gate -- and passes `--skip push`
+(`_SKIPPED_STEPS`) on EVERY `axi run` spawn as the mechanical never-push
+guarantee: omitting `--yes` alone is NOT sufficient (it only governs gate
+auto-resolution -- a clean candidate with no gates runs the full pipeline
+INCLUDING the push step; confirmed empirically, PR #80 fix round finding
+B). A candidate that `no-mistakes` would mutate (fix commits) or push is
+a DIFFERENT candidate than the one this adapter was asked to assure
+(`P-004`, `INV-007` through `INV-010`).
 Concretely: when the pipeline reaches a gate (`awaiting_approval`), this
 adapter never advances it -- it reads the parked findings and renders its
 OWN canonical verdict from them (see "Verdict mapping" below). The
@@ -23,7 +28,8 @@ full rationale and the resulting stale-parked-run tradeoff.
 Design summary (full rationale: `docs/adapters/no-mistakes/mapping.md`):
 
 - `request()` never blocks on the pipeline: it spawns `no-mistakes axi run
-  --intent <text>` DETACHED (`subprocess.Popen`, not waited on) and returns
+  --intent <text> --skip push` DETACHED (`subprocess.Popen`, not waited
+  on) and returns
   once it has confirmed a run id exists to reference -- never once the
   pipeline itself has progressed. Unlike `acpx`'s `--no-wait` (a
   synchronous, sub-second acknowledgement), `axi run` offers no such flag,
@@ -87,6 +93,19 @@ _ADVERTISABLE_CAPABILITIES = frozenset(
     }
 )
 _DEFAULT_CAPABILITIES = _ADVERTISABLE_CAPABILITIES
+
+# Pipeline steps every `axi run` spawn skips (comma-separated, the CLI's
+# own `--skip` format). `push` is the mechanical never-push guarantee (PR
+# #80 fix round, finding B; module docstring "Judge-only ruling"):
+# confirmed empirically that `--skip push` completes a clean pipeline with
+# the push step `skipped`, `pushed_head` empty, and the local branch head
+# untouched. Fail-closed note: if a future no-mistakes version renames
+# the `push` step, this skip silently stops matching anything -- the pin
+# must be re-proved against that version's own step list (`axi logs
+# --help` names the canonical steps) before upgrading, the same
+# version-re-probe discipline the TOON parser already requires (mapping
+# doc "Limitations" / docs/playbooks/cli-usage.md known-issues row).
+_SKIPPED_STEPS = "push"
 
 # Bounded wait for a freshly-spawned `axi run` to register a run id
 # (mapping doc "Poll model"). Not a wait on pipeline progress -- purely on
@@ -277,9 +296,17 @@ class NoMistakesAssurance(AssurancePort):
 
     def _spawn_and_capture_run_id(self, intent: str) -> str:
         self._ensure_binary()
-        argv = [self._bin, "axi", "run", "--intent", intent]
+        argv = [self._bin, "axi", "run", "--intent", intent, "--skip", _SKIPPED_STEPS]
         # Judge-only ruling: --yes is NEVER passed here -- see module
-        # docstring. Detached: not waited on (mapping doc "Poll model").
+        # docstring. `--skip push` (_SKIPPED_STEPS) is the MECHANICAL
+        # never-push guarantee (PR #80 fix round, finding B): omitting
+        # --yes only prevents gate auto-resolution -- a CLEAN candidate
+        # with no gates would otherwise run the full pipeline INCLUDING
+        # the push step (confirmed empirically; see the mapping doc's
+        # "Judge-only ruling" for the probe evidence, including that
+        # pipeline-internal commits stay confined to the gate copy and
+        # never reach the branch/remote when push is skipped).
+        # Detached: not waited on (mapping doc "Poll model").
         try:
             proc = subprocess.Popen(
                 argv,

@@ -181,6 +181,24 @@ class NoMistakesAssuranceVerdictMappingTest(unittest.TestCase):
             adapter.inspect(assurance_id="not-a-real-id")
         self.assertEqual(ctx.exception.to_canonical()["error"], "ERR-NOT-FOUND")
 
+    # -- mechanical never-push (PR #80 fix round, finding B) ----------------
+
+    def test_every_spawn_passes_skip_push_mechanical_never_push(self) -> None:
+        """Never-push must be MECHANICAL, not incidental: omitting `--yes`
+        only prevents gate auto-resolution -- a clean candidate with no
+        gates runs the full pipeline INCLUDING the push step (confirmed
+        empirically against the real CLI; the mapping doc's "Judge-only
+        ruling" records the probe: `--skip push` completes a clean run
+        with `push,skipped`, `pushed_head` empty, local branch head
+        untouched). Every `axi run` spawn must therefore carry `--skip
+        push` -- asserted against the stub's own record of the exact
+        `--skip` value the invocation carried."""
+        adapter = self._adapter()
+        self._request(adapter, fingerprint="fp-skip", key="k-skip")
+        run_id = self._world.active_run_id()
+        assert run_id is not None
+        self.assertIn("push", self._world.run_skip_args(run_id))
+
     # -- cross-process-style idempotency (fresh instance) -------------------
 
     def test_fresh_adapter_instance_reaches_same_settlement(self) -> None:

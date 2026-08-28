@@ -18,10 +18,43 @@ module and this document, per `INV-014` and `docs/adapters/README.md`.
 
 This adapter is a **READ-ONLY JUDGE of the exact observed candidate**. It
 NEVER passes `--yes` to `axi run`, and NEVER calls `axi respond`/`axi sync`
--- any operation that could let `no-mistakes` fix findings, auto-resolve a
-gate, or push. A candidate `no-mistakes` mutated (a fix commit) is a
+-- any operation that could let `no-mistakes` fix findings or auto-resolve
+a gate. A candidate `no-mistakes` mutated (a fix commit) or pushed is a
 DIFFERENT candidate than the one this adapter was asked to assure (`P-004`,
 `INV-007` through `INV-010`).
+
+**Never-push is mechanical, not incidental (PR #80 fix round, finding B).**
+Omitting `--yes` is NOT sufficient to prevent pushing: `--yes` only
+governs gate auto-resolution, and a CLEAN candidate that trips no gates
+runs the full pipeline INCLUDING the push step (this task's own first
+recon transcript showed review -> test -> document -> lint -> **push**
+completing, reaching the scratch repo's `origin` remote). Every `axi run`
+spawn therefore passes **`--skip push`** (`_SKIPPED_STEPS` in
+`assurance.py`) -- verified empirically against the real CLI (read-only
+recon, a scratch repo with a real local `origin` remote, never orc-werk's
+own repo): a clean pipeline under `--skip push` completed `outcome:
+passed` with the `push` step reported `skipped`,
+`branch_sync.pipeline.pushed_head` empty, `push_generation: 0`, the
+remote's `observed_head` empty, and the local branch head untouched
+(`clean: true`); a pipeline-internal commit the `document` step made
+stayed confined to `no-mistakes`'s internal gate copy (`current_head`
+diverged inside the gate only) and never reached the branch or remote.
+Asserted structurally by
+`test_every_spawn_passes_skip_push_mechanical_never_push`
+(`tests/conformance/test_no_mistakes_assurance_unit.py`) against the
+stub's record of the exact `--skip` value each spawn carried.
+
+**Fail-closed note (step rename).** The `push` step name is pinned to the
+probed CLI version's own canonical step list (`axi logs --help`: `intent,
+rebase, review, test, document, lint, push, pr, ci`). If a future
+`no-mistakes` release renames the push step, `--skip push` silently stops
+matching anything -- the never-push guarantee would regress without
+failing loudly, the same silent-drift failure mode as the TOON parser's
+(see "TOON parsing"). The mitigation is the same version re-probe
+discipline: before upgrading `no-mistakes` in an environment using this
+adapter, re-check `axi logs --help`'s step list and re-run this adapter's
+test suite (the known-issues row in `docs/playbooks/cli-usage.md` covers
+both hazards).
 
 Concretely: when the pipeline reaches a gate (`awaiting_approval`), this
 adapter never advances it. It reads the parked findings and renders its
@@ -88,9 +121,10 @@ Mirrors the acp `AcpExecution` adapter's design principle
 (`docs/adapters/acp/mapping.md`), adapted for a CLI that offers no
 `--no-wait`-equivalent acknowledgement flag:
 
-- `request()` spawns `no-mistakes axi run --intent <text>` **detached**
-  (`subprocess.Popen`, `start_new_session=True`, never `--yes`, never
-  waited on for pipeline completion). It then does a **small bounded
+- `request()` spawns `no-mistakes axi run --intent <text> --skip push`
+  **detached** (`subprocess.Popen`, `start_new_session=True`, never
+  `--yes`, always `--skip push` -- the mechanical never-push guarantee,
+  see "Judge-only ruling" -- never waited on for pipeline completion). It then does a **small bounded
   poll** of `axi status` (default 10s total / 0.25s interval, both
   overridable via `NoMistakesAssurance(spawn_poll_timeout_s=...,
   spawn_poll_interval_s=...)`) purely to observe the new run's id
@@ -401,3 +435,8 @@ known-issues row in `docs/playbooks/cli-usage.md`.
   heuristic**, not derived from any `no-mistakes`-native vocabulary (see
   "Findings mapping").
 - **TOON parsing has no schema/version guard** (see "TOON parsing").
+- **The `--skip push` step-name pin has no version guard either** -- a
+  future `no-mistakes` release renaming the `push` step would silently
+  regress the mechanical never-push guarantee (see "Judge-only ruling"'s
+  fail-closed note for the full hazard and the version re-probe
+  mitigation).
