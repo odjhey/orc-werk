@@ -1,0 +1,75 @@
+---
+id: PLAYBOOK-AGENT-CLI
+type: playbook
+status: current
+authority: informative
+description: Guidance for ship/verify subagents recording their own observations through the orc CLI (M1a+ push mode).
+---
+
+# Agent CLI usage playbook
+
+This playbook is for **agents** — ship agents and verification agents — recording their own observations into the `orc` CLI during the M1a+ stage (`M-001`, `TASK-M1-006`). It complements, and does not duplicate, `docs/playbooks/cli-usage.md` (`PLAYBOOK-CLI-USAGE`): read that document first for commands, config shape, and the exit-code contract (including exit `3`, pending). This playbook only adds the discipline an agent must follow on top of that surface. Informative only — canonical semantics live in the contracts it cites.
+
+## 1. What you are doing
+
+You are recording **observations** into a durable delivery ledger — nothing more. Every outcome you record (`completed`, `failed`, `accepted`, `rejected`, `inconclusive`, a candidate) is a **claim**, not a fact the kernel takes on faith. Acceptance happens only through the kernel's candidate-bound assurance machinery (`INV-003`, `INV-005` through `INV-010`): recording `accepted` yourself does not accept the Work.
+
+You **never record a decision**. `DEC-*` records (`DEC-DISPATCH`, `DEC-REQUEST-ASSURANCE`, `DEC-ACCEPT`, `DEC-RETRY`, `DEC-BLOCK`, ...) are kernel policy, attributed per `INV-011`. Nothing in your CLI usage should be read as, or attempt to be, a decision. You submit inputs (settlements, candidates, verdicts); the kernel decides.
+
+## 2. Role separation (MUST) — no self-assurance, ever
+
+**The agent that records an execution settlement/candidate for a Work MUST NOT also record the assurance verdict for that same candidate.** Ship agents record settlements. A *different* verification agent records verdicts. This is process discipline, not kernel-enforced at this stage (`M-001` M1a+ section): the kernel enforces claim ≠ acceptance structurally (`INV-003`/`INV-011`), but it does not itself know or check which agent identity is typing the command. Self-assurance is a playbook violation even though the CLI will not reject it.
+
+If you are unsure which seat you are in, stop and ask rather than guess — recording a verdict on your own candidate defeats the entire point of candidate-bound assurance.
+
+## 3. Ship-agent protocol
+
+1. **Confirm the work is claimed before starting.** A claim is once per Work lineage (`PORT-WORK-004`, `INV-020`'s reduced-key form) — it is held by its claimant across all retry attempts and is never re-acquired on retry. Check `orc status` for the Work; if it is not yet claimed, claim it. If it is already claimed by someone else, `claim` rejects with `ERR-CONFLICT` — do not proceed as if you owned the Work.
+2. **Do the work.**
+3. **Record the outcome and candidate** for the config/backing store the ExecutionPort reads (see Mechanics below) — not prose. Candidate content MUST be **externally resolvable identity**: a PR number, a head sha, a run URL — anything a stranger with no access to your reasoning could independently fetch and check. Never record a description of what you did as the candidate; a sentence is not verifiable, an artifact reference is.
+4. **Re-dispatch** (`orc dispatch`, same command, same journal) to advance the run. This is always safe — see Mechanics.
+5. **Expect exit `3` (pending)** after you record a settlement but before a verification agent has recorded a verdict. That is the run resting at `ASSURING`, correctly. It is not an error and not something for you to work around by recording your own verdict (see Role separation above).
+
+## 4. Verification-agent protocol
+
+1. **Derive the candidate identity independently from the artifact itself.** Fetch the PR. Compute the head sha yourself (`git rev-parse`, the GitHub API, whatever your tooling is — but *you* run it). Do not read the shipper's recorded fingerprint/sha and copy it into your verdict.
+2. **Record your verdict against your own self-derived identity**, never against the shipper's reported value. This is the binding rule from the watchtower's record-correctness ruling (`gh pr view 24`, post-merge comment): the assurance-recording agent derives candidate identity independently from the artifact and records its verdict against that self-derived fingerprint. It MUST NOT copy the fingerprint from the ship agent's settlement record. This turns record verification structural — a misreported settlement cannot reach acceptance because the independently derived evidence fingerprint will not match (`INV-006`, `INV-007`, `INV-008` → `ERR-CONFLICT` at the kernel).
+3. **A mismatch is the system working, not a bug to smooth over.** If your independently derived fingerprint disagrees with what was recorded, report the mismatch (`ERR-CONFLICT`) — do not reconcile it away by substituting the shipper's value, and do not silently accept anyway.
+4. **Record `evidence_refs`** pointing at your audit output (the command you ran, the diff you fetched, the log you read) — not a narrative summary. Evidence is candidate-bound (`INV-007`) and non-transferable across candidates (`INV-008`): if the candidate changes, your prior evidence no longer applies and you must re-derive.
+5. As a standing discipline (SHOULD, not just for this one verdict): periodically reconcile the ledger against GitHub — every `ACCEPTED` Work's PR is actually merged, every recorded sha actually exists. This reconciliation-as-checker-duty is a supporting practice, not a one-time step.
+
+## 5. Mechanics
+
+- **One writer per run journal at a time.** Concurrent writers to the same run's journal are not supported; if two agents believe they own the same run, that is a coordination bug upstream of the CLI, not something the CLI arbitrates.
+- **Outcomes are recorded into the config/backing store, not the journal directly.** In M1a/M1a+, the ExecutionPort and AssurancePort read their next-attempt outcome from the dispatch config's `attempts` entries (see `PLAYBOOK-CLI-USAGE`'s Config section). You edit that store; the kernel journals the resulting facts itself via the normal observation path on the next `orc dispatch` (`SCN-007`). You never hand-author journal records.
+- **Exit codes and what they obligate you to do next** (full contract: `PLAYBOOK-CLI-USAGE`):
+  - **`0`** — all Work `ACCEPTED`. Nothing further to record for this run.
+  - **`1`** — some Work `BLOCKED` (or another non-accepted terminal state). Recording more outcomes will not help; escalate per the run's retry/`DEC-BLOCK` policy, you do not override it.
+  - **`2`** — usage/config error (canonical error JSON on stderr). Fix your invocation or config entry; nothing was recorded that needs undoing.
+  - **`3`** — run non-terminal, pending input. The output names which Work is waiting and for what (`execution-outcome` or `assurance-verdict`). If it's waiting on an execution outcome and you are the ship agent for that Work, record it (protocol §3). If it's waiting on an assurance verdict and you are the verification agent, record it (protocol §4). If it's waiting on the *other* seat's input, you are done for now — do not fill in the other seat's record yourself.
+- **Re-running the same dispatch is safe (idempotent) and is the crash-recovery move.** Idempotency keys are derived from durable canonical state (`INV-020`), never randomness or wall-clock time, so replaying `orc dispatch` after a crash — yours or the process's — reproduces identical keys and never duplicates a fact or effect. If you are unsure whether your last recording landed, the answer is always: record it (or re-record it — idempotent) and re-dispatch. Never invent a workaround to "force" a stuck-looking run past exit `3`; pending is correct until the real outcome is known and recorded.
+
+## 6. Worked example — task-m1-003
+
+This is the real record sequence from a completed run in this repository's own delivery history (`.orc/task-m1-003.jsonl`), tracking `TASK-M1-003`'s own CLI-UX PR through the ledger. It predates this playbook and was recorded through the same config/backing-store observation path an agent uses under this playbook (§5) — it is the exact loop a ship agent and a verification agent perform under push mode, summarized here rather than dumped record-for-record:
+
+1. **Intent submitted, Work created and claimed, dispatched.** `FACT-INTENT-SUBMITTED` → `FX-CREATE-WORK`/`FACT-WORK-CREATED` → `FX-CLAIM-WORK`/`FACT-WORK-CLAIMED` → `FACT-WORK-READY` → `DEC-DISPATCH` (kernel decision, not agent-recorded) → `FX-START-EXECUTION`/`FACT-EXEC-STARTED` for attempt 1.
+2. **Ship agent does the work and records settlement + candidate.** The next `orc dispatch` invocation, before the outcome was recorded, would have stopped at exit `3` (pending, awaiting `execution-outcome`) per `SCN-007` — the same wait an agent sees today. Once the PR existed, the ship agent recorded the execution settlement (`outcome: completed`) and a candidate whose content is externally resolvable identity, not prose: `{"pr": 32, "head_sha": "c9b1390d..."}`. Re-dispatching journaled `FACT-EXEC-SETTLED(completed)` and `FACT-CANDIDATE-OBSERVED` (fingerprint `fp-204c92f5...`), then `DEC-REQUEST-ASSURANCE` (kernel decision) moved the Work to `ASSURING`.
+3. **Pending again, this time for assurance.** With no verdict recorded yet, dispatch would stop at exit `3` (pending, awaiting `assurance-verdict`) — `FX-START-ASSURANCE`/`FACT-ASSURE-STARTED` journaled, nothing fabricated for the missing verdict.
+4. **Verification agent independently derives the candidate and records its verdict.** The verification agent — a *different* agent from the one that recorded step 2's settlement, per Role separation — did not copy `fp-204c92f5...`/`pr 32`/the head sha from the ship agent's record. It independently fetched PR #32 and computed the head sha itself, then recorded its verdict against that self-derived identity. Because the independently derived fingerprint matched, assurance settled `accepted`: `FACT-ASSURE-SETTLED(accepted)`. (Had it mismatched, the correct move per §4 above is to report `ERR-CONFLICT`, not reconcile it away.)
+5. **Acceptance and completion — kernel decisions, not agent-recorded.** `DEC-ACCEPT` → `FX-COMPLETE-WORK`/`FACT-WORK-COMPLETED`. Final re-dispatch would exit `0`.
+
+Notice what the two agent seats did and did not do: the ship agent recorded a settlement and a resolvable candidate, never a verdict on its own work; the verification agent recorded a verdict derived from its own independent fetch, never copied from the settlement record; neither agent recorded any `DEC-*`. That is the whole loop.
+
+## 7. Forward pointer — narrative reports are a separate channel
+
+Everything above is canonical observation: settlements, candidates, verdicts. Your own turn-by-turn narration — what you believe you did, what's still pending, what you think the outcome is — is a different, non-canonical channel: `crew-report/v1` (`EXT-CREW-REPORT-V1`, sequenced as `TASK-M1-007`). Once that log is wired up, agents append reports there (`claimed_verdict`, not `verdict` — deliberately, so it can never be mistaken for an assurance verdict) beside, not inside, the settlement/candidate/verdict observations this playbook governs. A crew report is a claim about your own progress; it MUST NOT affect canonical state, decisions, or transitions, and it never substitutes for the settlement, candidate, or verdict recording described above.
+
+## Related
+
+- `docs/playbooks/cli-usage.md` (`PLAYBOOK-CLI-USAGE`) — command surface, config shape, full exit-code contract
+- `docs/delivery/watchtower-operations.md` (`PLAYBOOK-WATCHTOWER`) — ship/verification-scout roles in the surrounding human-driven process
+- `docs/scenarios/SCN-007-pending-settlement.md` — the pending/idempotent-resume flow this playbook's exit-`3` handling follows
+- `docs/extensions/crew-report/README.md` (`EXT-CREW-REPORT-V1`) — the narrative-report channel, `TASK-M1-007`
+- `INV-003`, `INV-006`, `INV-007`, `INV-008`, `INV-011`, `INV-020`
+- `PORT-WORK-004`, `ERR-CONFLICT`
