@@ -45,6 +45,16 @@ Every decision must be reconstructable after the fact:
 - Consciously deferred decisions (with the trigger that will force each) are tracked as a deferred-decision ledger; deferrals are recorded, never implicit.
 - Operator (human) review is asynchronous and non-blocking: contract rulings are reviewable as small isolated diffs in `docs/` history, and overriding any ruling is itself one docs PR.
 
+## Model and effort selection
+
+Capability is spent where decisions are made; mechanical work runs on economical models.
+
+- **Ship agents** run on a mid-tier implementation model (Sonnet-class). Tasks reach them with zero unresolved ambiguity and a checkable definition of done, so authorship is mechanical-once-specified; capability budget goes to review instead.
+- **Reconnaissance and verification scouts** run on a high-capability reasoning model (Opus-class). Decomposition and adversarial audit are the judgment-dense stages — a missed contract interaction there costs more than any implementation bug.
+- **Assessment scouts** for proposals and architecture rulings that shape milestones run on the strongest model available (Fable-class): these produce dispositions the watchtower adopts largely as-is.
+- **Reasoning effort** defaults to inherited session settings; escalate for audits of subtle contract interactions (state-machine totality, idempotency/replay), and keep docs-shipping and mechanical fix rounds cheap.
+- The **quality bar these agents ship against** is defined in `docs/delivery/delivery-stance.md` (`DELIVERY-STANCE`).
+
 ## Conventions
 
 - Worktrees: `.worktrees/<branch-name>` (gitignored), removed after merge.
