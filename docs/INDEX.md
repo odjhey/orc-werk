@@ -33,11 +33,12 @@ description: Flat documentation index.
 - [Golden scenarios](scenarios/README.md)
 - [Conformance](conformance/README.md)
 
+## Architecture
+- [Architecture index](architecture/README.md)
+- [Repository structure and dependency rules](architecture/repository-structure.md)
+
 ## Adapters
 - [Adapter contract and template](adapters/README.md)
-
-## Delivery
-- [M0 pure core](delivery/M0-pure-core.md)
 
 ## Initial adapter slots
 - [Beads](adapters/beads/README.md)
@@ -49,6 +50,13 @@ description: Flat documentation index.
 ## Decisions
 - [ADR-0001 Pure core](decisions/ADR-0001-pure-core.md)
 - [ADR-0002 Candidate-bound assurance](decisions/ADR-0002-candidate-bound-assurance.md)
+- [ADR-0003 Python-first reference implementation](decisions/ADR-0003-python-reference-implementation.md)
+
+## Research and lineage
+- [Research lineage](research/README.md)
+
+## Delivery
+- [M0 pure core](delivery/M0-pure-core.md)
 
 ## M0 task cards
 - [TASK-M0-001](delivery/task-cards/TASK-M0-001-core.md)
