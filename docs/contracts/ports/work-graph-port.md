@@ -40,10 +40,32 @@ A plan MUST be rejected with `ERR-VALIDATION` (see `CONTRACT-ERRORS`) when it co
 - a duplicate `work_id`;
 - a `deps` entry naming a work not present in the plan, or naming the work itself;
 - an empty `works` list;
-- a dependency cycle.
+- a dependency cycle;
+- a `deps` entry whose `condition` is not `"accepted"` (the only v0 condition).
+
+Structurally malformed plans (missing required keys, wrong types — e.g. a non-list `deps`) MUST also be rejected with `ERR-VALIDATION`; plan validation never surfaces implementation-language errors.
 
 ### PORT-WORK-002 `snapshot`
 Return the current bounded canonical work topology for a DeliveryRun.
+
+Portable v0 snapshot shape:
+
+```json
+{
+  "works": [
+    {
+      "work_id": "string",
+      "deps": [
+        {"work_id": "string", "condition": "accepted"}
+      ],
+      "completed": true,
+      "blocked_reason": null
+    }
+  ]
+}
+```
+
+This is the graph topology (mirroring the `PORT-WORK-001` create plan shape) plus the completion/block status the WorkGraph is authoritative for. `blocked_reason` is `null` unless blocked. Bounded to one DeliveryRun.
 
 ### PORT-WORK-003 `ready`
 Return Work eligible for dispatch now.
@@ -52,6 +74,8 @@ Semantics: eligibility is authoritative. The core MUST obey `INV-015` and `INV-0
 
 ### PORT-WORK-004 `claim`
 Claim one Work item for orchestration/execution when supported.
+
+Output: a portable mapping `{work_id, claim_ref}`, where `claim_ref` is a provider-issued opaque string.
 
 ### PORT-WORK-005 `complete`
 Commit the completion condition required to unlock dependents.
