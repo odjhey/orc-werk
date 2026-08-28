@@ -330,7 +330,13 @@ class Orchestrator:
             delivery_run_id=self.delivery_run_id,
             work_id="",
             idempotency_key=derive_idempotency_key(FX_CREATE_WORK, delivery_run_id=self.delivery_run_id),
-            data={"plan": resolved_plan},
+            # `data.max_attempts` alongside `data.plan`, issue #52: the
+            # run's effective retry budget becomes durable journal state,
+            # exactly mirroring the ratified topology-durability precedent
+            # (issue #41) so PORT-JOURNAL-005 replay is self-sufficient --
+            # a faithful replay must fold under the same policy parameters
+            # the run used (CONTRACT-DURABILITY's topology/budget row).
+            data={"plan": resolved_plan, "max_attempts": self.config.max_attempts},
         )
         try:
             created = self.work_graph.create(delivery_run_id=self.delivery_run_id, plan=resolved_plan)

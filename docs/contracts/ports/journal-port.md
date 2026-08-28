@@ -32,6 +32,8 @@ Read ordered canonical history for one DeliveryRun.
 ### PORT-JOURNAL-005 `load_projection`
 Load/rebuild canonical state from history or an equivalent durable projection.
 
+Replay MUST be self-sufficient: it MUST fold history under the same retry budget (`max_attempts`) the run itself used, not an adapter's own default or the reading process's own config. A run's effective `max_attempts` is durably recorded in its `FX-CREATE-WORK` effect record's `data.max_attempts` (`CONTRACT-DURABILITY`'s "Run topology ... and effective retry budget" row, issue #52) — `load_projection` MUST read that value back and pass it to `orc_werk.core.reducer.reduce` (or an equivalent fold) instead of the reducer's own schema default. A journal written before this field existed carries no `data.max_attempts`; `load_projection` MUST fall back to the reducer's schema default (`DEFAULT_MAX_ATTEMPTS`) for such a legacy record, exactly as if the run had used that default — this is a documented read-fallback, not an error, mirroring the issue #55 layout fallback. See `CONF-JOURNAL-003`.
+
 The JournalPort is not a general artifact store and does not duplicate provider-native transcripts.
 
 ## Canonical record envelope

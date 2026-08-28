@@ -449,13 +449,15 @@ def cmd_index(journal_dir: Optional[Path] = None) -> int:
             projection = journal.load_projection(delivery_run_id=run_id)
         except CoreError as exc:
             # A many-runs-at-a-glance scan must not go dark over one run's
-            # replay failure (known-issues ledger,
-            # docs/playbooks/cli-usage.md: `load_projection` does not carry
-            # a per-run `max_attempts`, so a run dispatched with a
-            # non-default budget can fail to re-derive its own projection).
-            # Content-first (axi #8) means partial, honest information beats
-            # a hard crash over one bad entry -- `orc status <run_id>`
-            # surfaces the same canonical error for whoever needs it.
+            # replay failure. As of issue #52's fix, `load_projection`
+            # folds under the run's own recorded `max_attempts`
+            # (`FX-CREATE-WORK`'s effect data, `CONTRACT-DURABILITY`), so
+            # this should no longer trigger for that specific defect --
+            # this remains defense-in-depth for any other future replay
+            # defect. Content-first (axi #8) means partial, honest
+            # information beats a hard crash over one bad entry -- `orc
+            # status <run_id>` surfaces the same canonical error for
+            # whoever needs it.
             print(f"{run_id}: (unreadable: {exc.error.get('error', 'ERR-UNKNOWN')} -- see orc status {run_id})")
             continue
         print(_index_run_line(run_id, projection))
