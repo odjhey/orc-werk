@@ -22,6 +22,7 @@ description: Flat documentation index.
 - [Invariant registry](contracts/invariants.md)
 - [Errors](contracts/errors.md)
 - [Capabilities](contracts/capabilities.md)
+- [Extensions](contracts/extensions.md)
 - [Ports](contracts/ports/README.md)
 
 ## Protocol
@@ -29,15 +30,21 @@ description: Flat documentation index.
 - [Decisions](protocol/decisions.md)
 - [Effects](protocol/effects.md)
 
+## Extensions
+- [Extension registry](extensions/README.md)
+- [`review-findings/v1`](extensions/review-findings/README.md)
+
 ## Verification
 - [Golden scenarios](scenarios/README.md)
 - [Conformance](conformance/README.md)
+- [Extension conformance](conformance/extensions.md)
+
+## Architecture
+- [Architecture index](architecture/README.md)
+- [Repository structure and dependency rules](architecture/repository-structure.md)
 
 ## Adapters
 - [Adapter contract and template](adapters/README.md)
-
-## Delivery
-- [M0 pure core](delivery/M0-pure-core.md)
 
 ## Initial adapter slots
 - [Beads](adapters/beads/README.md)
@@ -49,6 +56,14 @@ description: Flat documentation index.
 ## Decisions
 - [ADR-0001 Pure core](decisions/ADR-0001-pure-core.md)
 - [ADR-0002 Candidate-bound assurance](decisions/ADR-0002-candidate-bound-assurance.md)
+- [ADR-0003 Python-first reference implementation](decisions/ADR-0003-python-reference-implementation.md)
+- [ADR-0004 Versioned extensions](decisions/ADR-0004-versioned-extensions.md)
+
+## Research and lineage
+- [Research lineage](research/README.md)
+
+## Delivery
+- [M0 pure core](delivery/M0-pure-core.md)
 
 ## M0 task cards
 - [TASK-M0-001](delivery/task-cards/TASK-M0-001-core.md)

@@ -3,13 +3,20 @@ id: ADAPTER-NO-MISTAKES
 type: adapter
 status: draft
 authority: informative
-description: Planned no-mistakes adapter for AssurancePort.
+description: Draft no-mistakes assurance adapter slot.
 ---
 
 # no-mistakes adapter
 
-Intended role: first real candidate-assurance provider behind `PORT-ASSURANCE`.
+no-mistakes is a candidate assurance provider, not an Orc Werk core dependency.
 
-The adapter must normalize provider pipeline status into canonical assurance state/verdict and bind evidence to the exact canonical Candidate fingerprint.
+The adapter is expected to normalize exact candidate identity, terminal assurance verdict, evidence references, and final candidate identity when the pipeline mutates the subject.
 
-If the provider can mutate/fix the candidate, the adapter must advertise `CAP-ASSURE-MAY-MUTATE-CANDIDATE` and surface the resulting final Candidate identity.
+Where no-mistakes exposes sufficiently structured and attributable code-review findings, the adapter may additionally produce the optional `review-findings/v1` extension. That extension is not required for generic assurance and does not make no-mistakes the owner of Orc Werk's review-finding schema.
+
+See:
+
+- [Mapping](mapping.md)
+- [Capabilities](capabilities.md)
+- [Conformance](conformance.md)
+- `EXT-REVIEW-FINDINGS-V1`

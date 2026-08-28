@@ -10,7 +10,7 @@ description: First milestone proving provider-free orchestration semantics.
 
 ## Goal
 
-Given an intent and scripted/in-memory providers, the CLI can autonomously drive:
+Given an intent and scripted/in-memory providers, the Orc Werk CLI can autonomously drive:
 
 ```text
 intent
@@ -41,6 +41,7 @@ while preserving inspectable facts, decisions, effects, candidate identities, an
 
 ## Required implementation
 
+- Python 3.11+ reference implementation under `src/orc_werk/`;
 - pure core types/reducer/policy;
 - MemoryWorkGraph adapter;
 - ScriptedExecution adapter;
@@ -49,6 +50,14 @@ while preserving inspectable facts, decisions, effects, candidate identities, an
 - MemoryJournal or JSONLJournal;
 - CLI: `dispatch`, `status`, `watch/history` minimum;
 - conformance tests for memory/scripted adapters.
+
+## Portability acceptance
+
+M0 canonical persisted/interchange records must be reconstructable from portable, explicit data without importing Python implementation classes. Do not use pickle, Python class names, exception objects, or arbitrary Python object graphs as canonical storage or protocol shapes.
+
+Deleting all real integration adapters must leave the complete core, conformance, and golden-scenario suite runnable.
+
+Self-healing/restart behavior introduced in M0 must be expressed through explicit durable state, replay, reconciliation, idempotent effects, and bounded policy so the semantics can be implemented in another language later.
 
 ## Explicitly out of scope
 
@@ -59,4 +68,5 @@ while preserving inspectable facts, decisions, effects, candidate identities, an
 - daemon;
 - web UI;
 - merge/integration port;
-- general policy DSL.
+- general policy DSL;
+- Go rewrite or a scheduled language migration.

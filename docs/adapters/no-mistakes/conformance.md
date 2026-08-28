@@ -1,16 +1,20 @@
 ---
 id: ADAPTER-NO-MISTAKES-CONFORMANCE
-type: conformance-report
+type: adapter-conformance
 status: draft
 authority: informative
-description: no-mistakes adapter conformance status.
+description: Draft conformance plan for no-mistakes assurance adapter.
 ---
 
 # no-mistakes conformance
 
-| Requirement | Status | Evidence |
-|---|---|---|
-| `CONF-ASSURE-001` | not run | |
-| `CONF-ASSURE-002` | not run | |
-| `CONF-ASSURE-003` | not run | |
-| `CONF-ASSURE-004` | not run | |
+The future adapter must satisfy generic assurance conformance for every capability it advertises.
+
+Minimum expected checks:
+
+- exact candidate fingerprint is preserved through settlement;
+- `accepted`, `rejected`, and `inconclusive` stay distinct;
+- candidate mutation returns the exact final candidate when advertised;
+- stale evidence from a prior candidate cannot satisfy a new candidate.
+
+If the adapter advertises `CAP-ASSURE-STRUCTURED-FINDINGS` with `review-findings/v1`, it must additionally satisfy `CONF-EXT-001` through `CONF-EXT-006`, including schema conformance to `EXT-REVIEW-FINDINGS-V1-SCHEMA` and core ignorance of extension internals.

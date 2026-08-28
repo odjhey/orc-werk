@@ -39,3 +39,11 @@ Policy decides what should happen. The kernel validates and records decisions. A
 ## P-008 — Durable history is append-preserving
 
 Attempts, facts, decisions, and evidence are retained rather than overwritten.
+
+## P-009 — Implementation languages are replaceable
+
+Orc Werk's canonical domain, protocol, persistence, and port semantics must not depend on implementation-language-specific behavior. Python is the v0.x reference implementation, not part of the product contract.
+
+## P-010 — Specialized semantics extend rather than contaminate the core
+
+A concept that is useful to a provider/workflow but is not required by the generic delivery state machine should use `CONTRACT-EXTENSIONS` instead of becoming a mandatory core field. Extension semantics must not override canonical Orc Werk semantics; policy may consume a known extension only when it explicitly opts into that extension/version.

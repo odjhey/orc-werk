@@ -31,4 +31,14 @@ Capabilities describe semantic guarantees, not marketing features.
 - `CAP-ASSURE-STRUCTURED-FINDINGS`
 - `CAP-ASSURE-MAY-MUTATE-CANDIDATE`
 
-A provider MAY expose additional capabilities in adapter-specific metadata, but core policy may only rely on canonical capabilities it understands.
+`CAP-ASSURE-STRUCTURED-FINDINGS` means a provider can expose one or more declared structured-finding extension schemas. The provider MUST also advertise the exact extension identifiers it supports, for example `review-findings/v1`; the generic capability alone does not imply support for every finding schema.
+
+## Extension negotiation
+
+Extensions follow `CONTRACT-EXTENSIONS`.
+
+A provider MAY advertise supported extension identifiers in adapter capability metadata. Policy that requires a specialized extension MUST name the exact extension/version it requires.
+
+A provider that supports canonical assurance but not a required extension remains a valid generic assurance provider; it simply cannot satisfy that extension-specific policy requirement.
+
+A provider MAY expose additional capabilities in adapter-specific metadata, but core policy may only rely on canonical capabilities and registered extension identifiers it understands.
