@@ -32,3 +32,13 @@ M1 cards, in dependency order:
 `TASK-M1-002` and `TASK-M1-003` both depend only on `TASK-M1-001` and are independent of each other, so they may ship in parallel worktrees; `TASK-M1-004` has no M1 dependency and may start immediately alongside `TASK-M1-001`. `TASK-M1-006` is the M1a+ stage card: it is authored only after the SCN-007 command surface is fixed and implemented (guidance must not precede the commands it documents). `TASK-M1-007` is implementable before `TASK-M1-006` lands (it depends only on `EXT-CREW-REPORT-V1`, registered alongside it, not on the playbook's content), but is sequenced at the start of M1a+ because that is where its output first becomes useful. `TASK-M1-005` is the only M1b card and gates on both the durability contract (`TASK-M1-004`) and the pending-mode implementation (`TASK-M1-002`) it dogfoods against.
 
 `TASK-M1-008` (human run report) is a presentation add-on with no M1-internal dependency beyond merged M1a surfaces; it runs in parallel with `TASK-M1-005` and touches only the CLI layer.
+
+M2 cards, drafted lightly (details firm up at dispatch), in dependency order:
+
+1. `TASK-M2-001` no-mistakes `PORT-ASSURANCE` adapter + `CONF-ASSURE-*` (no M2-internal dependency; depends on the merged M1b acp adapter for the delivery it assures)
+2. `TASK-M2-002` `acpx claude` as a second agent through the same acp adapter — the `P-001` provider-swap proof (no M2-internal dependency; depends on the merged M1b acp adapter)
+3. `TASK-M2-003` multi-work real DAGs through the acp adapter + dependency-tree view (issue #41) (depends on the merged M1b acp adapter; may run alongside `TASK-M2-001`/`TASK-M2-002`)
+4. `TASK-M2-004` orc as ledger for another repo — first true adoption test (no M2-internal dependency; benefits from, but does not strictly require, `TASK-M2-001`/`TASK-M2-003` landing first)
+5. `TASK-M2-005` policy parameterization v1 — per-work `max_attempts` (gated on observed cost data) + an optional, separately and more strictly gated no-retry exception scoped to the single kernel-checkable `ERR-UNSUPPORTED-CAPABILITY` cause only (adapter-classified `ERR-PERMANENT` retry-skipping is explicitly out); default policy stays cause-blind-but-bounded otherwise
+
+`TASK-M2-001` and `TASK-M2-002` are independent of each other and may ship in parallel worktrees; `TASK-M2-003` is independent of both but shares the acp adapter surface, so sequencing to avoid worktree collisions is a watchtower call at dispatch. `TASK-M2-004` is the most self-contained card — it exercises the ledger from outside this repo entirely. `TASK-M2-005` is gate-blocked (see its card) and is expected to be the last M2 card to start, regardless of numbering.
