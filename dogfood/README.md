@@ -153,7 +153,11 @@ for a filed reason (#16-18), the scenario says so explicitly.
 | [`DFS-011`](scenarios/DFS-011-adversarial-payloads/scenario.md) | Adversarial payloads: NaN, unicode/emoji + 100k intent, deep nesting | `adversarial` |
 | [`DFS-012`](scenarios/DFS-012-real-work-docs-page/scenario.md) | Real-work simulation: "write docs page" with structured candidate + assurance findings | `real-work`, `cli-output` |
 
-Known open issues referenced by scenarios above: #16 (root cause masked as
-budget exhaustion — DFS-007), #17 (config loader is fail-open where the
-system is fail-closed — DFS-006, DFS-010), #18 (torn-tail healing is
-content-blind — DFS-009).
+#16, #17, #18 (and #23) — the round-1 issues referenced by DFS-006/007/009/010
+above — are now `CLOSED`, resolved by PR #32 (`TASK-M1-003`); see each
+scenario's own Verification section for the confirmed-fixed behavior. This
+corpus's currently open, in-flight issues are: #39 (report timeline lacks
+wall-clock time), #40 (report render-all/wildcard + run-id namespace,
+in flight together with #39 as PR #46), #41 (report dependency-tree view
+for multi-work runs), #43 (CLI help conventions), #45 (acp adapter:
+`_orcw_unobservable` placement in the `execution-session/v1` payload).

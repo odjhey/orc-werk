@@ -46,7 +46,9 @@ PYTHONPATH=src python3 -m orc_werk.cli history "$JOURNAL_DIR/s1-happy.jsonl"
 - `dispatch` exit code `0`.
 - `dispatch` stdout: `work work-1: state=ACCEPTED attempts=1 candidate_fingerprint=<fp>` (no
   `blocked_reason` suffix).
-- `status` on the same journal reports the same line, plus `intent: s1-happy`, exit `0`.
+- `status` on the same journal reports the same line, plus `intent: write the changelog`
+  (issue #23's fix: the submitted intent *text*, `FACT-INTENT-SUBMITTED.data.text`,
+  not the run id), exit `0`.
 - `history` shows exactly 19 records, seq 1..19, ending
   `FACT-WORK-COMPLETED`; the sequence is
   `FACT-INTENT-SUBMITTED, FX-CREATE-WORK, FACT-WORK-CREATED, FX-CLAIM-WORK,
@@ -69,3 +71,8 @@ exit `0`, `work work-1: state=ACCEPTED attempts=1
 candidate_fingerprint=fp-32f9dbceb02fbe89eb72171f` — fingerprint matches
 the round-1 dogfooding run byte-for-byte (deterministic candidate
 identity). Confirmed known-good.
+
+Re-verified against `master` for the M1 close-out sweep (2026-08-28,
+`m1-closeout` checker run): `intent:` now prints the real submitted text
+(`write the changelog`), confirming issue #23's fix is live — better than
+this doc's previously stale expectation of the bare run id.

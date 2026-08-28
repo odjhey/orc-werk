@@ -52,7 +52,7 @@ PYTHONPATH=src python3 -m orc_werk.cli history "$JOURNAL_DIR/s10-docs-page.jsonl
 
 - `dispatch` exit `0`. `status`: `work write-docs-page: state=ACCEPTED
   attempts=2 candidate_fingerprint=<fp of attempt 2's candidate>`.
-- `history` shows 27 records. Attempt 1's `FX-IDENTIFY-CANDIDATE` (seq 11)
+- `history` shows 29 records. Attempt 1's `FX-IDENTIFY-CANDIDATE` (seq 11)
   carries the full structured candidate (`files`, `summary`, `diff_stat`)
   in `dispatch_result.candidate.subject_identity`. Attempt 1's
   `FACT-ASSURE-SETTLED` (seq 16) has `verdict: rejected` **and its own
@@ -92,3 +92,11 @@ authority header"]}` and it is the only `extensions=` occurrence in the
 output — both transcribed verbatim from the live run. (The pre-fix run of
 this same scenario is what surfaced the visibility gap as round-1
 FRICTION-1.)
+
+Re-executed against `master` for the M1 close-out sweep (2026-08-28,
+`m1-closeout` checker run): fingerprint and seq-16 `extensions=` shape
+match exactly. Arithmetic correction from that sweep: the actual/correct
+record count for this run is **29**, not 27 as previously stated here —
+the cited seq numbers throughout this doc (16, 21, 26-27 for acceptance)
+were already internally consistent with 29 records; only the stated total
+was off.
