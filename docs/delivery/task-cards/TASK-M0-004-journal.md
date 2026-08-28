@@ -16,6 +16,10 @@ verifies:
 
 Implement MemoryJournal first, with a simple JSONL provider optional in the same card if it does not contaminate the pure core.
 
+## Depends on
+
+`TASK-M0-001`, `TASK-M0-006`.
+
 ## Acceptance
 
 Pass `CONF-JOURNAL-001` through `CONF-JOURNAL-003`; preserve facts, decisions, and effect records in order.

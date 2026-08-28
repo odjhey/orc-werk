@@ -71,3 +71,4 @@ description: Flat documentation index.
 - [TASK-M0-003](delivery/task-cards/TASK-M0-003-scripted.md)
 - [TASK-M0-004](delivery/task-cards/TASK-M0-004-journal.md)
 - [TASK-M0-005](delivery/task-cards/TASK-M0-005-cli.md)
+- [TASK-M0-006](delivery/task-cards/TASK-M0-006-ports-foundation.md)

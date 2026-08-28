@@ -16,6 +16,10 @@ verifies:
 
 Provide an in-memory WorkGraphPort supporting create/snapshot/ready/claim/complete/block.
 
+## Depends on
+
+`TASK-M0-001`, `TASK-M0-006`.
+
 ## Acceptance
 
 Pass `CONF-WORK-001` through `CONF-WORK-004` for advertised capabilities and enforce `INV-015`/`INV-016`.
