@@ -51,7 +51,7 @@ Every persisted/interchanged journal record (fact, decision, or effect record) M
 ```
 
 - `schema_version` is an integer starting at `1` for the v0 envelope; a breaking change to the envelope shape requires a version bump.
-- `seq` is a per-`delivery_run_id` monotonically increasing integer. It is the deterministic ordering key required by `CONF-JOURNAL-001` and `CONF-JOURNAL-003`.
+- `seq` is a per-`delivery_run_id` monotonically increasing integer. It is the deterministic ordering key required by `CONF-JOURNAL-001` and `CONF-JOURNAL-003`. The JournalPort implementation assigns `seq` on append; append order is authoritative for ordering, and callers never supply `seq`.
 - `kind` discriminates which protocol registry `id` resolves against.
 - `data` carries the kind-specific required fields: per `PROTOCOL-FACTS` for facts, per `PROTOCOL-DECISIONS` (including basis, per `INV-012`) for decisions, and per `PORT-JOURNAL-003` (effect identity, idempotency key, dispatch result, canonical error/result) for effect records.
 - `extensions`, when present, MUST satisfy `CONTRACT-EXTENSIONS`.

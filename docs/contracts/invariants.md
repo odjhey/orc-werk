@@ -82,6 +82,8 @@ Where persistent attention is enabled, observing an event, handling that event, 
 
 Retry history and attempt counts MUST be cumulative for one Work lineage.
 
+`attempt_number` is the cumulative per-Work-lineage attempt index; the first execution attempt is `1`. It MUST be deterministically reconstructable from the journal as the count of execution-start records for that Work in the DeliveryRun history.
+
 ## INV-019 — Retry is bounded
 
 Policy MUST define a finite retry budget or an equivalent terminal/escalation condition.
@@ -90,4 +92,11 @@ Policy MUST define a finite retry budget or an equivalent terminal/escalation co
 
 State-changing Effects MUST carry a stable idempotency key or effect identity so crash/retry behavior can be deterministic.
 
-Idempotency keys MUST be deterministically derivable from durable canonical state: `(delivery_run_id, work_id, attempt_number, effect_id)`, plus `candidate_fingerprint` for assurance-targeting effects (`FX-START-ASSURANCE`). Idempotency keys MUST NOT be derived from randomness, wall-clock time, or process/runtime identity, so that journal replay (`PORT-JOURNAL-005`) reproduces identical keys.
+Idempotency keys MUST be deterministically derivable from durable canonical state: the standard tuple `(delivery_run_id, work_id, attempt_number, effect_id)`, with `attempt_number` as defined by `INV-018`. Idempotency keys MUST NOT be derived from randomness, wall-clock time, or process/runtime identity, so that journal replay (`PORT-JOURNAL-005`) reproduces identical keys.
+
+Key form per effect:
+
+- `FX-CREATE-WORK` precedes any attempt and creates all Work records for one plan, so it is keyed on `(delivery_run_id, effect_id)`. This is valid because v0 permits exactly one plan creation per DeliveryRun.
+- `FX-CLAIM-WORK` uses the standard tuple with `attempt_number` set to the upcoming attempt's index.
+- `FX-START-EXECUTION`, `FX-SEND-EXECUTION`, `FX-CANCEL-EXECUTION`, `FX-IDENTIFY-CANDIDATE`, `FX-COMPLETE-WORK`, and `FX-BLOCK-WORK` use the standard tuple.
+- `FX-START-ASSURANCE` (assurance-targeting) uses the standard tuple plus `candidate_fingerprint`.
