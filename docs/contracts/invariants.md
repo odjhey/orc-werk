@@ -94,6 +94,8 @@ State-changing Effects MUST carry a stable idempotency key or effect identity so
 
 Idempotency keys MUST be deterministically derivable from durable canonical state: the standard tuple `(delivery_run_id, work_id, attempt_number, effect_id)`, with `attempt_number` as defined by `INV-018`. Idempotency keys MUST NOT be derived from randomness, wall-clock time, or process/runtime identity, so that journal replay (`PORT-JOURNAL-005`) reproduces identical keys.
 
+An adapter's idempotency MUST be determinable from durable state (the provider's own durable records or the journal), never from process-local memory: a fresh process replaying an effect against the same key MUST converge to the same outcome without duplicating the underlying operation. Process-local caches are permitted only as fast paths over the durable check.
+
 Key form per effect:
 
 - `FX-CREATE-WORK` precedes any attempt and creates all Work records for one plan, so it is keyed on `(delivery_run_id, effect_id)`. This is valid because v0 permits exactly one plan creation per DeliveryRun.
