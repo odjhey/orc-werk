@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
@@ -24,6 +25,15 @@ from orc_werk.core.errors import CoreError
 from orc_werk.core.state import STATE_BLOCKED
 
 DEFAULT_JOURNAL_DIR = ".orc"
+
+_PATH_SEPARATORS = tuple({os.sep, os.altsep} - {None})
+
+
+def _looks_like_journal_path(target: str) -> bool:
+    """True when `target` looks like a filesystem path (rather than a bare
+    `delivery_run_id`) even though it doesn't currently resolve to a file
+    or directory: it contains a path separator, or ends in `.jsonl`."""
+    return target.endswith(".jsonl") or any(sep in target for sep in _PATH_SEPARATORS)
 
 
 def _derive_run_id(intent_text: str) -> str:
@@ -63,6 +73,21 @@ def _resolve_journal(target: str) -> tuple[Path, str]:
                     "<run_id>.jsonl path or a bare run id instead"
                 ),
                 "details": {"path": target, "candidates": [c.name for c in candidates]},
+            }
+        )
+    # FRICTION-5: a target that looks like a path (contains a path
+    # separator, or ends in `.jsonl`) but doesn't exist must not fall
+    # through into the bare-run-id branch below -- that branch hands the
+    # raw string to `JSONLJournal._path_for`, whose `delivery_run_id`
+    # filename-safety check then leaks an implementation detail
+    # ("... is not a safe JSONL journal filename component") instead of
+    # naming the actually-missing path.
+    if _looks_like_journal_path(target) and not path.exists():
+        raise CoreError(
+            {
+                "error": "ERR-NOT-FOUND",
+                "message": f"journal path does not exist: {target}",
+                "details": {"path": target},
             }
         )
     return Path(DEFAULT_JOURNAL_DIR), target
@@ -145,7 +170,15 @@ def cmd_history(args: argparse.Namespace) -> int:
     directory, run_id = _resolve_journal(args.target)
     journal = JSONLJournal(directory)
     for record in journal.history(delivery_run_id=run_id):
-        print(f"[{record['seq']:04d}] {record['kind']:8s} {record['id']:28s} {_compact(record['data'])}")
+        line = f"[{record['seq']:04d}] {record['kind']:8s} {record['id']:28s} {_compact(record['data'])}"
+        # FRICTION-1: the envelope's sibling `extensions` field (where e.g.
+        # EXT-REVIEW-FINDINGS-V1 assurance findings travel, CONF-EXT-003)
+        # is otherwise invisible in `orc history` output even though it was
+        # journaled -- render it (compact, same line) when non-empty.
+        extensions = record.get("extensions")
+        if extensions:
+            line += f" extensions={_compact(extensions)}"
+        print(line)
     return 0
 
 
@@ -182,6 +215,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
     except FileNotFoundError as exc:
         _print_error({"error": "ERR-NOT-FOUND", "message": str(exc), "details": {}})
+        return 2
+    except Exception as exc:  # noqa: BLE001 -- last-resort per module docstring contract
+        # BUG-1 audit: this module's docstring promises errors print the
+        # canonical error value as JSON to stderr, "never a Python
+        # traceback" -- unconditionally, not just for the two exception
+        # types above. `CoreError`/`FileNotFoundError` are the *known*
+        # ways a command can fail; this catch-all is the CLI's defense in
+        # depth against an *unknown* one (a bug in this CLI, an adapter, or
+        # core reaching a state its own contract didn't anticipate) still
+        # honoring that promise instead of leaking a traceback. It
+        # deliberately reports only `str(exc)` and the exception's type
+        # name -- never a formatted traceback/frame data -- staying within
+        # the portable canonical-error shape (CLAUDE.md #9). `ERR-PERMANENT`
+        # ("operation cannot succeed without changing intent/state/
+        # provider", CONTRACT-ERRORS) is the closest canonical fit for an
+        # unclassified failure: retrying the exact same command is not
+        # expected to help.
+        _print_error(
+            {
+                "error": "ERR-PERMANENT",
+                "message": f"unexpected internal error ({type(exc).__name__}): {exc}",
+                "details": {},
+            }
+        )
         return 2
 
 
