@@ -130,9 +130,13 @@ the checker runs the union.
 ## Seeded scenarios (round 1)
 
 Seeded from the round-1 dogfooding session (10 invented scenarios, 2 bugs
-found, issues filed as #16-18). Expectations below encode the *correct*
-post-fix behavior; where round 1's actual `master` run diverges, the
-scenario says so explicitly.
+found, issues filed as #16-18). Round 1's confirmed bugs (NaN traceback,
+`max_attempts: 0` falsy-drop, missing-path fallthrough, invisible history
+extensions) were fixed by the round-1 fix PR, now merged and guarded by
+`tests/scenarios/test_cli_dogfood_fixes.py`; the corresponding scenarios
+(DFS-006, DFS-009 case 4a, DFS-011, DFS-012) encode that fixed behavior
+as confirmed-correct. Where `master` still diverges from correct behavior
+for a filed reason (#16-18), the scenario says so explicitly.
 
 | ID | Scenario | Tags |
 |---|---|---|

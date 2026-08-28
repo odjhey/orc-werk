@@ -3,7 +3,7 @@ id: DFS-006
 type: scenario
 status: current
 authority: informative
-description: max_attempts extremes — override to 1, override to a very large budget, and config value 0 (expected canonical ERR-VALIDATION post-fix).
+description: max_attempts extremes — override to 1, override to a very large budget, and config value 0 (rejected with canonical ERR-VALIDATION at load time).
 ---
 
 # DFS-006: `--max-attempts`/config extremes: 1, very large, 0
@@ -24,14 +24,12 @@ case that round 1 found silently mishandled:
    behaves oddly at scale; a failure followed by a success should simply
    retry-then-accept exactly as DFS-002 does, just with room to spare.
 3. `max_attempts: 0` **in the config file** — round 1 found this silently
-   replaced by the default (`3`) instead of rejected, because
-   `build_run_config` computes `max_attempts_override or
-   config.get("max_attempts") or RunConfig().max_attempts` (`src/orc_werk/cli/config.py`)
-   and `0` is falsy in Python, so it is indistinguishable from "not
-   supplied." **Expected (post-fix) behavior is canonical `ERR-VALIDATION`
-   at config-load time**, before any dispatch — `0` is a nonsensical retry
-   budget (`INV-018`/`INV-019` require the ability to make at least one
-   attempt), not a synonym for "use the default."
+   replaced by the default (`3`) instead of rejected (`0` was falsy-dropped
+   by an `or`-chain in `build_run_config`). Fixed in the round-1 fix PR:
+   correct behavior is canonical `ERR-VALIDATION` before any dispatch —
+   `0` is a nonsensical retry budget (`INV-018`/`INV-019` require the
+   ability to make at least one attempt), not a synonym for "use the
+   default."
 
 ## Setup
 
@@ -80,40 +78,41 @@ then a normal completed/accepted attempt 2. A budget of a billion made no
 functional difference versus the default 3 here; it exists only to prove
 the override plumbs through and nothing chokes on a large int.
 
-**3 (`max_attempts: 0`) — expected (post-fix):** exit `2`, canonical
-`{"error": "ERR-VALIDATION", ...}` on stderr, **no journal file created**
-(rejected at config-load, before the journal is even opened).
-
-**3 — actual on current `master` (known-failing, pending fix):** `0` is
-silently treated as "not supplied" and the run proceeds with the default
-`max_attempts=3`. Because `config-zero.json`'s `attempts` only scripts one
-`failed` attempt, attempts 2-3 hit `ScriptedExecution`'s "no scripted
-outcome for this attempt" path (`ERR-NOT-FOUND`), which the orchestrator
-converts into a *synthetic* failed execution
-(`exec-capability-failure-s9d-zeromax-work-1-2`, `...-3`) rather than
-propagating the load-time config error — this is the same masking pattern
-as issue #16/#17. Exit `1`, `blocked_reason=retry-budget-exhausted`, 21
-journal records. This divergence is expected and tracked (see DFS-README's
-issue #17 note); do not "fix" this scenario file to match — it stays
-pinned to the *correct* contract behavior until the config-validation fix
-lands.
+**3 (`max_attempts: 0`) — correct, confirmed:** exit `2`, stderr
+`{"error": "ERR-VALIDATION", "message": "max_attempts (config
+max_attempts) must be a positive integer, got 0", "details":
+{"max_attempts": 0, "source": "config max_attempts"}}`. No `.jsonl`
+journal file is written (the journal *directory* is created empty, since
+`JSONLJournal` is constructed before the run config is validated — a
+cosmetic quirk, not state corruption). The same rejection fires for
+`--max-attempts 0` on the flag (with `"source": "--max-attempts flag"`)
+and for negative/non-integer values. This case regressed in round 1
+(round-1 BUG-2: `0` is falsy in Python, so the loader's old
+`override or config or default` chain silently replaced an explicit `0`
+with the default `3` and the run proceeded to a misleading
+`retry-budget-exhausted` block) and was fixed by the round-1 fix PR
+(`_validate_max_attempts` + explicit `is not None` precedence in
+`src/orc_werk/cli/config.py`); guarded by
+`tests/scenarios/test_cli_dogfood_fixes.py`. The broader
+strict-config-schema work (unknown keys, attempts coverage) remains open
+as issue #17 — see DFS-010.
 
 ## Judgment notes
 
-Case 3 is the one to watch closely on every checker run: report BUG (not
-FRICTION) as long as it reproduces the "silent fallback to default 3, with
+Case 3 is a regressed-then-fixed case: if any checker run ever sees the
+old behavior again (exit `1`, silent fallback to the default budget,
 synthetic capability-failure attempts standing in for the real config
-error" behavior described above, quoting the actual exit code and
-`blocked_reason` observed. The moment this scenario's actual run starts
-producing `ERR-VALIDATION`/exit `2` with no journal file, it has passed —
-flip the "known-failing" framing away in the same PR that ships the fix.
+error), escalate as BUG immediately — the deterministic guard lives in
+`tests/scenarios/test_cli_dogfood_fixes.py`, so a reappearance means that
+suite has a hole. Cases 1 and 2 are mechanical boundary checks; nothing
+judgment-heavy expected there.
 
 ## Verification
 
-Not executed as part of this seeding pass (only DFS-001/DFS-002 were run to
-confirm the harness works end-to-end). Cases 1 and 2 are carried over
-unmodified from the round-1 dogfooding session (`s4d`, `s4e`), where they
-produced the outcomes described above; case 3's "actual on current
-master" description is likewise transcribed from round 1's `s9d-zeromax`
-run and cross-checked by reading `src/orc_werk/cli/config.py`'s
-`build_run_config` (the `... or ...` falsy-drop) directly.
+Cases 1 and 2 were not executed as part of this seeding pass; they are
+carried over unmodified from the round-1 dogfooding session (`s4d`,
+`s4e`), where they produced the outcomes described above. Case 3 was
+executed against post-round-1-fix `master` (merged into this branch) on
+2026-08-28: both the config-embedded `0` and the `--max-attempts 0` flag
+variant produced the canonical `ERR-VALIDATION`/exit `2` outputs
+transcribed verbatim above.

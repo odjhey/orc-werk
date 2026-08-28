@@ -3,7 +3,7 @@ id: DFS-009
 type: scenario
 status: current
 authority: informative
-description: Journal recovery at the CLI boundary — torn tail heals, corrupt middle fails closed, missing/garbage targets should fail closed too (one confirmed bug, issue #18).
+description: Journal recovery at the CLI boundary — torn tail heals, corrupt middle and missing path-like targets fail closed; garbage files and bare unknown run ids still silently succeed (issue #18).
 ---
 
 # DFS-009: journal recovery — torn tail, corrupt middle, missing/garbage paths
@@ -41,8 +41,8 @@ commands (never read/written in place inside the repo):
   last thing in the file), it is real corruption.
 - `garbage.jsonl` — a single line of plain English, not JSON at all:
   `hello this is not json at all, just plain text`.
-- (no file) a bare run id that does not correspond to any journal in the
-  target directory at all.
+- (no file) a nonexistent `.jsonl` path, and separately a bare run id
+  that does not correspond to any journal in the target directory at all.
 
 ## Commands
 
@@ -62,7 +62,11 @@ PYTHONPATH=src python3 -m orc_werk.cli status "$SCRATCH/mid/s1-happy.jsonl"
 # 3: garbage single-line file, addressed by its actual path — issue #18
 PYTHONPATH=src python3 -m orc_werk.cli status "$SCRATCH/ghost.jsonl"
 
-# 4: missing path — a bare run id with nothing behind it, run from an
+# 4a: missing path that looks like a path (ends in .jsonl) — expect
+# ERR-NOT-FOUND naming the path
+PYTHONPATH=src python3 -m orc_werk.cli status "$SCRATCH/does-not-exist.jsonl"
+
+# 4b: bare nonexistent run id (no separator, no .jsonl), run from an
 # empty scratch cwd so any side effect (e.g. a stray .orc dir) is visible
 (cd "$SCRATCH/empty" && PYTHONPATH="$PWD/../../../../src" python3 -m orc_werk.cli status totally-nonexistent-run-id; ls -la)
 
@@ -71,9 +75,9 @@ mkdir -p "$SCRATCH/emptydir"
 PYTHONPATH=src python3 -m orc_werk.cli status "$SCRATCH/emptydir"
 ```
 
-(Adjust the `PYTHONPATH` relative path in case 4 to wherever `src` actually
-resolves from the scratch cwd, or just export an absolute `PYTHONPATH`
-before `cd`ing.)
+(Adjust the `PYTHONPATH` relative path in case 4b to wherever `src`
+actually resolves from the scratch cwd, or just export an absolute
+`PYTHONPATH` before `cd`ing.)
 
 ## Expected observable outcomes
 
@@ -102,41 +106,56 @@ implementing that, since current behavior is normatively correct per the
 letter of the existing rule — this is a contract-refinement request, not
 a plain code bug).
 
-**4 (missing path) — known bug (untracked by number, same family as
-issue #18 / #17's fail-open framing) — expected (post-fix): canonical
-`ERR-NOT-FOUND`, exit `2`, no directory created.** Actual on current
-`master`: `status` prints `run: totally-nonexistent-run-id` then `(no
-work recorded yet)`, exit `0` — because `_resolve_journal` (`src/orc_werk/cli/main.py`)
-falls through to treating any non-existent path as a bare run id resolved
-against the CLI-relative default journal directory `./.orc`, and
-`JSONLJournal.__init__` unconditionally `mkdir(parents=True,
-exist_ok=True)`s that directory even for a read-only `status` call — so
-this bug has a **side effect** too: confirmed, a fresh `.orc/` directory
-is created in the invocation cwd. Report BUG with both symptoms (wrong
-exit code *and* the stray directory) each time this reproduces.
+**4a (missing path-looking target) — correct, confirmed:** exit `2`,
+stderr `{"error": "ERR-NOT-FOUND", "message": "journal path does not
+exist: <path>", "details": {"path": "<path>"}}` — the missing path is
+named. A target that *looks* like a path (contains a path separator or
+ends in `.jsonl`) but does not exist no longer falls through to the
+bare-run-id branch. This case was fixed by the round-1 fix PR
+(`_looks_like_journal_path` in `src/orc_werk/cli/main.py`; it previously
+leaked a confusing "not a safe JSONL journal filename component"
+`ERR-VALIDATION` or silently succeeded); guarded by
+`tests/scenarios/test_cli_dogfood_fixes.py`.
+
+**4b (bare nonexistent run id) — still fail-open (same family as issue
+#18's silent-success framing):** `status` prints `run:
+totally-nonexistent-run-id` then `(no work recorded yet)`, exit `0` — a
+bare token with no separator and no `.jsonl` suffix is by design resolved
+as a run id against the CLI-relative default journal directory `./.orc`,
+and an unknown run id there projects to an empty run rather than an
+error. `JSONLJournal.__init__` also unconditionally `mkdir`s that
+directory even for a read-only `status` call — confirmed, a fresh `.orc/`
+directory is created in the invocation cwd as a side effect. Report
+FRICTION with both symptoms (silent success *and* the stray directory)
+each time this reproduces; like case 3, tightening this is a
+contract/behavior refinement to route via the watchtower, not a plain
+code bug.
 
 **5 (empty dir baseline) — correct, confirmed:** exit `2`, stderr:
 `{"details": {"path": "<dir>"}, "error": "ERR-NOT-FOUND", "message": "no
 *.jsonl journal files found under directory: <dir>"}`. Included as a
 positive contrast: a directory target that legitimately has zero journals
-already fails closed correctly today — it is specifically the *bare run
-id* and *garbage-file* paths that leak.
+already fails closed correctly — it is specifically the *bare run id*
+and *garbage-file* paths that still leak.
 
 ## Judgment notes
 
-Cases 3 and 4 are exactly the kind of finding this corpus exists for: both
-pass their "did it crash" bar trivially (no traceback, valid JSON error
-shape when there is an error at all) while silently doing the wrong thing
-on a completely wrong target. A checker agent should specifically read the
-`status` output text, not just the exit code, to catch these — a
+Cases 3 and 4b are exactly the kind of finding this corpus exists for:
+both pass their "did it crash" bar trivially (no traceback, valid JSON
+error shape when there is an error at all) while silently doing the wrong
+thing on a completely wrong target. A checker agent should specifically
+read the `status` output text, not just the exit code, to catch these — a
 mechanical "exit code == expected" assertion would have missed both in
-round 1.
+round 1. Case 4a is the fixed sibling: if it ever regresses to silent
+success or the old "unsafe filename" leak, escalate as BUG (the guard is
+in `tests/scenarios/test_cli_dogfood_fixes.py`).
 
 ## Verification
 
-Read-only spot-check run against `master` (worktree `feat/dogfood-corpus`)
-on 2026-08-28 for all five cases; outputs above (including the exact
-`byte_offset: 1171` and the stray `.orc/` directory) are transcribed
-verbatim from that run, not merely carried over from round 1. Case 1/2/5
-match round-1 findings exactly; cases 3/4 reproduce the round-1 findings
-(issue #18, and the related missing-path side effect) unchanged.
+All cases re-run against post-round-1-fix `master` (merged into this
+branch) on 2026-08-28; outputs above (including the exact `byte_offset:
+1171`, case 4a's `ERR-NOT-FOUND` naming the path, and case 4b's stray
+`.orc/` directory) are transcribed verbatim from that run. Cases 1/2/5
+are unchanged from round 1; case 4a's fix was confirmed live; cases 3 and
+4b still reproduce round 1's fail-open behavior (issue #18 and its
+bare-run-id sibling remain open).

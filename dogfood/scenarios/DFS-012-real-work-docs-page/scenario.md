@@ -55,39 +55,40 @@ PYTHONPATH=src python3 -m orc_werk.cli history "$JOURNAL_DIR/s10-docs-page.jsonl
 - `history` shows 27 records. Attempt 1's `FX-IDENTIFY-CANDIDATE` (seq 11)
   carries the full structured candidate (`files`, `summary`, `diff_stat`)
   in `dispatch_result.candidate.subject_identity`. Attempt 1's
-  `FACT-ASSURE-SETTLED` (seq 16) has `verdict: rejected`; the raw journal
-  record at that seq carries `extensions: {"findings": ["missing
-  frontmatter..."]}` alongside `data`. Attempt 2's `FACT-ASSURE-SETTLED`
-  (seq 26) has `verdict: accepted`, `extensions: {}`.
+  `FACT-ASSURE-SETTLED` (seq 16) has `verdict: rejected` **and its own
+  printed line ends with the record-level extensions rendered inline**:
+  `extensions={"findings":["missing frontmatter id/type/status/authority
+  header"]}` — `cmd_history` renders each record's non-empty `extensions`
+  field on the record's own line (fixed by the round-1 fix PR; previously
+  extensions were journaled but invisible in `history` output, guarded by
+  `tests/scenarios/test_cli_dogfood_fixes.py`). Attempt 2's
+  `FACT-ASSURE-SETTLED` (seq 26) has `verdict: accepted` and no
+  `extensions=` suffix (empty extensions are not rendered).
+- Exactly one `extensions=` suffix appears in the whole history output
+  for this run (seq 16's rejection findings).
 
 ## Judgment notes
 
-**This is the scenario's real point, not a mechanical assertion.**
-Confirmed by direct inspection: `cmd_history` (`src/orc_werk/cli/main.py`)
-prints `record['data']` only — it never reads `record['extensions']`. So
-seq 16's own printed `history` line shows `verdict":"rejected"` with
-**no** findings anywhere on that line; a human scanning line-by-line sees
-only that the candidate was rejected, not why. The findings *are*
-recoverable from `history` output, but only indirectly: `DEC-RETRY` at seq
-17 embeds a full copy of the cited `FACT-ASSURE-SETTLED` record (including
-its `extensions`) inside its `basis` array, so `findings` does appear
-buried inside that decision's JSON blob one line later — not on the
-originating fact's own line where a human would first look.
-
-Judge this as: **FRICTION, not BUG** — the information is not lost (it
-would survive a full-history audit), but it is not legible at the natural
-reading location. This is exactly the "history-extensions visibility"
-gap; round 1's proposed fix is for `cmd_history` to print each record's
-own `extensions` field alongside `data` directly, which would put the
-findings on seq 16's line where they belong instead of requiring a reader
-to notice they are re-embedded one line later. If a checker run finds
-`extensions` printed directly on the record's own line, treat the
-friction as resolved and update this note.
+**This is the scenario's real point, not a mechanical assertion:** with
+the findings now on seq 16's own line, a human reading only
+`status` + `history` can reconstruct the full story — candidate 1's
+content and diff stat (seq 11), why it was rejected (seq 16's
+`extensions=` findings), the retry decision citing that rejection (seq
+17), candidate 2's corrected content (seq 21), and its acceptance (seq
+26-27). Judge each checker run against that bar: if reconstructing "what
+happened and why" ever again requires reading the raw `.jsonl` or fishing
+findings out of a decision's embedded `basis` blob instead of the
+originating record's line, the extensions-visibility friction has
+regressed — escalate as BUG (the deterministic guard is in
+`tests/scenarios/test_cli_dogfood_fixes.py`).
 
 ## Verification
 
-Executed against `master` (worktree `feat/dogfood-corpus`) on 2026-08-28:
-exit `0`, `work write-docs-page: state=ACCEPTED attempts=2
-candidate_fingerprint=fp-b0f8822ad13abb3671ddfa0a`. The
-`extensions`-visibility gap described above was confirmed directly: seq
-16's `history` line omits `findings`; seq 17's embedded basis carries it.
+Executed against post-round-1-fix `master` (merged into this branch) on
+2026-08-28: exit `0`, `work write-docs-page: state=ACCEPTED attempts=2
+candidate_fingerprint=fp-b0f8822ad13abb3671ddfa0a`; seq 16's `history`
+line ends `extensions={"findings":["missing frontmatter id/type/status/
+authority header"]}` and it is the only `extensions=` occurrence in the
+output — both transcribed verbatim from the live run. (The pre-fix run of
+this same scenario is what surfaced the visibility gap as round-1
+FRICTION-1.)
