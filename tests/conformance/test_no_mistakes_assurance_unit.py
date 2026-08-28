@@ -215,6 +215,56 @@ class NoMistakesAssuranceVerdictMappingTest(unittest.TestCase):
         self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
         self.assertEqual(observed.verdict, "accepted")
 
+    def test_active_run_without_any_readable_head_is_refused(self) -> None:
+        first = self._adapter()
+        self._request(first, fingerprint="fp-unknown-owner", key="k-unknown-owner", head_sha="a" * 40)
+        run_id = self._world.active_run_id()
+        assert run_id is not None
+        self._world.set_head_shape(
+            run_id, head=None, emit_run_head=False, emit_branch_sync=False
+        )
+
+        with self.assertRaises(CoreError) as raised:
+            self._request(
+                self._adapter(), fingerprint="fp-unknown-candidate", key="k-unknown-candidate", head_sha="a" * 40
+            )
+        self.assertEqual(raised.exception.error["error"], "ERR-UNSAFE-STATE")
+        self.assertIn("abort or await it", raised.exception.error["message"])
+        self.assertEqual(self._world.run_count(), 1)
+
+    def test_active_run_with_divergent_run_block_head_is_refused(self) -> None:
+        first = self._adapter()
+        self._request(first, fingerprint="fp-divergent-owner", key="k-divergent-owner", head_sha="b" * 40)
+        run_id = self._world.active_run_id()
+        assert run_id is not None
+        self._world.set_head_shape(
+            run_id, head="b" * 40, emit_run_head=True, emit_branch_sync=False
+        )
+
+        with self.assertRaises(CoreError) as raised:
+            self._request(
+                self._adapter(), fingerprint="fp-divergent-candidate", key="k-divergent-candidate", head_sha="c" * 40
+            )
+        self.assertEqual(raised.exception.error["error"], "ERR-UNSAFE-STATE")
+        self.assertEqual(raised.exception.error["details"]["observed_head"], "b" * 40)
+        self.assertEqual(self._world.run_count(), 1)
+
+    def test_active_run_with_matching_run_block_head_is_adopted(self) -> None:
+        first = self._adapter()
+        candidate = self._candidate("fp-run-head-match", head_sha="d" * 40)
+        run1 = first.request(candidate=candidate, requirements={"intent": "x"}, idempotency_key="k-match")
+        run_id = self._world.active_run_id()
+        assert run_id is not None
+        self._world.set_head_shape(
+            run_id, head="d" * 40, emit_run_head=True, emit_branch_sync=False
+        )
+
+        run2 = self._adapter().request(
+            candidate=candidate, requirements={"intent": "x"}, idempotency_key="k-match"
+        )
+        self.assertEqual(run1.id, run2.id)
+        self.assertEqual(self._world.run_count(), 1)
+
     def test_active_run_is_adopted_not_respawned_across_instances(self) -> None:
         """A fresh instance calling request() with the SAME idempotency_key
         for a candidate whose run is already active must adopt it, never
@@ -224,6 +274,7 @@ class NoMistakesAssuranceVerdictMappingTest(unittest.TestCase):
         'Limitations')."""
         first = self._adapter()
         candidate = self._candidate("fp-j", head_sha="f" * 40)
+        self._world.set_next_head("f" * 40)
         run1 = first.request(candidate=candidate, requirements={"intent": "x"}, idempotency_key="k-j")
         self.assertEqual(self._world.run_count(), 1)
 

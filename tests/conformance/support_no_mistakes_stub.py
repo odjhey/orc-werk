@@ -40,6 +40,7 @@ _STUB_SOURCE = textwrap.dedent(
     implements and why."""
     import json
     import os
+    import subprocess
     import sys
     import tempfile
     import time
@@ -103,6 +104,8 @@ _STUB_SOURCE = textwrap.dedent(
         lines.append("run:")
         lines.append(f'  id: "{rec["id"]}"')
         lines.append(f'  branch: {rec["branch"]}')
+        if rec.get("emit_run_head", True):
+            lines.append(f'  head: {rec.get("head") or ""}')
         lines.append(f'  status: {rec["status"]}')
         gate = rec.get("gate")
         if gate is not None:
@@ -118,11 +121,12 @@ _STUB_SOURCE = textwrap.dedent(
                 )
                 lines.append(f"    {row}")
         outcome = rec.get("outcome")
-        lines.append("branch_sync:")
-        lines.append("  pipeline:")
-        lines.append(f'    submitted_head: {rec.get("head") or ""}')
-        lines.append("  local:")
-        lines.append(f'    head: {rec.get("head") or ""}')
+        if rec.get("emit_branch_sync", True):
+            lines.append("branch_sync:")
+            lines.append("  pipeline:")
+            lines.append(f'    submitted_head: {rec.get("head") or ""}')
+            lines.append("  local:")
+            lines.append(f'    head: {rec.get("head") or ""}')
         if outcome is not None:
             lines.append(f"outcome: {outcome}")
         sys.stdout.write("\\n".join(lines) + "\\n")
@@ -130,13 +134,24 @@ _STUB_SOURCE = textwrap.dedent(
 
     def cmd_axi_run(intent, skip):
         state = _load()
+        head = state.get("next_head")
+        if not head:
+            git = subprocess.run(
+                ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            head = git.stdout.strip() if git.returncode == 0 else None
         state["counter"] += 1
         run_id = f"STUB{state[\'counter\']:022d}"
         state["runs"][run_id] = {
             "id": run_id,
             "branch": state.get("branch") or "stub-branch",
             "status": "running",
-            "head": state.get("next_head"),
+            "head": head,
+            "emit_run_head": True,
+            "emit_branch_sync": True,
             "outcome": None,
             "gate": None,
             # PR #80 fix round, finding B: record the exact --skip value
@@ -294,6 +309,23 @@ class NoMistakesStubWorld:
         absent) -- the finding-B mechanical never-push assertion: every
         adapter spawn must include `push` here."""
         return list(self._load()["runs"][run_id].get("skip", []))
+
+    def set_head_shape(
+        self,
+        run_id: str,
+        *,
+        head: Optional[str],
+        emit_run_head: bool,
+        emit_branch_sync: bool,
+    ) -> None:
+        """Model provider status identity variants, including the live
+        no-branch_sync/no-readable-head shape from issue #92."""
+        state = self._load()
+        rec = state["runs"][run_id]
+        rec["head"] = head
+        rec["emit_run_head"] = emit_run_head
+        rec["emit_branch_sync"] = emit_branch_sync
+        self._save(state)
 
     def set_gate(self, run_id: str, *, step: str, findings: Sequence[Mapping[str, Any]]) -> None:
         state = self._load()

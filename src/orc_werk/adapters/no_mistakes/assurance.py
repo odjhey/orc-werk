@@ -350,6 +350,21 @@ class NoMistakesAssurance(AssurancePort):
                 )
             time.sleep(self._spawn_poll_interval_s)
 
+    def _repo_head(self) -> Optional[str]:
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+                cwd=self._repo_path,
+                env=self._env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return None
+        head = proc.stdout.strip()
+        return head if proc.returncode == 0 and head else None
+
     # -- request --------------------------------------------------------------
 
     def request(
@@ -370,20 +385,24 @@ class NoMistakesAssurance(AssurancePort):
 
         subject = candidate.subject_identity if isinstance(candidate.subject_identity, Mapping) else {}
         expected_head = subject.get("head_sha") if isinstance(subject.get("head_sha"), str) else None
+        if expected_head is None:
+            # A replay-rehydrated Candidate may retain only its durable
+            # fingerprint. CLI wiring constrains this adapter to a git
+            # candidate, so re-read the configured repository's current
+            # HEAD rather than weakening active-run identity confirmation.
+            expected_head = self._repo_head()
 
         status = self._axi_status(repo_path=self._repo_path)
         run_block = status.get("run") if isinstance(status.get("run"), dict) else None
 
         if run_block is not None and run_block.get("status") not in _TERMINAL_STATUSES:
             observed_head = _observed_head(status)
-            if expected_head is not None and observed_head is not None and observed_head != expected_head:
+            if expected_head is None or observed_head is None or observed_head != expected_head:
                 raise CoreError(
                     canonical_error(
                         ERR_UNSAFE_STATE,
-                        "a different no-mistakes run is already active for repo_path and does not "
-                        "match the requested candidate's head; this adapter never resolves another "
-                        "run's gate/branch ownership itself (judge-only ruling) -- resolve it first "
-                        "(e.g. `no-mistakes axi abort`), then retry request()",
+                        "an unrelated or unconfirmable no-mistakes pipeline is active in this repo; "
+                        "abort or await it before requesting assurance",
                         repo_path=self._repo_path,
                         expected_head=expected_head,
                         observed_head=observed_head,
@@ -531,6 +550,9 @@ class NoMistakesAssurance(AssurancePort):
 
 
 def _observed_head(status: Mapping[str, Any]) -> Optional[str]:
+    run_block = status.get("run")
+    if isinstance(run_block, dict) and isinstance(run_block.get("head"), str) and run_block["head"]:
+        return run_block["head"]
     branch_sync = status.get("branch_sync")
     if not isinstance(branch_sync, dict):
         return None
