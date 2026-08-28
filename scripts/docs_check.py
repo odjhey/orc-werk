@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 ID_LINE_RE = re.compile(r"^id:\s*([^\s#]+)\s*$", re.M)
-STABLE_PREFIXES = "P|INV|ENT|PORT|FACT|DEC|FX|CAP|ERR|SCN|CONF|ADR|M|TASK|ARCH|EXT"
+STABLE_PREFIXES = "P|INV|ENT|PORT|FACT|DEC|FX|CAP|ERR|SCN|CONF|ADR|M|TASK|ARCH|EXT|CONTRACT"
 REF_RE = re.compile(rf"`((?:{STABLE_PREFIXES})-[A-Z0-9-]+)`")
 
 
