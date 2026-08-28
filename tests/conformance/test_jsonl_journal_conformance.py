@@ -206,5 +206,100 @@ class JSONLJournalFileShapeTest(unittest.TestCase):
         self.assertEqual(ctx2.exception.error["error"], "ERR-VALIDATION")
 
 
+class ObservedAtTimeSidecarTest(unittest.TestCase):
+    """Issue #39, `CONTRACT-DURABILITY`'s "record observation wall-clock
+    times" row: `JSONLJournal` stamps `<run_id>+times.jsonl` on each
+    append, beside -- never inside -- the canonical journal, and it must
+    never affect `history`/`load_projection` (SCN-007's record-identity
+    guarantee is untouched by the sidecar's presence or absence)."""
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.directory = Path(self._tmpdir.name)
+        self.journal = JSONLJournal(self.directory)
+
+    def _times_path(self, drid: str) -> Path:
+        return self.directory / f"{drid}+times.jsonl"
+
+    def test_creation_deferred_to_first_append(self) -> None:
+        drid = "dr-times-deferred"
+        self.assertFalse(self._times_path(drid).exists())
+        self.journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"))
+        self.assertTrue(self._times_path(drid).exists())
+
+    def test_sidecar_lines_have_monotonically_matching_seqs(self) -> None:
+        drid = "dr-times-seqs"
+        self.journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"))
+        self.journal.append_fact(make_fact(FACT_WORK_READY, delivery_run_id=drid, work_id="w1"))
+        self.journal.append_fact(
+            make_fact(FACT_WORK_CLAIMED, delivery_run_id=drid, work_id="w1", claim_ref="c1")
+        )
+
+        journal_path = self.directory / f"{drid}.jsonl"
+        journal_seqs = [json.loads(line)["seq"] for line in journal_path.read_text(encoding="utf-8").splitlines()]
+
+        times_lines = self._times_path(drid).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(times_lines), len(journal_seqs))
+        for line, expected_seq in zip(times_lines, journal_seqs):
+            record = json.loads(line)
+            self.assertEqual(set(record), {"seq", "observed_at"})
+            self.assertEqual(record["seq"], expected_seq)
+            # ISO-8601 UTC, explicit Z suffix (module docstring).
+            self.assertTrue(record["observed_at"].endswith("Z"))
+            self.assertRegex(
+                record["observed_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$"
+            )
+
+    def test_history_and_projection_byte_identical_with_sidecar_present_vs_deleted(self) -> None:
+        drid = "dr-times-no-effect"
+        facts = [
+            make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"),
+            make_fact(FACT_WORK_READY, delivery_run_id=drid, work_id="w1"),
+        ]
+        for fact in facts:
+            self.journal.append_fact(fact)
+
+        with_sidecar_history = JSONLJournal(self.directory).history(delivery_run_id=drid)
+        with_sidecar_projection = JSONLJournal(self.directory).load_projection(delivery_run_id=drid)
+
+        self.assertTrue(self._times_path(drid).exists())
+        self._times_path(drid).unlink()
+
+        without_sidecar_history = JSONLJournal(self.directory).history(delivery_run_id=drid)
+        without_sidecar_projection = JSONLJournal(self.directory).load_projection(delivery_run_id=drid)
+
+        self.assertEqual(with_sidecar_history, without_sidecar_history)
+        self.assertEqual(with_sidecar_projection.to_dict(), without_sidecar_projection.to_dict())
+
+    def test_replay_never_reads_a_corrupt_sidecar(self) -> None:
+        # A sidecar so corrupt it isn't even valid JSON at all must never
+        # affect history/load_projection -- those never open this file.
+        drid = "dr-times-corrupt-no-crash"
+        self.journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"))
+        self._times_path(drid).write_text("not json at all\x00\x01", encoding="utf-8")
+
+        reopened = JSONLJournal(self.directory)
+        history = reopened.history(delivery_run_id=drid)  # must not raise
+        self.assertEqual(len(history), 1)
+        reopened.append_fact(make_fact(FACT_WORK_READY, delivery_run_id=drid, work_id="w1"))
+        self.assertEqual(len(reopened.history(delivery_run_id=drid)), 2)
+
+    def test_memory_journal_never_writes_a_sidecar(self) -> None:
+        # CONTRACT-DURABILITY's row: "absent sidecar = times simply
+        # unknown; the memory journal never writes one" -- MemoryJournal
+        # has no times-sidecar code path at all (nothing to assert on
+        # disk since it is not file-backed); this asserts the contrasting
+        # positive: JSONLJournal is the only adapter that does.
+        from orc_werk.adapters.memory.journal import MemoryJournal
+
+        memory_journal = MemoryJournal()
+        memory_journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id="dr-mem", work_id="w1"))
+        # Nothing to assert on disk (MemoryJournal is not file-backed at
+        # all) -- the point is simply that no such attribute/behavior
+        # exists to produce one.
+        self.assertFalse(hasattr(memory_journal, "_times_path_for"))
+
+
 if __name__ == "__main__":
     unittest.main()

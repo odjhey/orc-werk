@@ -32,7 +32,7 @@ order, with each decision's `basis` visibly linked to the cited fact(s); candida
 fingerprints with their portable `subject_identity`; assurance verdicts with
 `evidence_refs`; blocked works with `blocked_reason` and root cause (from effect
 records' `dispatch_result.error`, mirroring `orc status`); pending works with an
-explicit "awaiting …" callout; and, when a `<run_id>.reports.jsonl` exists, crew
+explicit "awaiting …" callout; and, when a `<run_id>+reports.jsonl` exists, crew
 reports interleaved by `execution_id`.
 
 ## Presentation rules (normative for this surface)

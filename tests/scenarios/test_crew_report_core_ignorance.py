@@ -47,7 +47,7 @@ class CrewReportCoreIgnoranceTest(unittest.TestCase):
             # "Durable ownership" section).
             report_log = CrewReportLog(directory)
             self.assertNotEqual(
-                directory / f"{DRID}.jsonl", directory / f"{DRID}.reports.jsonl"
+                directory / f"{DRID}.jsonl", directory / f"{DRID}+reports.jsonl"
             )
 
             for turn, claimed_verdict in enumerate(sorted(CLAIMED_VERDICT_VALUES), start=1):
