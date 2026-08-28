@@ -3,10 +3,10 @@ pagination addendum: axi principle #3, progressive disclosure/content
 truncation with an escape hatch; axi #5, hints must be definitive -- exact
 counts, never ambiguous truncation).
 
-One helper backs every paginated CLI list (`orc history`, `orc crew-report
-list`, the bare-`orc` run index) so the truncation math and hint wording
-never drift between them. CLI-owned presentation only (CLAUDE.md #6/#7): no
-canonical semantics, nothing recorded.
+One helper backs every paginated CLI list (`orc history`, the bare-`orc`
+run index) so the truncation math and hint wording never drift between
+them. CLI-owned presentation only (CLAUDE.md #6/#7): no canonical
+semantics, nothing recorded.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ from typing import Sequence, TypeVar
 
 T = TypeVar("T")
 
-# ~30 is the shared default across `history`/`crew-report list`/the bare
-# index. Rationale (issue #43 comment: "defaults chosen for agent token
+# ~30 is the shared default across `history` and the bare index. Rationale
+# (issue #43 comment: "defaults chosen for agent token
 # budgets AND human scanability"): each record/run line here is one short
 # line of plain text (well under 200 chars in the common case), so 30 lines
 # stays a small, legible fraction of even a modest agent context-window

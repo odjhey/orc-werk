@@ -1,9 +1,8 @@
 """Regression tests for `orc report` (`TASK-M1-008`), subprocess pattern
 matching `test_cli_ux_batch.py`/`test_cli_dogfood_fixes.py`. Fixtures here
-are constructed fresh through `orc dispatch`/`orc crew-report append`
-inside a temp directory -- never by reading the repo's live `.orc/`
-journals -- so these tests never depend on that live delivery-ledger
-content changing shape over time.
+are constructed fresh through `orc dispatch` inside a temp directory --
+never by reading the repo's live `.orc/` journals -- so these tests never
+depend on that live delivery-ledger content changing shape over time.
 
 Covers the task card's acceptance/regression list:
 
@@ -14,8 +13,6 @@ Covers the task card's acceptance/regression list:
   produces output containing both candidate fingerprints, the rejected and
   accepted verdicts, `DEC-RETRY`, and HTML-escaped content (a synthetic
   `<script>`-bearing intent renders escaped, never as live markup);
-- crew-report claims render in visually distinct (`class="claim"`) markup
-  that never appears on a canonical state/verdict chip;
 - a pending run renders the "awaiting ..." callout;
 - a blocked run renders its `blocked_reason`/root cause;
 - `--index` is read-only apart from its own announced output file.
@@ -228,97 +225,6 @@ class AssuranceEvidenceRefsTransportTest(unittest.TestCase):
             row = re.search(rf"<tr><td><code>{assurance_id}</code></td>.*?</tr>", rendered)
             self.assertIsNotNone(row)
             self.assertIn("<td>-</td>", row.group(0))
-
-
-class ClaimsQuarantineTest(unittest.TestCase):
-    """Crew-report claims must render in visually distinct markup
-    (`class="claim"`), and that class must never coincide with a canonical
-    state/verdict chip (`class="chip ..."`) -- the task card's claim-vs-fact
-    visual quarantine."""
-
-    RUN_ID = "report-claims-quarantine"
-
-    def test_claim_markup_distinct_from_canonical_chips(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            config = {
-                "run_id": self.RUN_ID,
-                "attempts": {
-                    "work-1": [{"outcome": "completed", "candidate": {"label": "A"}, "assurance": {"verdict": "accepted"}}]
-                },
-            }
-            config_path = tmp_dir / "config.json"
-            config_path.write_text(json.dumps(config), encoding="utf-8")
-            dispatch = _run_cli(tmp_dir, "dispatch", "claims quarantine fixture", "--config", str(config_path))
-            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
-
-            journal_path = layout.journal_path(tmp_dir / ".orc", self.RUN_ID)
-            records = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()]
-            (execution_id,) = {
-                r["data"]["execution_id"]
-                for r in records
-                if r["kind"] == "fact" and r["id"] == "FACT-EXEC-STARTED"
-            }
-
-            append = _run_cli(
-                tmp_dir,
-                "crew-report",
-                "append",
-                self.RUN_ID,
-                "--execution-id",
-                execution_id,
-                "--payload",
-                json.dumps(
-                    {
-                        "turn": 1,
-                        "claimed_verdict": "done",
-                        "reason": "looked <b>done</b> to me",
-                        "pr": 65,
-                        "pr_url": "https://example.test/pull/65?x=<unsafe>",
-                        "note": "landing link recorded",
-                    }
-                ),
-            )
-            self.assertEqual(append.returncode, 0, msg=append.stdout + append.stderr)
-
-            report = _run_cli(tmp_dir, "report", self.RUN_ID)
-            self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = layout.report_html_path(tmp_dir / ".orc", self.RUN_ID).read_text(encoding="utf-8")
-
-            # The claim renders, labeled, and its free-text field is escaped.
-            self.assertIn('<li class="claim">', html_text)
-            self.assertIn("claim, not a canonical verdict", html_text)
-            self.assertIn("claimed_verdict:", html_text)
-            self.assertIn("&lt;b&gt;done&lt;/b&gt;", html_text)
-            self.assertIn('<span class="claim-field-label">pr:</span> 65', html_text)
-            self.assertIn("https://example.test/pull/65?x=&lt;unsafe&gt;", html_text)
-            self.assertIn("landing link recorded", html_text)
-
-            # No chip (canonical state/verdict/outcome marker) ever carries
-            # the claim class, and the claim block never carries the chip
-            # class -- the two are structurally distinct markup.
-            chip_spans = re.findall(r'<span class="chip[^"]*"', html_text)
-            self.assertTrue(chip_spans, "expected at least one canonical chip in the report")
-            for span in chip_spans:
-                self.assertNotIn("claim", span)
-            claim_items = re.findall(r'<li class="[^"]*"', html_text)
-            claim_only = [item for item in claim_items if "claim" in item]
-            self.assertTrue(claim_only)
-            for item in claim_only:
-                self.assertNotIn("chip", item)
-
-    def test_claim_with_only_required_fields_renders_without_extra_fields(self) -> None:
-        from orc_werk.cli.report import _render_claim
-
-        rendered = _render_claim(
-            "execution-required-only",
-            {"report": {"turn": 2, "claimed_verdict": "working"}},
-        )
-
-        self.assertIn("turn 2", rendered)
-        self.assertIn("claimed_verdict:", rendered)
-        self.assertIn("claim, not a canonical verdict", rendered)
-        self.assertNotIn('class="claim-field"', rendered)
 
 
 class PendingCalloutTest(unittest.TestCase):
@@ -776,34 +682,6 @@ class SidecarSeparatorCollisionRegressionTest(unittest.TestCase):
             status = _run_cli(tmp_dir, "status", ".orc")
             self.assertEqual(status.returncode, 0, msg=status.stdout + status.stderr)
             self.assertIn("run: m1.times", status.stdout)
-
-    def test_crew_report_round_trips_with_new_suffix_for_collision_prone_run(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            self._build_run(tmp_dir, "foo.reports")
-            journal_path = layout.journal_path(tmp_dir / ".orc", "foo.reports")
-            records = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()]
-            (execution_id,) = {
-                r["data"]["execution_id"]
-                for r in records
-                if r["kind"] == "fact" and r["id"] == "FACT-EXEC-STARTED"
-            }
-            append = _run_cli(
-                tmp_dir, "crew-report", "append", "foo.reports",
-                "--execution-id", execution_id,
-                "--payload", json.dumps({"turn": 1, "claimed_verdict": "done"}),
-            )
-            self.assertEqual(append.returncode, 0, msg=append.stdout + append.stderr)
-            self.assertTrue(layout.reports_path(tmp_dir / ".orc", "foo.reports").exists())
-
-            listed = _run_cli(tmp_dir, "crew-report", "list", "foo.reports")
-            self.assertEqual(listed.returncode, 0, msg=listed.stdout + listed.stderr)
-            self.assertIn("claimed_verdict", listed.stdout)
-
-            # And the run journal itself is still resolvable/reportable.
-            report = _run_cli(tmp_dir, "report", "foo.reports")
-            self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-
 
 class AbsolutePathSweepTest(unittest.TestCase):
     """Issue #40 comment: every printed filesystem path is the RESOLVED

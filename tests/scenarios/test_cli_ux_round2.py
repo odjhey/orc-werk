@@ -7,7 +7,7 @@ Covers:
 
 - item 1, content-first: bare `orc` prints a live text index (content,
   empty-state, truncation hint) instead of an argparse usage error;
-- item 3, pagination: `orc history`/`orc crew-report list` default to the
+- item 3, pagination: `orc history` defaults to the
   last 30 records with a definitive `--limit 0` hint; exact counts.
 - item 4, HATEOAS affordances: the `next:` block per state (pending
   execution/assurance, blocked, accepted with/without a `pr` candidate
@@ -138,7 +138,7 @@ class BareIndexTest(unittest.TestCase):
 
 
 # ----------------------------------------------------------------------
-# item 3 -- pagination (`orc history`, `orc crew-report list`)
+# item 3 -- pagination (`orc history`)
 # ----------------------------------------------------------------------
 
 
@@ -189,40 +189,6 @@ class HistoryPaginationTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
             self.assertNotIn("showing last", result.stdout)
             self.assertEqual(len([l for l in result.stdout.splitlines() if l.startswith("[")]), 3)
-
-
-class CrewReportListPaginationTest(unittest.TestCase):
-    def test_default_limit_shows_last_30_with_definitive_hint(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            total = 35
-            for turn in range(1, total + 1):
-                result = _run_cli(
-                    tmp_dir,
-                    "crew-report",
-                    "append",
-                    "some-run",
-                    "--execution-id",
-                    "e1",
-                    "--payload",
-                    json.dumps({"turn": turn, "claimed_verdict": "waiting"}),
-                )
-                self.assertEqual(result.returncode, 0, msg=result.stderr)
-
-            listed = _run_cli(tmp_dir, "crew-report", "list", "some-run")
-            self.assertEqual(listed.returncode, 0, msg=listed.stdout + listed.stderr)
-            lines = listed.stdout.splitlines()
-            record_lines = [line for line in lines if line.startswith("[")]
-            self.assertEqual(len(record_lines), 30)
-            self.assertIn('"turn":6', record_lines[0])
-            self.assertIn('"turn":35', record_lines[-1])
-            self.assertEqual(lines[-1], "... showing last 30 of 35 reports; --limit 0 for all")
-
-            full = _run_cli(tmp_dir, "crew-report", "list", "some-run", "--limit", "0")
-            self.assertEqual(full.returncode, 0, msg=full.stdout + full.stderr)
-            full_record_lines = [line for line in full.stdout.splitlines() if line.startswith("[")]
-            self.assertEqual(len(full_record_lines), 35)
-            self.assertNotIn("showing last", full.stdout)
 
 
 # ----------------------------------------------------------------------
@@ -413,14 +379,6 @@ class HelpQualityTest(unittest.TestCase):
             self.assertIn("--limit", result.stdout)
             self.assertIn("--since-seq", result.stdout)
             self.assertIn("examples:", result.stdout)
-
-    def test_crew_report_list_help_documents_limit(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            result = _run_cli(tmp_dir, "crew-report", "list", "--help")
-            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-            self.assertIn("--limit", result.stdout)
-
 
 if __name__ == "__main__":
     unittest.main()

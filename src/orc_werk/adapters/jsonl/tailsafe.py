@@ -1,19 +1,19 @@
 """Shared torn-tail-tolerant JSONL scan/append primitives.
 
 `JSONLJournal` (`orc_werk.adapters.jsonl.journal`, `PORT-JOURNAL`'s
-durable-journal-recovery clause) and the crew-report log adapter
-(`orc_werk.adapters.jsonl.crew_report`, `TASK-M1-007`) both need the exact
-same on-disk shape and recovery rule: one JSON envelope per line, flush
-(never `fsync`) on append, and on reopen -- tolerate a single unparseable
-FINAL line as a torn write only when at least one valid record precedes it,
-reject any earlier malformed line with `ERR-VALIDATION`, and reject a file
-with zero valid records at all with `ERR-VALIDATION` rather than presenting
-empty history (`docs/contracts/ports/journal-port.md`'s "Durable-journal
-recovery" clause; `TASK-M1-007`'s card applies this "by reference" to the
-crew-report log). This module implements that rule exactly once so both
-adapters share it instead of each reimplementing (and risking drifting)
-it -- `TASK-M1-007`'s "reuse the jsonl JournalPort adapter's mechanics
-rather than reinventing them."
+durable-journal-recovery clause) needs a specific on-disk shape and
+recovery rule: one JSON envelope per line, flush (never `fsync`) on
+append, and on reopen -- tolerate a single unparseable FINAL line as a
+torn write only when at least one valid record precedes it, reject any
+earlier malformed line with `ERR-VALIDATION`, and reject a file with zero
+valid records at all with `ERR-VALIDATION` rather than presenting empty
+history (`docs/contracts/ports/journal-port.md`'s "Durable-journal
+recovery" clause). This module implements that rule once, factored out of
+`JSONLJournal` itself, so any future same-shape adapter can reuse it
+instead of reimplementing (and risking drifting from) it -- this package's
+now-removed `crew-report/v1` log adapter (`TASK-M1-007`, removed per issue
+#100 part 2) was the original second consumer this factoring was written
+for.
 
 Stdlib only (`json`, `pathlib`, `re`), matching `CLAUDE.md` rule 8's
 zero-integration-dependency stance for adapters this reference
@@ -45,8 +45,8 @@ TailRepair = Tuple[int, bool]
 def ensure_safe_run_id(delivery_run_id: str, *, message: str) -> None:
     """Raise canonical `ERR-VALIDATION` unless `delivery_run_id` is safe to
     use as a filename component. `message` is caller-supplied so each
-    adapter's error names itself (a journal vs. a crew-report log) rather
-    than this shared helper guessing which noun applies."""
+    adapter's error names itself rather than this shared helper guessing
+    which noun applies."""
     if not delivery_run_id or not SAFE_DELIVERY_RUN_ID.match(delivery_run_id):
         raise validation_error(message, delivery_run_id=delivery_run_id)
 
@@ -61,8 +61,8 @@ def scan_tolerant(path: Path, *, noun: str) -> Tuple[List[Dict[str, Any]], Optio
     nonexistent path is not "a file with no valid records" -- it means no
     records have been appended yet, and returns `([], None)`.
 
-    `noun` names the kind of file in error messages (e.g. `"journal"` or
-    `"crew-report log"`) without this shared helper hardcoding either."""
+    `noun` names the kind of file in error messages (e.g. `"journal"`)
+    without this shared helper hardcoding it."""
     if not path.exists():
         return [], None
     raw = path.read_bytes()
