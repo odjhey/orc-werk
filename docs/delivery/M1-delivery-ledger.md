@@ -59,7 +59,8 @@ Between M1a and M1b sits an explicit intermediate stage: the recording seat move
 
 - a **ship agent** claims its Work, does the work, and records the execution settlement and candidate;
 - a **separate verification agent** records the assurance verdict with `evidence_refs`;
-- **no agent ever records a decision** — decisions remain kernel policy per `INV-011`.
+- **no agent ever records a decision** — decisions remain kernel policy per `INV-011`;
+- an agent's own turn-by-turn narration is durably recorded via the `crew-report/v1` file-based reference report log (`TASK-M1-007`), sequenced at the start of this stage — beside, not inside, the settlement/candidate/verdict observations above.
 
 Recorded outcomes are observations/claims only: an agent recording `completed` or `accepted` is submitting a claim into the ledger, never committing acceptance itself. The kernel enforces claim ≠ acceptance structurally (`INV-003`, `INV-011`); role separation — the settlement recorder and the verdict recorder MUST be different agents — is process discipline, documented rather than kernel-enforced at this stage.
 
@@ -119,7 +120,7 @@ The `acpx` version is pinned (`0.13.1` at assessment time; the pin is recorded i
 
 ### Open gate
 
-Durable ownership of `crew-report/v1` (the adapter's append-only execution report log) is a decision due at M1b design time, recorded here as an open gate — not resolved by this milestone doc. The issue #12 watchtower recommendation is an adapter-owned append-only log; the ack/open-item state question and the multi-work `work-spec/v1` owner question are recorded alongside it as the same class of deferred decision.
+Durable ownership of `crew-report/v1` (the adapter's append-only execution report log) was recorded here as an open gate due at M1b design time. **Resolved ahead of M1b**: `crew-report/v1` is registered under `docs/extensions/crew-report/` (`EXT-CREW-REPORT-V1`) with the issue #12 watchtower-recommended disposition — an adapter-owned append-only log, one NDJSON file per `DeliveryRun` — and its file-based reference implementation is carded as `TASK-M1-007`, sequenced at the start of M1a+. `docs/contracts/durability-responsibilities.md`'s ownership matrix and retirement ledger reflect this resolution. The report ack/open-item state question remains **OPEN**, explicitly out of `crew-report/v1`'s scope and reserved for a future companion contract; the multi-work `work-spec/v1` owner question also remains open and is unaffected by this resolution.
 
 ### M1b acceptance
 
@@ -169,6 +170,6 @@ Two additional acceptance items beyond the original scope:
 - `DEC-ESCALATE`/`DEC-CANCEL` activation;
 - Beads/zxro adapters;
 - real assurance automation (assurance stays operator-recorded through M1b; a real assurance adapter is a later milestone);
-- `crew-report/v1` implementation (design decision only — see the M1b open gate);
+- a real `PORT-EXECUTION` adapter producing `crew-report/v1` reports automatically (`TASK-M1-007` carries the file-based reference log; wiring a live adapter to it is `TASK-M1-005`'s and later work's concern) and the `crew-report/v1` ack/open-item companion contract (explicitly out of `crew-report/v1`'s own scope, remains open per `docs/contracts/durability-responsibilities.md`);
 - mutation/property tooling (per `DELIVERY-STANCE`);
 - Go rewrite.

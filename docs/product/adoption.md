@@ -61,7 +61,7 @@ Advertise only the `CAP-*` capabilities (`CONTRACT-CAPABILITIES`) your adapter g
 
 ### Extensions — domain payloads
 
-Specialized semantics that are not required by the generic delivery state machine ride versioned extensions under `docs/extensions/`, per `CONTRACT-EXTENSIONS`. The registered extensions — `EXT-REVIEW-FINDINGS-V1` (`review-findings/v1`) and `EXT-EXECUTION-SESSION-V1` (`execution-session/v1`) — are the worked examples for how to add your own. Extensions never override canonical fields, and unknown extensions must transport losslessly, so independently-tailored deployments can still share a journal and ignore each other's private payloads.
+Specialized semantics that are not required by the generic delivery state machine ride versioned extensions under `docs/extensions/`, per `CONTRACT-EXTENSIONS`. The registered extensions — `EXT-REVIEW-FINDINGS-V1` (`review-findings/v1`), `EXT-EXECUTION-SESSION-V1` (`execution-session/v1`), and `EXT-CREW-REPORT-V1` (`crew-report/v1`) — are the worked examples for how to add your own. Extensions never override canonical fields, and unknown extensions must transport losslessly, so independently-tailored deployments can still share a journal and ignore each other's private payloads.
 
 ### Durable ownership
 
@@ -91,9 +91,9 @@ Rozoro is a control-tower persona: an operator delegating parallel work to a fle
 
 **Assurance.** The operator, a verifier crew member, or a validation pipeline, each wrapped as an `AssurancePort`. Nothing about assurance requires it to be human; the port boundary is what lets a tower swap a hasty human glance for a real verification pipeline without touching the rest of the model.
 
-**Work.** Tower tasks map 1:1 onto `Work`, mostly as flat plans rather than deep dependency graphs. Claim-once-per-lineage *is* crew assignment: a crew member claiming a task is exactly `INV-011`'s single-claimant discipline. A crew sitting in "waiting"/"inputs needed" maps onto the pending state (`SCN-007`) — it is not a failure, it is a Work resting at `EXECUTING`/`ASSURING` for an outcome not yet observed. Steering a crew member — sending it a follow-up instruction mid-task — is the send operation, `CAP-EXEC-SEND`.
+**Work.** Tower tasks map 1:1 onto `Work`, mostly as flat plans rather than deep dependency graphs. Claim-once-per-lineage *is* crew assignment: a crew member claiming a task is exactly `PORT-WORK-004`'s single-claimant discipline (a claim is once per Work lineage, in the reduced key form `INV-020` requires for idempotency). A crew sitting in "waiting"/"inputs needed" maps onto the pending state (`SCN-007`) — it is not a failure, it is a Work resting at `EXECUTING`/`ASSURING` for an outcome not yet observed. Steering a crew member — sending it a follow-up instruction mid-task — is the send operation, `CAP-EXEC-SEND`.
 
-**Durable domain data.** `execution-session/v1` (already registered, `EXT-EXECUTION-SESSION-V1`) covers session/resume provenance. A future `crew-report/v1` — the adapter-owned append-only turn log — is the open gate `CONTRACT-DURABILITY` already records for M1b design time; this persona is exactly the design input that gate is waiting on. Work-spec briefs (the delegated task description a crew member starts from) are the multi-work delegated-brief case the same contract leaves open.
+**Durable domain data.** `execution-session/v1` (already registered, `EXT-EXECUTION-SESSION-V1`) covers session/resume provenance. `crew-report/v1` (now registered, `EXT-CREW-REPORT-V1`) — the adapter-owned append-only turn log — was the open gate `CONTRACT-DURABILITY` recorded for M1b design time; this persona was exactly the design input that gate was waiting on, and its registered disposition (adapter-owned log, crew "steering" mapping onto `CAP-EXEC-SEND`) confirms both points above. Work-spec briefs (the delegated task description a crew member starts from) are the multi-work delegated-brief case the same contract still leaves open.
 
 ### Honest misfits
 
