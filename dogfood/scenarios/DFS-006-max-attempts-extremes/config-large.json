@@ -1,0 +1,10 @@
+{
+  "run_id": "s4e-overridebig",
+  "max_attempts": 3,
+  "attempts": {
+    "work-1": [
+      {"outcome": "failed"},
+      {"outcome": "completed", "candidate": {"label": "OK"}, "assurance": {"verdict": "accepted"}}
+    ]
+  }
+}

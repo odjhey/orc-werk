@@ -1,0 +1,9 @@
+{
+  "run_id": "s1-happy",
+  "max_attempts": 3,
+  "attempts": {
+    "work-1": [
+      {"outcome": "completed", "candidate": {"label": "A"}, "assurance": {"verdict": "accepted"}}
+    ]
+  }
+}

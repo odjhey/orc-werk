@@ -1,0 +1,18 @@
+{
+  "run_id": "s3-diamond",
+  "max_attempts": 3,
+  "plan": {
+    "works": [
+      {"work_id": "a", "deps": []},
+      {"work_id": "b", "deps": [{"work_id": "a", "condition": "accepted"}]},
+      {"work_id": "c", "deps": [{"work_id": "a", "condition": "accepted"}]},
+      {"work_id": "d", "deps": [{"work_id": "b", "condition": "accepted"}, {"work_id": "c", "condition": "accepted"}]}
+    ]
+  },
+  "attempts": {
+    "a": [{"outcome": "completed", "candidate": {"label": "A"}, "assurance": {"verdict": "accepted"}}],
+    "b": [{"outcome": "completed", "candidate": {"label": "B"}, "assurance": {"verdict": "accepted"}}],
+    "c": [{"outcome": "completed", "candidate": {"label": "C"}, "assurance": {"verdict": "accepted"}}],
+    "d": [{"outcome": "completed", "candidate": {"label": "D"}, "assurance": {"verdict": "accepted"}}]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "run_id": "s2-retry",
+  "max_attempts": 3,
+  "attempts": {
+    "work-1": [
+      {"outcome": "completed", "candidate": {"label": "C1"}, "assurance": {"verdict": "rejected"}},
+      {"outcome": "completed", "candidate": {"label": "C2"}, "assurance": {"verdict": "accepted"}}
+    ]
+  }
+}
