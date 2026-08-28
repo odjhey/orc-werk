@@ -40,6 +40,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orc_werk.adapters.jsonl import layout
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 
@@ -99,7 +101,7 @@ class FanInDependencyGraphTest(unittest.TestCase):
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / f"{self.RUN_ID}.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", self.RUN_ID).read_text(encoding="utf-8")
 
             self.assertIn('<section class="dependency-graph">', html_text)
             self.assertIn("<h2>Dependency graph</h2>", html_text)
@@ -168,7 +170,7 @@ class DiamondDependencyGraphTest(unittest.TestCase):
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / f"{self.RUN_ID}.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", self.RUN_ID).read_text(encoding="utf-8")
 
             tree_start = html_text.index('<section class="dependency-graph">')
             tree_end = html_text.index("</section>", tree_start)
@@ -209,7 +211,7 @@ class SingleWorkOmissionTest(unittest.TestCase):
 
             report = _run_cli(tmp_dir, "report", "report-treeview-single")
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / "report-treeview-single.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", "report-treeview-single").read_text(encoding="utf-8")
 
             self.assertNotIn("Dependency graph", html_text)
             self.assertNotIn('class="dependency-graph"', html_text)
@@ -236,7 +238,7 @@ class MissingPlanDegradationTest(unittest.TestCase):
             dispatch = _run_cli(tmp_dir, "dispatch", "missing plan fixture", "--config", str(config_path))
             self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
 
-            journal_path = tmp_dir / ".orc" / f"{self.RUN_ID}.jsonl"
+            journal_path = layout.journal_path(tmp_dir / ".orc", self.RUN_ID)
             lines = journal_path.read_text(encoding="utf-8").splitlines()
             # Simulate a foreign/old journal: strip the FX-CREATE-WORK
             # effect record but keep every other (fact-driven) record --
@@ -251,7 +253,7 @@ class MissingPlanDegradationTest(unittest.TestCase):
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / f"{self.RUN_ID}.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", self.RUN_ID).read_text(encoding="utf-8")
 
             self.assertNotIn("<h2>Dependency graph</h2>", html_text)
             self.assertNotIn('class="dependency-graph"', html_text)
@@ -292,7 +294,7 @@ class DependencyGraphEscapingTest(unittest.TestCase):
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / f"{self.RUN_ID}.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", self.RUN_ID).read_text(encoding="utf-8")
 
             self.assertNotIn("<script>alert(1)</script>", html_text)
             self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html_text)

@@ -23,21 +23,23 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from orc_werk.adapters.jsonl import layout
 from orc_werk.adapters.jsonl.crew_report import CrewReportLog
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.adapters.memory.work_graph import MemoryWorkGraph
 from orc_werk.app.orchestrator import Orchestrator, is_pending
 from orc_werk.cli.affordances import render_next_block
 from orc_werk.cli.config import build_dispatch_ports, build_run_config, build_scripted_adapters, load_config
+from orc_werk.cli.hyperlink import hyperlink_path
 from orc_werk.cli.journal_reading import (
     BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED,
-    DEFAULT_JOURNAL_DIR,
     _available_run_ids,
     _awaiting_label,
     _intent_text,
     _require_journal_file,
     _resolve_journal,
     _root_cause_for_work,
+    resolve_journal_dir,
 )
 from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint
 from orc_werk.cli.report import cmd_report
@@ -120,10 +122,52 @@ def _print_error(error: dict) -> None:
     print(json.dumps(error, sort_keys=True), file=sys.stderr)
 
 
+def _persist_effective_config(path: Path, config: Mapping[str, Any]) -> None:
+    """Issue #55 H2 config persistence: durably copy the effective dispatch
+    config into the run's own directory (`<journal_dir>/<run_id>/
+    config.json`) so a later dispatch of the same run -- a fresh session
+    with no memory of the original `--config` path included -- can resume
+    with just the run id (`cmd_dispatch`'s own load-time fallback below).
+    Called only after `orchestrator.run()` has already durably journaled
+    something for this dispatch, so a config that fails validation, or a
+    dispatch that never reaches a journal write, never leaves a stray
+    config.json (or run directory) behind.
+
+    Best-effort, mirroring `JSONLJournal`'s own observed-at sidecar stance
+    (`orc_werk.adapters.jsonl.journal`'s module docstring): a dispatch that
+    has already durably succeeded must never be reported as failed --or,
+    worse, retried and duplicated-- merely because this convenience copy
+    could not be written (permissions, a full disk, whatever)."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(dict(config), sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def cmd_dispatch(args: argparse.Namespace) -> int:
-    config = load_config(args.config) if args.config else {}
-    run_id = args.run_id or config.get("run_id") or _derive_run_id(args.intent)
-    journal_dir = Path(args.journal) if args.journal else Path(DEFAULT_JOURNAL_DIR)
+    journal_dir = resolve_journal_dir(args.journal)
+
+    if args.config:
+        config = load_config(args.config)
+        run_id = args.run_id or config.get("run_id") or _derive_run_id(args.intent)
+    else:
+        # issue #55 H2 config persistence: no --config given -- before
+        # falling back to the bare-scripted default ({}), check whether
+        # this run already has an effective config durably persisted in
+        # its own run dir from an earlier dispatch (run-id-only
+        # re-dispatch; docs/playbooks/agent-cli-usage.md's fresh-session
+        # protocol). `run_id` must be resolvable without a config to
+        # consult in this branch -- exactly the same derivation `--config`
+        # would otherwise fall back to (`--run-id` flag, else the
+        # deterministic intent-text hash).
+        run_id = args.run_id or _derive_run_id(args.intent)
+        persisted_config_path = layout.config_path(journal_dir, run_id)
+        if persisted_config_path.exists():
+            config = load_config(str(persisted_config_path))
+            run_id = args.run_id or config.get("run_id") or run_id
+        else:
+            config = {}
 
     # #17 comment fix: finish every config-derived validation
     # (`build_scripted_adapters`/`build_run_config`, e.g. BUG-2's
@@ -163,9 +207,23 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         config=run_config,
     )
     plan = config.get("plan")
+    # issue #55 H2 config persistence: whether to persist/refresh below is
+    # decided from the journal's *pre-dispatch* state -- "first dispatch"
+    # means this run had no history at all before this call, checked here
+    # (read-only, before bootstrap's own first append) rather than after,
+    # since bootstrap/run below will have already written records by then.
+    is_first_dispatch = not journal.history(delivery_run_id=run_id)
     orchestrator.bootstrap(intent_id=run_id, text=args.intent, plan=plan)
     projection = orchestrator.run()
     history = journal.history(delivery_run_id=run_id)
+
+    if is_first_dispatch or args.config:
+        # "on first dispatch" (always persist once) OR "explicit --config
+        # still wins and refreshes the persisted copy" (issue #55 H2).
+        # Placed after orchestrator.run() so the run's own directory (new
+        # layout) already exists by the time this writes into it -- never
+        # created ahead of a successful dispatch.
+        _persist_effective_config(layout.config_path(journal_dir, run_id), config)
 
     print(f"run: {run_id}")
     # #40 comment: print the RESOLVED ABSOLUTE path, not a relative one --
@@ -173,7 +231,12 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     # clickable in a terminal when the reader's cwd differs from the
     # process's; `.resolve()` makes it absolute and normalizes it the same
     # way `orc report`'s printed paths now do (see orc_werk.cli.report).
-    print(f"journal: {(journal_dir / (run_id + '.jsonl')).resolve()}")
+    # issue #55 H1: resolve via `layout.journal_path` (new per-run-dir
+    # layout, or legacy flat file for a pre-#55 run) instead of assuming
+    # the old flat `<run_id>.jsonl` shape; issue #55 OSC-8 scope addition:
+    # this "journal:" line is a standalone printed path, so it gets the
+    # clickable-path treatment (`orc_werk.cli.hyperlink`).
+    print(f"journal: {hyperlink_path(layout.journal_path(journal_dir, run_id).resolve())}")
     for work_id in sorted(projection.works):
         print(_work_line(work_id, projection.works[work_id], history))
     any_blocked, any_non_accepted = _summarize_works(projection)
@@ -279,7 +342,7 @@ def cmd_crew_report_append(args: argparse.Namespace) -> int:
     -- and never merged into -- the run's `JournalPort` journal file. This
     is narrative self-report, never a canonical settlement/candidate/
     verdict recording (`docs/playbooks/agent-cli-usage.md` section 7)."""
-    journal_dir = Path(args.journal) if args.journal else Path(DEFAULT_JOURNAL_DIR)
+    journal_dir = resolve_journal_dir(args.journal)
     try:
         payload = json.loads(args.payload)
     except json.JSONDecodeError as exc:
@@ -295,7 +358,7 @@ def cmd_crew_report_list(args: argparse.Namespace) -> int:
     in append order (the log's own ordering key, distinct from
     `PORT-JOURNAL-ENVELOPE`'s `seq`), optionally filtered to one
     `execution_id`."""
-    journal_dir = Path(args.journal) if args.journal else Path(DEFAULT_JOURNAL_DIR)
+    journal_dir = resolve_journal_dir(args.journal)
     log = CrewReportLog(journal_dir)
     records = list(log.list_reports(delivery_run_id=args.run_id, execution_id=args.execution_id))
     # issue #43 pagination addendum: same last-N-with-a-definitive-hint
@@ -350,31 +413,38 @@ def cmd_index(journal_dir: Optional[Path] = None) -> int:
     `orc report --index` (an unpaginated HTML index over every run) rather
     than an invented flag.
     """
-    directory = journal_dir or Path(DEFAULT_JOURNAL_DIR)
+    directory = journal_dir if journal_dir is not None else resolve_journal_dir(None)
     abs_dir = directory.resolve()
+    # issue #55 OSC-8 scope addition: these two "N runs in <abs dir>"/"0
+    # runs in <abs dir>" lines are standalone index lines.
+    abs_dir_display = hyperlink_path(abs_dir)
     run_ids = _available_run_ids(directory)
     if not run_ids:
         # Empty-dir case (issue #43 item 1): definitive "0 runs in <abs
         # dir>" plus the dispatch affordance to create the first one.
-        print(f"0 runs in {abs_dir}")
+        print(f"0 runs in {abs_dir_display}")
         print("next:")
         print(f'  - orc dispatch "<intent text>" --config <path-to-dispatch-config.json> --journal {abs_dir}')
         return 0
 
-    run_paths = sorted(
-        (directory / f"{run_id}.jsonl" for run_id in run_ids),
-        key=lambda p: (p.stat().st_mtime, p.stem),
+    # issue #55 H1: a run_id's journal may live at either layout's path
+    # (`layout.journal_path` resolves per run_id, new or legacy) -- unlike
+    # the old flat-only assumption, `run_id` can no longer be recovered
+    # from `path.stem` (a new-layout path's stem is always "journal"), so
+    # entries carry the run_id alongside its resolved path explicitly.
+    run_entries = sorted(
+        ((run_id, layout.journal_path(directory, run_id)) for run_id in run_ids),
+        key=lambda entry: (entry[1].stat().st_mtime, entry[0]),
     )
-    window_paths, total, truncated = paginate(run_paths, limit=DEFAULT_LIMIT)
+    window_entries, total, truncated = paginate(run_entries, limit=DEFAULT_LIMIT)
     # Most-recently-active first for the at-a-glance scan (paginate keeps
     # append/chronological order, i.e. oldest-of-the-window first).
-    window_paths = list(reversed(window_paths))
+    window_entries = list(reversed(window_entries))
 
     journal = JSONLJournal(directory)
     noun = "run" if total == 1 else "runs"
-    print(f"{total} {noun} in {abs_dir}:")
-    for path in window_paths:
-        run_id = path.stem
+    print(f"{total} {noun} in {abs_dir_display}:")
+    for run_id, _path in window_entries:
         try:
             projection = journal.load_projection(delivery_run_id=run_id)
         except CoreError as exc:
@@ -394,7 +464,7 @@ def cmd_index(journal_dir: Optional[Path] = None) -> int:
         # (issue #43 item 1 has no args at all beyond the bare invocation),
         # so its size hint names the real escape hatch instead of a
         # nonexistent flag: `orc report --index` (unpaginated).
-        print(size_hint(len(window_paths), total, noun="runs", limit_flag="orc report --index"))
+        print(size_hint(len(window_entries), total, noun="runs", limit_flag="orc report --index"))
     print(f"orc status <run-id> for next-step guidance on one run; orc report --index for the full unpaginated HTML index over {abs_dir}.")
     return 0
 
@@ -449,7 +519,7 @@ def build_parser() -> argparse.ArgumentParser:
         '    #                "candidate": {"adapter": "git", "repo_path": "/abs/worktree"}}\n'
         "    # exits 3 (pending) while Pi works; re-run the identical command to poll; once\n"
         "    # settled, record the assurance verdict in the config's attempts and re-run again\n\n"
-        "defaults: --journal ./.orc, --max-attempts 3 (policy default), --run-id derived "
+        "defaults: --journal $ORC_JOURNAL_DIR or ./.orc, --max-attempts 3 (policy default), --run-id derived "
         "deterministically from the intent text when omitted; config execution.adapter="
         "scripted, candidate.adapter=scripted (see docs/playbooks/cli-usage.md for the real "
         "acp/git config schema)",
@@ -457,7 +527,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dispatch_parser.add_argument("intent", help="the intent text to submit")
     dispatch_parser.add_argument("--config", help="path to a portable JSON dispatch config", default=None)
-    dispatch_parser.add_argument("--journal", help="journal directory (default ./.orc)", default=None)
+    dispatch_parser.add_argument("--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None)
     dispatch_parser.add_argument("--max-attempts", type=int, default=None, help="override policy max_attempts")
     dispatch_parser.add_argument("--run-id", default=None, help="explicit delivery_run_id")
     dispatch_parser.set_defaults(func=cmd_dispatch)
@@ -470,7 +540,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="examples:\n"
         "  orc status my-run-id\n"
         "  orc status ./.orc/my-run-id.jsonl\n\n"
-        "defaults: a bare run id resolves against ./.orc",
+        "defaults: a bare run id resolves against $ORC_JOURNAL_DIR or ./.orc",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     status_parser.add_argument("target", help="journal path (dir or <run>.jsonl) or bare run id")
@@ -486,7 +556,7 @@ def build_parser() -> argparse.ArgumentParser:
         "  orc history my-run-id --limit 0\n"
         "  orc history my-run-id --since-seq 12\n\n"
         f"defaults: --limit {DEFAULT_LIMIT} (last {DEFAULT_LIMIT} records; 0 shows all); "
-        "a bare run id resolves against ./.orc",
+        "a bare run id resolves against $ORC_JOURNAL_DIR or ./.orc",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     history_parser.add_argument("target", help="journal path (dir or <run>.jsonl) or bare run id")
@@ -516,7 +586,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="example:\n"
         "  orc crew-report append my-run-id --execution-id exec-1 "
         "--payload '{\"turn\": 1, \"claimed_verdict\": \"waiting\"}'\n\n"
-        "defaults: --journal ./.orc",
+        "defaults: --journal $ORC_JOURNAL_DIR or ./.orc",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     crew_report_append_parser.add_argument("run_id", help="delivery_run_id")
@@ -525,7 +595,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--payload", required=True, help="crew-report/v1 payload as a portable JSON object"
     )
     crew_report_append_parser.add_argument(
-        "--journal", help="journal directory the report log sits beside (default ./.orc)", default=None
+        "--journal", help="journal directory the report log sits beside (default $ORC_JOURNAL_DIR or ./.orc)", default=None
     )
     crew_report_append_parser.set_defaults(func=cmd_crew_report_append)
 
@@ -536,7 +606,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="examples:\n"
         "  orc crew-report list my-run-id\n"
         "  orc crew-report list my-run-id --execution-id exec-1 --limit 0\n\n"
-        f"defaults: --journal ./.orc, --limit {DEFAULT_LIMIT} (last {DEFAULT_LIMIT} reports; 0 shows all)",
+        f"defaults: --journal $ORC_JOURNAL_DIR or ./.orc, --limit {DEFAULT_LIMIT} (last {DEFAULT_LIMIT} reports; 0 shows all)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     crew_report_list_parser.add_argument("run_id", help="delivery_run_id")
@@ -544,7 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--execution-id", default=None, help="restrict to reports for one execution_id"
     )
     crew_report_list_parser.add_argument(
-        "--journal", help="journal directory the report log sits beside (default ./.orc)", default=None
+        "--journal", help="journal directory the report log sits beside (default $ORC_JOURNAL_DIR or ./.orc)", default=None
     )
     crew_report_list_parser.add_argument(
         "--limit",
@@ -563,7 +633,7 @@ def build_parser() -> argparse.ArgumentParser:
         "  orc report my-run-id\n"
         "  orc report --index\n"
         "  orc report --all --match 'm1.*'\n\n"
-        "defaults: --journal ./.orc, --match '*' (used with --all)",
+        "defaults: --journal $ORC_JOURNAL_DIR or ./.orc, --match '*' (used with --all)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     report_parser.add_argument(
@@ -581,10 +651,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="fnmatch glob over run_id, used with --all (default '*', e.g. 'm1.*' selects a namespace)",
     )
     report_parser.add_argument(
-        "--journal", help="journal directory (default ./.orc)", default=None
+        "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
     )
     report_parser.add_argument(
-        "--out", help="output HTML path (default: announced <journal-dir>/<run_id>.report.html or .../index.html)",
+        "--out", help="output HTML path (default: announced <journal-dir>/<run_id>/report.html "
+        "for a new-layout run, <journal-dir>/<run_id>.report.html for a legacy-layout run, or "
+        ".../index.html for --index)",
         default=None,
     )
     report_parser.add_argument(

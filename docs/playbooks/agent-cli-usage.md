@@ -105,11 +105,18 @@ verdict recording described above. `claimed_verdict` is always a claim,
 never a verdict recording — recording one is not, and never becomes,
 assurance.
 
+## 9. Fresh-session protocol — resuming from the record alone
+
+A fresh session has no memory of any prior session's work. It never resumes from a doc, a chat summary, or another session's context — it resumes entirely from the durable ledger, in this order: bare `orc` (the live portfolio of every run, per-work state, attempts, pending flags) → `orc status <run>` for each non-terminal run, reading its `next:` affordance block → `orc report <run>`/`orc history <run>` for depth when the affordance alone isn't enough → `gh pr list`/`gh issue list` to cross-check the ledger's view against GitHub's own state. If the ledger and any other source (a doc, a memory, an operator's recollection) disagree, the ledger wins.
+
+This loop — plus the seat discipline and recording mechanics this playbook governs above — is packaged as a project skill for onboarding: `.claude/skills/orc-ledger` (source `.agents/skills/orc-ledger/SKILL.md`). A fresh session working this repo's delivery ledger should read that skill first; this section only summarizes what it teaches in full, including the resume-don't-duplicate rule (never start parallel effort for work a run already owns) and the config-persistence-aware mechanics for run-id-only re-dispatch (`PLAYBOOK-CLI-USAGE`'s "Config persistence" bullet, issue #55 H2).
+
 ## Related
 
 - `docs/playbooks/cli-usage.md` (`PLAYBOOK-CLI-USAGE`) — command surface, config shape, full exit-code contract
 - `docs/delivery/watchtower-operations.md` (`PLAYBOOK-WATCHTOWER`) — ship/verification-scout roles in the surrounding human-driven process
 - `docs/scenarios/SCN-007-pending-settlement.md` — the pending/idempotent-resume flow this playbook's exit-`3` handling follows
 - `docs/extensions/crew-report/README.md` (`EXT-CREW-REPORT-V1`) — the narrative-report channel, `TASK-M1-007`
+- `.claude/skills/orc-ledger` (source `.agents/skills/orc-ledger/SKILL.md`) — the fresh-session onboarding artifact, section 9 above
 - `INV-003`, `INV-006`, `INV-007`, `INV-008`, `INV-011`, `INV-020`
 - `PORT-WORK-004`, `ERR-CONFLICT`

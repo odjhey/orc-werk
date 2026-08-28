@@ -27,6 +27,7 @@ from pathlib import Path
 
 from orc_werk.adapters.acp.execution import session_name_for_idempotency_key
 from orc_werk.adapters.git.candidate import GitDiffCandidate
+from orc_werk.adapters.jsonl import layout
 from orc_werk.cli.config import build_dispatch_ports, load_config
 from orc_werk.core.effects import FX_START_EXECUTION
 from orc_werk.core.errors import CoreError
@@ -313,7 +314,7 @@ class AcpWiringSmokeTest(unittest.TestCase):
         self.assertIn("candidate_fingerprint=fp-", result2.stdout)
         self.assertNotIn("candidate_fingerprint=-", result2.stdout)
 
-        journal_path = self.journal_dir / f"{self.run_id}.jsonl"
+        journal_path = layout.journal_path(self.journal_dir, self.run_id)
         records = [json.loads(line) for line in journal_path.read_text().splitlines() if line.strip()]
 
         settled = [r for r in records if r.get("id") == "FACT-EXEC-SETTLED"]

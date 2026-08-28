@@ -51,7 +51,16 @@ class PortabilityAcceptanceTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, msg=result.stderr)
 
-            journal_path = tmp_dir / ".orc" / "portability-run.jsonl"
+            # issue #55 H1: don't hardcode a flat `<run_id>.jsonl` path here
+            # (the new per-run-dir layout writes `<run_id>/journal.jsonl`
+            # instead) -- and don't import orc_werk.adapters.jsonl.layout to
+            # find it either, since this test's whole point is that nothing
+            # beyond plain JSON + orc_werk.core is needed for the portable
+            # reconstruction proof below. Instead, parse the path CLI itself
+            # already printed (`journal: <path>`) -- exactly how a real
+            # portable consumer with no orc_werk knowledge would find it.
+            journal_line = next(l for l in result.stdout.splitlines() if l.startswith("journal: "))
+            journal_path = Path(journal_line[len("journal: ") :])
             self.assertTrue(journal_path.exists())
 
             # Plain JSON only -- no orc_werk import of any kind here.

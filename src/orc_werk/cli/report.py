@@ -8,7 +8,10 @@ local index page over a journal directory's runs (`--index`); and
 wildcard/namespace rendering of every run whose `run_id` `fnmatch`es a glob
 plus a scoped index (`--all [--match GLOB] [--out-dir DIR]`, issue #40).
 Every path this module prints is the resolved absolute path (issue #40
-comment).
+comment), OSC-8-clickable when stdout is a TTY (issue #55,
+`orc_werk.cli.hyperlink`). A single run's default output now lands inside
+that run's own per-run directory when it uses the new layout (issue #55
+H1, `orc_werk.adapters.jsonl.layout.report_html_path`).
 
 This module is CLI-owned composition, not product semantics
 (`docs/delivery/task-cards/TASK-M1-008-run-report-renderer.md`): it
@@ -46,17 +49,19 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from orc_werk.adapters.jsonl import layout
 from orc_werk.adapters.jsonl.crew_report import CrewReportLog
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.app.orchestrator import is_pending
+from orc_werk.cli.hyperlink import hyperlink_path
 from orc_werk.cli.journal_reading import (
-    DEFAULT_JOURNAL_DIR,
     _available_run_ids,
     _awaiting_label,
     _intent_text,
     _require_journal_file,
     _resolve_journal,
     _root_cause_for_work,
+    resolve_journal_dir,
 )
 from orc_werk.core.errors import not_found_error, validation_error
 from orc_werk.core.state import (
@@ -171,7 +176,9 @@ def _load_times_sidecar(directory: Path, run_id: str) -> tuple[dict[int, str], i
     surface a "N corrupt sidecar record(s) skipped" note (skip-with-note,
     never skip-silently) alongside the times.
     """
-    path = directory / f"{run_id}+times.jsonl"
+    # issue #55 H1: new-layout `<run_id>/times.jsonl`, or legacy
+    # `<run_id>+times.jsonl` -- the same discriminator JSONLJournal uses.
+    path = layout.times_path(directory, run_id)
     times: dict[int, str] = {}
     skipped = 0
     if not path.exists():
@@ -778,7 +785,9 @@ def render_run_report(directory: Path, run_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _render_index_row(run_id: str, history: Sequence[Mapping[str, Any]], projection: DeliveryProjection) -> str:
+def _render_index_row(
+    run_id: str, history: Sequence[Mapping[str, Any]], projection: DeliveryProjection, *, href: str
+) -> str:
     intent_text = _intent_text(history) or ""
     if projection.works:
         chips = " ".join(_state_chip(wid, wp) for wid, wp in sorted(projection.works.items()))
@@ -788,7 +797,6 @@ def _render_index_row(run_id: str, history: Sequence[Mapping[str, Any]], project
     else:
         chips = '<span class="muted">(no work)</span>'
         attempts = "-"
-    href = f"{run_id}.report.html"
     return (
         "<tr>"
         f'<td><code>{html.escape(run_id)}</code></td>'
@@ -821,14 +829,26 @@ def discover_run_ids(directory: Path, *, match: str = "*") -> list[str]:
     return [run_id for run_id in _available_run_ids(directory) if fnmatch.fnmatch(run_id, match)]
 
 
-def render_index(directory: Path, *, run_ids: Optional[Sequence[str]] = None) -> str:
+def render_index(
+    directory: Path, *, run_ids: Optional[Sequence[str]] = None, flat_hrefs: bool = False
+) -> str:
     """Render a small local index page over `directory`'s run journals.
     `run_ids`, when given, scopes the index to exactly that set (in the
     order given) instead of discovering every run under `directory` --
     used by `render_all`'s scoped index (issue #40). Strictly read-only
     over the journal directory: it only ever reads `history`/
     `load_projection` for each listed run, never writes anything but its
-    own announced output file."""
+    own announced output file.
+
+    `flat_hrefs` (issue #55 H1): `render_all` always writes its per-run
+    report files flat as `<out_dir>/<run_id>.report.html` regardless of
+    that run's own journal layout (`--all`'s output directory need not
+    even be a journal directory at all) -- pass `True` from there so this
+    index's links match what it actually wrote. The plain `--index` case
+    (this function's own default, `False`) instead links to wherever `orc
+    report <run_id>` would itself write by default -- `layout.
+    report_html_path`, layout-aware -- since no `--all` render has
+    necessarily happened yet."""
     if not directory.is_dir():
         raise not_found_error(
             f"journal directory does not exist: {directory}", path=str(directory)
@@ -836,14 +856,20 @@ def render_index(directory: Path, *, run_ids: Optional[Sequence[str]] = None) ->
     journal = JSONLJournal(directory)
     scoped = run_ids is not None
     ids = list(run_ids) if scoped else discover_run_ids(directory)
-    rows = [
-        _render_index_row(
-            run_id,
-            journal.history(delivery_run_id=run_id),
-            journal.load_projection(delivery_run_id=run_id),
+    rows = []
+    for run_id in ids:
+        if flat_hrefs:
+            href = f"{run_id}.report.html"
+        else:
+            href = layout.report_html_path(directory, run_id).relative_to(directory).as_posix()
+        rows.append(
+            _render_index_row(
+                run_id,
+                journal.history(delivery_run_id=run_id),
+                journal.load_projection(delivery_run_id=run_id),
+                href=href,
+            )
         )
-        for run_id in ids
-    ]
     empty_message = (
         "(no runs matched this filter)" if scoped else "(no runs found under this journal directory)"
     )
@@ -882,7 +908,7 @@ def render_all(directory: Path, *, match: str, out_dir: Path) -> tuple[list[tupl
         out_path.write_text(html_text, encoding="utf-8")
         outputs.append((run_id, out_path))
 
-    index_html = render_index(directory, run_ids=run_ids)
+    index_html = render_index(directory, run_ids=run_ids, flat_hrefs=True)
     index_path = out_dir / "index.html"
     index_path.write_text(index_html, encoding="utf-8")
     return outputs, index_path
@@ -914,13 +940,13 @@ def cmd_report(args: argparse.Namespace) -> int:
             raise validation_error("orc report --all cannot be combined with --index")
         if args.out:
             raise validation_error("orc report --all uses --out-dir, not --out")
-        directory = Path(args.journal) if args.journal else Path(DEFAULT_JOURNAL_DIR)
+        directory = resolve_journal_dir(args.journal)
         out_dir = Path(args.out_dir) if args.out_dir else directory
         match = args.match if args.match is not None else "*"
         outputs, index_path = render_all(directory, match=match, out_dir=out_dir)
         for _run_id, out_path in outputs:
-            print(f"report: {out_path.resolve()}")
-        print(f"report: {index_path.resolve()}")
+            print(f"report: {hyperlink_path(out_path.resolve())}")
+        print(f"report: {hyperlink_path(index_path.resolve())}")
         return 0
 
     if args.match is not None:
@@ -933,11 +959,11 @@ def cmd_report(args: argparse.Namespace) -> int:
             raise validation_error(
                 "orc report --index does not take a positional run argument", run=args.run
             )
-        directory = Path(args.journal) if args.journal else Path(DEFAULT_JOURNAL_DIR)
+        directory = resolve_journal_dir(args.journal)
         html_text = render_index(directory)
         out_path = Path(args.out) if args.out else directory / "index.html"
         out_path.write_text(html_text, encoding="utf-8")
-        print(f"report: {out_path.resolve()}")
+        print(f"report: {hyperlink_path(out_path.resolve())}")
         return 0
 
     if not args.run:
@@ -945,9 +971,13 @@ def cmd_report(args: argparse.Namespace) -> int:
 
     directory, run_id = _resolve_report_target(args.run, args.journal)
     html_text = render_run_report(directory, run_id)
-    out_path = Path(args.out) if args.out else directory / f"{run_id}.report.html"
+    # issue #55 H1: default single-run output lands inside the run's own
+    # new-layout directory (`<journal-dir>/<run_id>/report.html`); a
+    # legacy-layout run keeps its pre-#55 flat default.
+    out_path = Path(args.out) if args.out else layout.report_html_path(directory, run_id)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html_text, encoding="utf-8")
-    print(f"report: {out_path.resolve()}")
+    print(f"report: {hyperlink_path(out_path.resolve())}")
     return 0
 
 

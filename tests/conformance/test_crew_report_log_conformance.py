@@ -26,6 +26,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orc_werk.adapters.jsonl import layout
 from orc_werk.adapters.jsonl.crew_report import CrewReportLog
 from orc_werk.core.errors import CoreError
 
@@ -43,8 +44,8 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.log.append(
             delivery_run_id=DRID, execution_id="e1", report={"turn": 1, "claimed_verdict": "waiting"}
         )
-        report_path = self.directory / f"{DRID}+reports.jsonl"
-        journal_path = self.directory / f"{DRID}.jsonl"
+        report_path = layout.reports_path(self.directory, DRID)
+        journal_path = layout.journal_path(self.directory, DRID)
         self.assertTrue(report_path.exists())
         self.assertFalse(journal_path.exists())  # never created/merged by this adapter
 
@@ -55,7 +56,7 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.log.append(
             delivery_run_id=DRID, execution_id="e1", report={"turn": 2, "claimed_verdict": "done"}
         )
-        path = self.directory / f"{DRID}+reports.jsonl"
+        path = layout.reports_path(self.directory, DRID)
         lines = path.read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 2)
         for line in lines:
@@ -83,7 +84,7 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.log.append(
             delivery_run_id=DRID, execution_id="e1", report={"turn": 2, "claimed_verdict": "needs-action"}
         )
-        path = self.directory / f"{DRID}+reports.jsonl"
+        path = layout.reports_path(self.directory, DRID)
         with path.open("a", encoding="utf-8") as fh:
             fh.write('{"schema_version": 1, "delivery_run_id": "dr-crew-')  # torn write
 
@@ -124,7 +125,7 @@ class CrewReportLogFileShapeTest(unittest.TestCase):
         self.log.append(
             delivery_run_id=DRID, execution_id="e1", report={"turn": 2, "claimed_verdict": "done"}
         )
-        path = self.directory / f"{DRID}+reports.jsonl"
+        path = layout.reports_path(self.directory, DRID)
         lines = path.read_text(encoding="utf-8").splitlines()
         lines[0] = "NOT-JSON-CORRUPTION"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -174,7 +175,7 @@ class CrewReportNoSideEffectsBeforeValidationTest(unittest.TestCase):
         log.append(
             delivery_run_id=DRID, execution_id="e1", report={"turn": 1, "claimed_verdict": "done"}
         )
-        self.assertTrue((self.directory / f"{DRID}+reports.jsonl").exists())
+        self.assertTrue(layout.reports_path(self.directory, DRID).exists())
         self.assertEqual(len(log.list_reports(delivery_run_id=DRID)), 1)
 
 

@@ -35,6 +35,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orc_werk.adapters.jsonl import layout
 from orc_werk.cli.main import _root_cause_for_work
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -324,7 +325,7 @@ class JournalFailClosedTest(unittest.TestCase):
             dispatch = _run_cli(tmp_dir, "dispatch", "torn tail happy path", "--config", str(config_path))
             self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
 
-            journal_path = tmp_dir / ".orc" / "torn-ok.jsonl"
+            journal_path = layout.journal_path(tmp_dir / ".orc", "torn-ok")
             self.assertTrue(journal_path.exists())
             # Simulate a crash mid-append: a valid prefix already on disk,
             # plus one truncated/unparseable final line with no newline.
