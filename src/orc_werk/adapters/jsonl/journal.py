@@ -146,7 +146,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from orc_werk.adapters.journal_support import build_effect_envelope
+from orc_werk.adapters.journal_support import build_effect_envelope, effective_max_attempts
 from orc_werk.adapters.jsonl import layout, tailsafe
 from orc_werk.core.decisions import Decision
 from orc_werk.core.effects import Effect
@@ -292,12 +292,17 @@ class JSONLJournal(JournalPort):
         return tuple(sorted(records, key=lambda record: record["seq"]))
 
     def load_projection(self, *, delivery_run_id: str) -> DeliveryProjection:
+        history = self.history(delivery_run_id=delivery_run_id)
         facts = [
-            fact_from_envelope(record)
-            for record in self.history(delivery_run_id=delivery_run_id)
-            if record["kind"] == KIND_FACT
+            fact_from_envelope(record) for record in history if record["kind"] == KIND_FACT
         ]
-        return reduce(facts, delivery_run_id=delivery_run_id)
+        # issue #52: fold under the run's own recorded retry budget
+        # (FX-CREATE-WORK's journaled data.max_attempts) rather than the
+        # reducer's schema default, so replay is self-sufficient
+        # (PORT-JOURNAL-005, CONF-JOURNAL-003) -- see
+        # orc_werk.adapters.journal_support.effective_max_attempts.
+        max_attempts = effective_max_attempts(history)
+        return reduce(facts, delivery_run_id=delivery_run_id, max_attempts=max_attempts)
 
 
 __all__ = ["JSONLJournal"]

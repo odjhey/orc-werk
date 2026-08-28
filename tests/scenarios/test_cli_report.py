@@ -282,6 +282,51 @@ class BlockedRootCauseTest(unittest.TestCase):
             self.assertIn("root_cause=ERR-UNSUPPORTED-CAPABILITY", html_text)
 
 
+class NonDefaultBudgetBlockedReplayTest(unittest.TestCase):
+    """Issue #52 regression: a run dispatched with a non-default
+    `max_attempts` (here `2`, not the reducer's schema default of `3`)
+    that exhausts its budget to `BLOCKED` used to break every read-side
+    replay path -- `orc status`, `orc report <run>`, and `orc report
+    --index` (the reported escalation: a single such run poisoned the
+    whole index) -- with a canonical `ERR-CONFLICT` ("FACT-WORK-BLOCKED
+    illegal from state 'READY'"), because `load_projection` folded under
+    the reducer's default budget instead of the run's own recorded one.
+    `BlockedRootCauseTest` above never exercised this because it uses
+    `max_attempts: 3`, coincidentally equal to the schema default -- this
+    test's whole point is the budget being genuinely *non-default*."""
+
+    def test_status_report_and_index_all_survive_a_non_default_budget_blocked_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config = {
+                "run_id": "non-default-budget-blocked",
+                "max_attempts": 2,
+                "attempts": {"work-1": [{"outcome": "failed"}, {"outcome": "failed"}]},
+            }
+            config_path = tmp_dir / "config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            dispatch = _run_cli(tmp_dir, "dispatch", "will exhaust budget", "--config", str(config_path))
+            self.assertEqual(dispatch.returncode, 1, msg=dispatch.stdout + dispatch.stderr)
+            self.assertIn("state=BLOCKED", dispatch.stdout)
+
+            status = _run_cli(tmp_dir, "status", "non-default-budget-blocked")
+            self.assertEqual(status.returncode, 1, msg=status.stdout + status.stderr)
+            self.assertIn("state=BLOCKED", status.stdout)
+            self.assertIn("attempts=2", status.stdout)
+
+            report = _run_cli(tmp_dir, "report", "non-default-budget-blocked")
+            self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
+            html_text = layout.report_html_path(
+                tmp_dir / ".orc", "non-default-budget-blocked"
+            ).read_text(encoding="utf-8")
+            self.assertIn("blocked_reason=retry-budget-exhausted", html_text)
+
+            index = _run_cli(tmp_dir, "report", "--index")
+            self.assertEqual(index.returncode, 0, msg=index.stdout + index.stderr)
+            index_html = (tmp_dir / ".orc" / "index.html").read_text(encoding="utf-8")
+            self.assertIn("non-default-budget-blocked", index_html)
+
+
 class IndexReadOnlyTest(unittest.TestCase):
     def test_index_lists_runs_and_writes_only_its_own_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -118,9 +118,8 @@ Update this table when found; remove rows when the fix merges. "Workaround" is w
 
 | Issue | Symptom | Workaround | Status |
 |---|---|---|---|
-| Found dogfooding issue #43's bare-`orc` index (**#52**) | `JournalPort.load_projection` (`JSONLJournal`) does not accept/forward a per-run `max_attempts`, so `reduce()` always replays against its own default. A run `dispatch`ed with a non-default `max_attempts` whose budget-exhaustion transition depends on that value (e.g. `attempt_number` sits between the run's actual budget and the reducer default) can fail a *fresh* replay — `orc status <run>`, `orc report <run>`, `report --index`/`--all`, and the bare-`orc` index — with a canonical `ERR-CONFLICT` ("`FACT-WORK-BLOCKED` illegal from state 'READY'"), even though the live `dispatch` that produced the journal completed and printed the correct terminal state (the in-process orchestrator's own projection, not a `load_projection` replay, is what `dispatch` prints). | None known short of avoiding non-default `max_attempts` for runs you'll later `status`/`report`. The bare-`orc` index (issue #43) degrades this per-run to `<run_id>: (unreadable: ERR-CONFLICT -- see orc status <run_id>)` rather than failing the whole listing; `status`/`report`/`history` on the affected run still exit `2`. | Open — tracked as issue [#52](https://github.com/odjhey/orc-werk/issues/52) (verification follow-up from PR #51); root cause is `core`/`PORT-JOURNAL` (`JournalPort.load_projection`'s signature and `reduce()`'s default), out of scope for a CLI-only task; needs its own task card. |
 
-Prior rows closed as of `TASK-M1-003` (#16, #17, #18, #23, that task's PR).
+No open rows currently. Prior rows closed as of `TASK-M1-003` (#16, #17, #18, #23, that task's PR). Issue #52 (`JournalPort.load_projection` replaying against the reducer's default `max_attempts` instead of the run's own recorded budget, breaking `status`/`report`/`report --index`/`--all` on a non-default-budget or `BLOCKED` run) closed by recording the effective budget in `FX-CREATE-WORK`'s effect data (`CONTRACT-DURABILITY`, `PORT-JOURNAL-005`, `SCN-008`) — see that fix's PR.
 
 ## Evolution rules
 

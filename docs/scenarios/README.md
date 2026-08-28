@@ -17,3 +17,4 @@ The pure core must pass these scenarios with scripted/in-memory adapters before 
 5. [`SCN-005`](SCN-005-fanin.md) dependency fan-in
 6. [`SCN-006`](SCN-006-capability-failure.md) unsupported stronger capability
 7. [`SCN-007`](SCN-007-pending-settlement.md) pending execution / operator-recorded settlement
+8. [`SCN-008`](SCN-008-replay-budget.md) replay under the run's own retry budget

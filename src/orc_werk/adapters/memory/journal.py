@@ -10,14 +10,21 @@ restarts is required. `MemoryJournal` exists for tests/scenarios and as the
 
 `seq` is assigned per `delivery_run_id`, starting at 1, in append order
 (`PORT-JOURNAL-ENVELOPE`); `load_projection` folds the run's `FACT-*`
-records (only) through `orc_werk.core.reducer.reduce` (`PORT-JOURNAL-005`).
+records (only) through `orc_werk.core.reducer.reduce` (`PORT-JOURNAL-005`),
+under the run's own recorded retry budget (`FX-CREATE-WORK`'s effect
+`data.max_attempts`, issue #52, `orc_werk.adapters.journal_support.
+effective_max_attempts`) rather than the reducer's schema default.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Sequence
 
-from orc_werk.adapters.journal_support import build_effect_envelope, deep_copy_portable
+from orc_werk.adapters.journal_support import (
+    build_effect_envelope,
+    deep_copy_portable,
+    effective_max_attempts,
+)
 from orc_werk.core.decisions import Decision
 from orc_werk.core.effects import Effect
 from orc_werk.core.facts import Fact
@@ -80,12 +87,14 @@ class MemoryJournal(JournalPort):
         return tuple(deep_copy_portable(record) for record in ordered)
 
     def load_projection(self, *, delivery_run_id: str) -> DeliveryProjection:
+        history = self.history(delivery_run_id=delivery_run_id)
         facts = [
-            fact_from_envelope(record)
-            for record in self.history(delivery_run_id=delivery_run_id)
-            if record["kind"] == KIND_FACT
+            fact_from_envelope(record) for record in history if record["kind"] == KIND_FACT
         ]
-        return reduce(facts, delivery_run_id=delivery_run_id)
+        # issue #52: same effective-retry-budget fold as JSONLJournal --
+        # both adapters must agree for CONF-JOURNAL-003.
+        max_attempts = effective_max_attempts(history)
+        return reduce(facts, delivery_run_id=delivery_run_id, max_attempts=max_attempts)
 
 
 __all__ = ["MemoryJournal"]

@@ -20,23 +20,30 @@ import unittest
 from typing import Callable
 
 from orc_werk.core.decisions import DEC_DISPATCH, make_decision
-from orc_werk.core.effects import FX_START_EXECUTION, make_effect
+from orc_werk.core.effects import FX_CREATE_WORK, FX_START_EXECUTION, make_effect
 from orc_werk.core.errors import CoreError
 from orc_werk.core.facts import (
     FACT_CANDIDATE_OBSERVED,
     FACT_EXEC_SETTLED,
     FACT_EXEC_STARTED,
+    FACT_WORK_BLOCKED,
     FACT_WORK_CREATED,
     FACT_WORK_READY,
     make_fact,
 )
-from orc_werk.core.reducer import reduce
+from orc_werk.core.reducer import DEFAULT_MAX_ATTEMPTS, reduce
 from orc_werk.core.serialization import fact_from_envelope
 from orc_werk.ports.journal import JournalPort
 
 
 def _dispatch_idempotency_key(delivery_run_id: str, work_id: str, attempt: int = 1) -> str:
     return f"{delivery_run_id}|{work_id}|{attempt}|{FX_START_EXECUTION}"
+
+
+# Sentinel for `_append_create_work`'s `max_attempts` parameter: "omit the
+# key entirely" is a distinct case from "the key is present with some int
+# value", so `None` (a legal-looking-but-wrong value) would not do.
+_OMIT = object()
 
 
 class JournalConformanceSuite(unittest.TestCase):
@@ -234,6 +241,110 @@ class JournalConformanceSuite(unittest.TestCase):
         projection = self.journal.load_projection(delivery_run_id=drid)
         expected = reduce([fact1, fact2], delivery_run_id=drid)
         self.assertEqual(projection.to_dict(), expected.to_dict())
+
+    # ------------------------------------------------------------------
+    # CONF-JOURNAL-003 / PORT-JOURNAL-005 (issue #52): replay folds under
+    # the run's own recorded retry budget, not the reducer's schema
+    # default -- including for a run that reached BLOCKED, mirroring the
+    # topology-durability precedent (issue #41) for FX-CREATE-WORK's
+    # journaled `data.max_attempts` alongside `data.plan`.
+    # ------------------------------------------------------------------
+
+    def _append_create_work(self, drid: str, *, max_attempts: object, work_id: str = "w1") -> None:
+        """Append a minimal `FX-CREATE-WORK` effect record carrying
+        `data.max_attempts` -- `object` (not `int`) lets the legacy-fallback
+        test below omit the key entirely by passing a sentinel that never
+        gets included."""
+        plan = {"works": [{"work_id": work_id, "deps": []}]}
+        data: dict[str, object] = {"plan": plan}
+        if max_attempts is not _OMIT:
+            data["max_attempts"] = max_attempts
+        effect = make_effect(
+            FX_CREATE_WORK,
+            delivery_run_id=drid,
+            work_id="",
+            idempotency_key=f"{drid}|{FX_CREATE_WORK}",
+            data=data,
+        )
+        self.journal.append_effect_record(
+            effect, dispatch_result={"works": [{"delivery_run_id": drid, "id": work_id}]}
+        )
+
+    def test_load_projection_folds_under_recorded_non_default_max_attempts(self) -> None:
+        drid = "dr-conf-replay-budget"
+        work_id = "w1"
+        non_default_budget = 2
+        self.assertNotEqual(non_default_budget, DEFAULT_MAX_ATTEMPTS)
+        self._append_create_work(drid, max_attempts=non_default_budget, work_id=work_id)
+
+        facts = [
+            make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id=work_id),
+            make_fact(FACT_WORK_READY, delivery_run_id=drid, work_id=work_id),
+            make_fact(FACT_EXEC_STARTED, delivery_run_id=drid, work_id=work_id, execution_id="e1"),
+            make_fact(
+                FACT_EXEC_SETTLED, delivery_run_id=drid, work_id=work_id, execution_id="e1", outcome="failed"
+            ),
+            make_fact(FACT_EXEC_STARTED, delivery_run_id=drid, work_id=work_id, execution_id="e2"),
+            make_fact(
+                FACT_EXEC_SETTLED, delivery_run_id=drid, work_id=work_id, execution_id="e2", outcome="failed"
+            ),
+            make_fact(
+                FACT_WORK_BLOCKED, delivery_run_id=drid, work_id=work_id, reason="retry-budget-exhausted"
+            ),
+        ]
+        for fact in facts:
+            self.journal.append_fact(fact)
+
+        # A replay that (wrongly) folded under the reducer's own default
+        # would derive READY, not BLOCKED, after the second failed
+        # attempt (2 < DEFAULT_MAX_ATTEMPTS), and then reject the trailing
+        # FACT-WORK-BLOCKED as illegal from READY -- exactly the issue #52
+        # ERR-CONFLICT. A correct replay folds under the run's own
+        # recorded budget and reaches BLOCKED cleanly, matching a direct
+        # reduce() call given that same budget explicitly.
+        expected = reduce(facts, delivery_run_id=drid, max_attempts=non_default_budget)
+        projection = self.journal.load_projection(delivery_run_id=drid)
+        self.assertEqual(projection.to_dict(), expected.to_dict())
+        self.assertTrue(projection.works[work_id].blocked_confirmed)
+
+        reopened = self.reopen()
+        reopened_projection = reopened.load_projection(delivery_run_id=drid)
+        self.assertEqual(reopened_projection.to_dict(), expected.to_dict())
+
+    def test_load_projection_falls_back_to_schema_default_without_recorded_max_attempts(
+        self,
+    ) -> None:
+        # Legacy journal precedent (issue #55 layout fallback): a
+        # FX-CREATE-WORK record written before this field existed carries
+        # `data.plan` but no `data.max_attempts` -- load_projection must
+        # fall back to the reducer's schema default rather than raising or
+        # inventing a budget.
+        drid = "dr-conf-replay-budget-legacy"
+        work_id = "w1"
+        self._append_create_work(drid, max_attempts=_OMIT, work_id=work_id)
+
+        facts = [
+            make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id=work_id),
+            make_fact(FACT_WORK_READY, delivery_run_id=drid, work_id=work_id),
+            make_fact(FACT_EXEC_STARTED, delivery_run_id=drid, work_id=work_id, execution_id="e1"),
+            make_fact(
+                FACT_EXEC_SETTLED, delivery_run_id=drid, work_id=work_id, execution_id="e1", outcome="completed"
+            ),
+        ]
+        for fact in facts:
+            self.journal.append_fact(fact)
+
+        expected = reduce(facts, delivery_run_id=drid, max_attempts=DEFAULT_MAX_ATTEMPTS)
+        projection = self.journal.load_projection(delivery_run_id=drid)
+        self.assertEqual(projection.to_dict(), expected.to_dict())
+
+    def test_load_projection_falls_back_to_schema_default_with_no_create_work_record(self) -> None:
+        # Degenerate case: a run with no FX-CREATE-WORK effect record at
+        # all (nothing bootstrapped yet) has nothing to read a budget from
+        # -- falls back to the schema default rather than erroring.
+        drid = "dr-conf-replay-budget-empty"
+        projection = self.journal.load_projection(delivery_run_id=drid)
+        self.assertEqual(projection.to_dict(), reduce([], delivery_run_id=drid).to_dict())
 
     # ------------------------------------------------------------------
     # EXT-005 / CONF-EXT-003: lossless unknown-extensions round-trip
