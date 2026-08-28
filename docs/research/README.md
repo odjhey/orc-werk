@@ -71,6 +71,14 @@ Why it matters: model/harness behavior can improve quickly while stable interfac
 
 Why it matters: the final environment or artifact state is a stronger source of truth than an agent saying it succeeded. This supports `P-003`, candidate-bound assurance, independent evidence, and the distinction between execution settlement and work acceptance.
 
+### Structured code-review finding evaluation
+
+Earlier Orc Werk research discussions surveyed code-review finding classification and converged on independent dimensions for **severity**, **disposition**, **category**, **confidence**, **lifecycle status**, **location**, and **evidence**.
+
+The important lesson was not merely the enum values. It was the separation of concerns: severity describes consequence, disposition describes whether delivery may proceed, confidence describes reviewer certainty, and status describes lifecycle. Those dimensions must not be mechanically collapsed into one score or inferred from one another.
+
+Orc Werk preserves this research result as the optional `EXT-REVIEW-FINDINGS-V1` (`review-findings/v1`) extension. This keeps structured review/routing information available without making code-review-specific fields mandatory in generic Assurance/Evidence.
+
 ## Operational/product lineage
 
 ### Beads / Gas City
