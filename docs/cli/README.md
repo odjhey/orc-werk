@@ -204,7 +204,7 @@ adapters' own mapping docs: `docs/adapters/acp/mapping.md`,
 ### `orc status`
 
 ```text
-usage: orc status [-h] target
+usage: orc status [-h] [--journal JOURNAL] target
 ```
 
 Per-work state, attempt count, current candidate fingerprint,
@@ -213,19 +213,23 @@ pending/blocked detail, and next-step affordances for one run.
 | Flag | Default | Notes |
 |---|---|---|
 | `target` (positional) | required | journal path (dir or `<run>.jsonl`) or bare run id |
+| `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
 
-A bare run id resolves against `$ORC_JOURNAL_DIR` or `./.orc` -- `status`
-has no `--journal` flag of its own.
+For a bare run id, the journal directory resolves with `--journal` >
+`ORC_JOURNAL_DIR` > `./.orc` precedence.
 
 ```bash
 orc status my-run-id
+orc status my-run-id --journal ./.orc
 orc status ./.orc/my-run-id.jsonl
 ```
 
 ### `orc history`
 
 ```text
-usage: orc history [-h] [--limit LIMIT] [--since-seq SINCE_SEQ] target
+usage: orc history [-h] [--journal JOURNAL] [--limit LIMIT]
+                   [--since-seq SINCE_SEQ]
+                   target
 ```
 
 The full seq-ordered fact/decision/effect record -- root-cause detail
@@ -233,15 +237,20 @@ The full seq-ordered fact/decision/effect record -- root-cause detail
 
 | Flag | Default | Notes |
 |---|---|---|
-| `target` (positional) | required | journal path or bare run id |
+| `target` (positional) | required | journal path (dir or `<run>.jsonl`) or bare run id |
+| `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
 | `--limit` | `30` | most-recent records to show; `0` for all |
 | `--since-seq` | none | only records with `seq` greater than the given value |
+
+For a bare run id, the journal directory resolves with `--journal` >
+`ORC_JOURNAL_DIR` > `./.orc` precedence.
 
 Paginated: a truncated result prints a definitive
 `... showing last N of M` hint, never an ambiguous "...more".
 
 ```bash
 orc history my-run-id
+orc history my-run-id --journal ./.orc
 orc history my-run-id --limit 0
 orc history my-run-id --since-seq 12
 ```
