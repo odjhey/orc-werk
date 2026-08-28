@@ -6,19 +6,8 @@ mixed shape -- unit-level coverage of the per-source row builders
 
 `execution-session/v1` fixtures are crafted directly through
 `orc_werk.app.Orchestrator` + a real `JSONLJournal` (`test_extension_
-lossless_transport.py`'s pattern) rather than through `orc dispatch
---config`'s scripted-execution path: as of this writing, `orc_werk.cli.
-config._exec_entry_from_attempt` validates an attempt-level `extensions`
-key (`_ATTEMPT_ENTRY_KEYS`) but never actually copies it into the
-`ScriptedExecution` script entry it builds, so a config-authored
-`attempts[work].extensions` is silently dropped before it ever reaches a
-settled `FACT-EXEC-SETTLED` record -- a pre-existing gap in `config.py`,
-out of this task's scope (`orc refs` is a pure read-side projection; this
-gap is CLI dispatch-config wiring), noted here and in the PR body rather
-than fixed. `evidence_refs`/candidate/mirror fixtures use the ordinary
-`orc dispatch --config` path, where the equivalent wiring (`assurance`
-sub-object `evidence_refs`, attempt-level `candidate`, top-level
-`mirror`) is exercised correctly by existing tests and by this file.
+lossless_transport.py`'s pattern). `evidence_refs`/candidate/mirror
+fixtures use the ordinary `orc dispatch --config` path.
 """
 
 from __future__ import annotations
@@ -392,8 +381,7 @@ class RefsEvidenceAndCandidateCliTest(unittest.TestCase):
 
 class RefsExecutionSessionCraftedJournalTest(unittest.TestCase):
     """`execution-session/v1` fixture crafted directly through the
-    Orchestrator + a real `JSONLJournal` (see module docstring for why
-    `orc dispatch --config` isn't used for this source)."""
+    Orchestrator + a real `JSONLJournal`."""
 
     DRID = "refs-session"
     WORK_ID = "work-1"

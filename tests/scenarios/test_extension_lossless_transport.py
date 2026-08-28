@@ -22,6 +22,9 @@ assurance carrying an *unregistered* extension key end-to-end through
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +46,55 @@ EXEC_EXTENSION_PAYLOAD = {
     "some-ext/v1": {"nested": {"value": 42, "list": [1, 2, 3]}, "note": "unregistered"}
 }
 ASSURE_EXTENSION_PAYLOAD = {"some-ext/v1": {"finding_count": 3, "severities": ["low", "high"]}}
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRC = REPO_ROOT / "src"
+
+
+class ConfigExecutionExtensionTransportTest(unittest.TestCase):
+    def _dispatch_history(self, extensions: dict | None) -> list[dict]:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            attempt = {
+                "outcome": "completed",
+                "candidate": {"label": "C1"},
+                "assurance": {"verdict": "accepted"},
+            }
+            if extensions is not None:
+                attempt["extensions"] = extensions
+            config_path = directory / "config.json"
+            config_path.write_text(
+                json.dumps({"attempts": {WORK_ID: [attempt]}}), encoding="utf-8"
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "orc_werk.cli",
+                    "dispatch",
+                    "config extension transport",
+                    "--config",
+                    str(config_path),
+                    "--run-id",
+                    DRID,
+                ],
+                cwd=directory,
+                env={"PYTHONPATH": str(SRC), "PATH": "/usr/bin:/bin"},
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            return JSONLJournal(directory / ".orc").history(delivery_run_id=DRID)
+
+    def test_config_execution_extensions_reach_settled_fact_verbatim(self) -> None:
+        history = self._dispatch_history(EXEC_EXTENSION_PAYLOAD)
+        settled = next(record for record in history if record["id"] == "FACT-EXEC-SETTLED")
+        self.assertEqual(settled["extensions"], EXEC_EXTENSION_PAYLOAD)
+
+    def test_config_without_execution_extensions_does_not_fabricate_key(self) -> None:
+        history = self._dispatch_history(None)
+        settled = next(record for record in history if record["id"] == "FACT-EXEC-SETTLED")
+        self.assertNotIn("extensions", settled)
 
 
 class ExtensionLosslessTransportTest(unittest.TestCase):
