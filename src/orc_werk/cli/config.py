@@ -1,0 +1,143 @@
+"""CLI dispatch-config loading/translation (`TASK-M0-005`).
+
+The `orc dispatch --config <path>` config file is a portable JSON document
+declaring the scripted-adapter scripts and (optionally) a multi-work plan
+for one run. This module is CLI-owned composition, not a canonical
+protocol shape (`ARCH-REPOSITORY-STRUCTURE`: only `orc_werk.cli` composes
+adapters); the schema below is this reference CLI's own invention, not a
+normative contract.
+
+## Config schema
+
+```json
+{
+  "run_id": "optional-explicit-delivery-run-id",
+  "max_attempts": 3,
+  "resume_capability": null,
+  "execution_capabilities": [],
+  "plan": null,
+  "attempts": {
+    "work-1": [
+      {"outcome": "completed", "candidate": {"label": "A"}, "assurance": {"verdict": "rejected"}},
+      {"outcome": "completed", "candidate": {"label": "B"}, "assurance": {"verdict": "accepted"}}
+    ]
+  }
+}
+```
+
+- `attempts` is keyed by `work_id` (defaulting to the single-work plan's
+  `orc_werk.app.DEFAULT_WORK_ID`, `"work-1"`, when `plan` is omitted). Each
+  entry is one scripted attempt, in order (attempt 1 first): `outcome` is
+  `"completed"` or `"failed"` (`ExecutionPort`/`ScriptedExecution`);
+  `candidate`, when present and `outcome == "completed"`, is the portable
+  `subject_identity` content `ScriptedCandidate.identify` returns (its
+  canonical-JSON sha256 IS the candidate fingerprint --
+  `orc_werk.adapters.scripted.candidate.fingerprint_of`, exported
+  precisely so callers like this one never have to guess it); `assurance`,
+  when present, supplies that candidate's scripted verdict
+  (`ScriptedAssurance`).
+- `plan` is an optional `PORT-WORK-001` multi-work plan (needed to exercise
+  a fan-in run like `SCN-005` from the CLI); defaults to
+  `orc_werk.app.default_single_work_plan()`.
+
+Because `ScriptedCandidate` scripts are keyed by `execution_id`, and
+`ScriptedExecution` derives `execution_id` deterministically from the
+`FX-START-EXECUTION` idempotency key (`CONF-EXEC-001`, documented in that
+adapter's own module docstring as
+``execution_id = f"exec-{sha256(idempotency_key)[:16]}"``), this module
+predicts each attempt's `execution_id` up front via the same public
+`orc_werk.core.idempotency.idempotency_key` derivation so a human-authored
+config never has to spell out a hash by hand.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any, Mapping
+
+from orc_werk.adapters.scripted.assurance import ScriptedAssurance
+from orc_werk.adapters.scripted.candidate import ScriptedCandidate, fingerprint_of
+from orc_werk.adapters.scripted.execution import ScriptedExecution
+from orc_werk.app.orchestrator import DEFAULT_WORK_ID, RunConfig
+from orc_werk.core.effects import FX_START_EXECUTION
+from orc_werk.core.errors import validation_error
+from orc_werk.core.idempotency import idempotency_key
+from orc_werk.ports.capabilities import validate_capabilities
+
+
+def load_config(path: str) -> Mapping[str, Any]:
+    text = Path(path).read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise validation_error(f"config file is not valid JSON: {path}", path=path) from exc
+    if not isinstance(data, Mapping):
+        raise validation_error(f"config file must contain a JSON object: {path}", path=path)
+    return data
+
+
+def _predicted_execution_id(*, delivery_run_id: str, work_id: str, attempt_number: int) -> str:
+    key = idempotency_key(
+        FX_START_EXECUTION,
+        delivery_run_id=delivery_run_id,
+        work_id=work_id,
+        attempt_number=attempt_number,
+    )
+    return f"exec-{hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]}"
+
+
+def build_scripted_adapters(
+    config: Mapping[str, Any], *, delivery_run_id: str
+) -> tuple[ScriptedExecution, ScriptedCandidate, ScriptedAssurance]:
+    """Translate the `attempts` section of a dispatch config into the three
+    scripted adapters' own native script formats."""
+    attempts_by_work: Mapping[str, Any] = config.get("attempts") or {
+        DEFAULT_WORK_ID: [{"outcome": "completed"}]
+    }
+    execution_capabilities = validate_capabilities(config.get("execution_capabilities", ()))
+
+    execution_script: dict[str, list[dict[str, Any]]] = {}
+    candidate_subjects: dict[str, dict[str, Any]] = {}
+    assurance_script: dict[str, dict[str, Any]] = {}
+
+    for work_id, attempts in attempts_by_work.items():
+        execution_script[work_id] = []
+        for attempt_index, attempt in enumerate(attempts):
+            outcome = attempt.get("outcome", "completed")
+            exec_entry: dict[str, Any] = {"outcome": outcome}
+            if "states" in attempt:
+                exec_entry["states"] = attempt["states"]
+            if "artifact_refs" in attempt:
+                exec_entry["artifact_refs"] = attempt["artifact_refs"]
+            execution_script[work_id].append(exec_entry)
+
+            candidate_content = attempt.get("candidate")
+            if outcome == "completed" and candidate_content is not None:
+                attempt_number = attempt_index + 1
+                execution_id = _predicted_execution_id(
+                    delivery_run_id=delivery_run_id, work_id=work_id, attempt_number=attempt_number
+                )
+                candidate_subjects[execution_id] = {
+                    "work_id": work_id,
+                    "subject_identity": candidate_content,
+                }
+                assurance_entry = attempt.get("assurance")
+                if assurance_entry is not None:
+                    fingerprint = fingerprint_of(candidate_content)
+                    assurance_script[fingerprint] = dict(assurance_entry)
+
+    execution = ScriptedExecution(script=execution_script, capabilities=execution_capabilities)
+    candidate = ScriptedCandidate(subjects=candidate_subjects, current_by_work={})
+    assurance = ScriptedAssurance(script=assurance_script)
+    return execution, candidate, assurance
+
+
+def build_run_config(config: Mapping[str, Any], *, max_attempts_override: int | None) -> RunConfig:
+    max_attempts = max_attempts_override or config.get("max_attempts") or RunConfig().max_attempts
+    resume_capability = config.get("resume_capability")
+    return RunConfig(max_attempts=max_attempts, resume_capability=resume_capability)
+
+
+__all__ = ["build_run_config", "build_scripted_adapters", "load_config"]

@@ -13,5 +13,8 @@ dependencies = []
 Repository = "https://github.com/odjhey/orc-werk"
 Documentation = "https://github.com/odjhey/orc-werk/tree/master/docs"
 
+[project.scripts]
+orc = "orc_werk.cli.main:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
