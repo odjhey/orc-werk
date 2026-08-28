@@ -13,6 +13,7 @@ from orc_werk.core.errors import not_found_error, validation_error
 from orc_werk.core.models import Execution
 from orc_werk.core.portable import is_portable
 from orc_werk.ports.base import (
+    LIFECYCLE_STATE_RUNNING,
     LIFECYCLE_STATE_SETTLED,
 )
 from orc_werk.ports.capabilities import (
@@ -73,6 +74,24 @@ class ScriptedExecution(ExecutionPort):
     `CONTRACT-CAPABILITIES` states such an implication, so a script that
     wants to serve both strengths must advertise both explicitly
     (least-commitment; see "Ambiguities encountered" in the PR body).
+
+    `pending` (`TASK-M1-002`, `SCN-007`): when `False` (the default --
+    unchanged M0 "strict" behavior, what `tests/conformance` and the
+    dogfood corpus rely on), `start()` for an attempt beyond the end of the
+    script raises the canonical `ERR-NOT-FOUND` immediately, as it always
+    has. When `True` (the CLI-wired M1a default, opt-in per-instance so
+    strict tests are never affected), `start()` for a not-yet-scripted
+    attempt does NOT raise: it succeeds like any other `start()` -- the
+    caller journals `FACT-EXEC-STARTED` exactly as it would for a scripted
+    attempt -- but `inspect()` reports `state=running` (never `settled`)
+    until a later-constructed instance (built from an updated config on
+    re-dispatch) is asked about the same `execution_id` with a script entry
+    now present. This is `STATE-DELIVERY` mechanical fact sequencing item 7
+    (absence of a settlement observation is not a settlement) implemented
+    at the test-double boundary: a started-but-unobserved attempt is
+    PENDING, not a dispatch-gate failure (item 6, which this flag leaves
+    untouched -- capability/provider-unavailable failures are still
+    surfaced as errors, never swallowed into pending).
     """
 
     def __init__(
@@ -80,6 +99,7 @@ class ScriptedExecution(ExecutionPort):
         *,
         script: Mapping[str, Iterable[Mapping[str, Any]]],
         capabilities: Iterable[str] = (),
+        pending: bool = False,
     ) -> None:
         script_dict = {work_id: list(entries) for work_id, entries in script.items()}
         if not is_portable({k: list(v) for k, v in script_dict.items()}):
@@ -88,10 +108,12 @@ class ScriptedExecution(ExecutionPort):
             work_id: [dict(entry) for entry in entries] for work_id, entries in script_dict.items()
         }
         self._capabilities = validate_capabilities(capabilities)
+        self._pending = pending
 
         self._by_idempotency_key: dict[str, Execution] = {}
         self._attempts_by_work: dict[str, list[str]] = {}
         self._entry_by_execution: dict[str, Mapping[str, Any]] = {}
+        self._pending_executions: set[str] = set()
         self._inspect_calls: dict[str, int] = {}
         self._cancelled: set[str] = set()
         self._sent: dict[str, list[Mapping[str, Any]]] = {}
@@ -115,11 +137,28 @@ class ScriptedExecution(ExecutionPort):
         attempt_index = len(attempts)  # 0-based into the script list
         entries = self._script.get(work_id, [])
         if attempt_index >= len(entries):
-            raise not_found_error(
-                "ScriptedExecution has no scripted outcome for this attempt",
-                work_id=work_id,
-                attempt_index=attempt_index,
-            )
+            if not self._pending:
+                raise not_found_error(
+                    "ScriptedExecution has no scripted outcome for this attempt",
+                    work_id=work_id,
+                    attempt_index=attempt_index,
+                )
+            # TASK-M1-002/SCN-007 pending-capable mode: a started attempt
+            # with no recorded outcome yet is PENDING, not a dispatch
+            # failure (STATE-DELIVERY mechanical fact sequencing item 7).
+            # The attempt still "starts" successfully -- the caller
+            # journals FACT-EXEC-STARTED -- it just has nothing to settle
+            # yet; inspect() below reports state=running until a later
+            # instance (re-dispatch over an updated config) is asked about
+            # this same execution_id with a script entry present.
+            execution_id = f"exec-{_digest(idempotency_key)}"
+            execution = Execution(id=execution_id, work_id=work_id, attempt_number=attempt_index + 1)
+            attempts.append(execution_id)
+            self._by_idempotency_key[idempotency_key] = execution
+            self._entry_by_execution[execution_id] = None
+            self._pending_executions.add(execution_id)
+            self._inspect_calls[execution_id] = 0
+            return execution
         entry = dict(entries[attempt_index])
 
         # CONF-EXEC-001: stable, deterministic, opaque -- derived from the
@@ -134,6 +173,12 @@ class ScriptedExecution(ExecutionPort):
         return execution
 
     def inspect(self, *, execution_id: str) -> ExecutionObservation:
+        if execution_id in self._pending_executions:
+            # SCN-007: no outcome observed yet -- MUST NOT be reported as
+            # settled (mechanical fact sequencing item 7). `running` is the
+            # honest lifecycle state: requested-and-in-flight, unobserved.
+            return ExecutionObservation(state=LIFECYCLE_STATE_RUNNING)
+
         entry = self._entry_by_execution.get(execution_id)
         if entry is None:
             raise not_found_error("unknown execution_id", execution_id=execution_id)

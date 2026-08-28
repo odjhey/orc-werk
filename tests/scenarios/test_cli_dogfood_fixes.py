@@ -120,7 +120,25 @@ class Bug2MaxAttemptsZeroTest(unittest.TestCase):
     def test_explicit_config_max_attempts_not_overridden_by_absent_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            config_path = self._config(tmp_dir, max_attempts=2)
+            # TASK-M1-002/SCN-007: pending/incremental mode is now the CLI
+            # default, so a *missing* second scripted attempt would rest
+            # pending (exit 3) rather than fail -- that is the intended
+            # behavior change this task ships, not a regression. This test's
+            # actual concern (BUG-2: explicit config max_attempts must not
+            # be silently overridden by an absent --max-attempts flag) is
+            # orthogonal to that; script both attempts explicitly so the
+            # budget-exhaustion path under test stays deterministic.
+            config_path = tmp_dir / "config.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "bug2-run",
+                        "max_attempts": 2,
+                        "attempts": {"work-1": [{"outcome": "failed"}, {"outcome": "failed"}]},
+                    }
+                ),
+                encoding="utf-8",
+            )
             result = _run_cli(tmp_dir, "dispatch", "bug2", "--config", str(config_path))
             self.assertEqual(result.returncode, 1, msg=result.stdout + result.stderr)
             # config's max_attempts=2 must be honored exactly (not silently

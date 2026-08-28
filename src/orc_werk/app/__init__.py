@@ -10,6 +10,7 @@ from orc_werk.app.orchestrator import (
     Orchestrator,
     RunConfig,
     default_single_work_plan,
+    is_pending,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "Orchestrator",
     "RunConfig",
     "default_single_work_plan",
+    "is_pending",
 ]

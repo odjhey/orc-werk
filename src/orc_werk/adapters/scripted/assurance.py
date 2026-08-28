@@ -24,7 +24,7 @@ from orc_werk.core.facts import ASSURANCE_VERDICTS
 from orc_werk.core.models import AssuranceRun, Candidate
 from orc_werk.core.portable import is_portable
 from orc_werk.ports.assurance import AssuranceObservation, AssurancePort
-from orc_werk.ports.base import LIFECYCLE_STATE_SETTLED
+from orc_werk.ports.base import LIFECYCLE_STATE_RUNNING, LIFECYCLE_STATE_SETTLED
 from orc_werk.ports.capabilities import (
     CAP_ASSURE_CANDIDATE_BOUND,
     CAP_ASSURE_MAY_MUTATE_CANDIDATE,
@@ -56,6 +56,18 @@ class ScriptedAssurance(AssurancePort):
     A `request()` for a candidate whose fingerprint is absent from the
     script raises the canonical `ERR-NOT-FOUND` -- there is nothing scripted
     for this deterministic double to evaluate.
+
+    `pending` (`TASK-M1-002`, `SCN-007`): when `False` (the default --
+    unchanged M0 "strict" behavior relied on by `tests/conformance` and the
+    dogfood corpus), a `request()` for an unscripted candidate fingerprint
+    raises `ERR-NOT-FOUND` immediately, as it always has. When `True` (the
+    CLI-wired M1a default), the same `request()` succeeds instead -- the
+    caller journals `FACT-ASSURE-STARTED` exactly as it would for a
+    scripted verdict -- and `inspect()` reports `state=running` until a
+    later-constructed instance (re-dispatch over an updated config
+    recording the verdict) observes the same `assurance_id` with a script
+    entry present. Mirrors `ScriptedExecution`'s `pending` flag for the
+    ASSURING boundary (`STATE-DELIVERY` mechanical fact sequencing item 7).
     """
 
     def __init__(
@@ -63,6 +75,7 @@ class ScriptedAssurance(AssurancePort):
         *,
         script: Mapping[str, Mapping[str, Any]],
         capabilities: Iterable[str] = _DEFAULT_CAPABILITIES,
+        pending: bool = False,
     ) -> None:
         if not is_portable({key: dict(val) for key, val in script.items()}):
             raise ValueError("ScriptedAssurance script must be portable/JSON-compatible")
@@ -73,10 +86,12 @@ class ScriptedAssurance(AssurancePort):
                 "ScriptedAssurance must not advertise CAP-ASSURE-MAY-MUTATE-CANDIDATE (M0 note)"
             )
         self._capabilities = caps
+        self._pending = pending
         self._script: dict[str, dict[str, Any]] = {key: dict(val) for key, val in script.items()}
 
         self._by_idempotency_key: dict[str, AssuranceRun] = {}
         self._fingerprint_by_run: dict[str, str] = {}
+        self._pending_runs: set[str] = set()
         self._inspect_calls: dict[str, int] = {}
         self._settled_snapshot: dict[str, AssuranceObservation] = {}
 
@@ -95,10 +110,23 @@ class ScriptedAssurance(AssurancePort):
             return self._by_idempotency_key[idempotency_key]
 
         if candidate.fingerprint not in self._script:
-            raise not_found_error(
-                "ScriptedAssurance has no scripted verdict for this candidate fingerprint",
-                candidate_fingerprint=candidate.fingerprint,
-            )
+            if not self._pending:
+                raise not_found_error(
+                    "ScriptedAssurance has no scripted verdict for this candidate fingerprint",
+                    candidate_fingerprint=candidate.fingerprint,
+                )
+            # TASK-M1-002/SCN-007 pending-capable mode: a requested
+            # assurance run with no recorded verdict yet is PENDING, not a
+            # failure -- it still "requests" successfully so the caller
+            # journals FACT-ASSURE-STARTED; inspect() below reports
+            # state=running until a later instance observes a verdict.
+            assurance_id = f"assure-{_digest(idempotency_key)}"
+            run = AssuranceRun(id=assurance_id, candidate_id=candidate.id)
+            self._by_idempotency_key[idempotency_key] = run
+            self._fingerprint_by_run[assurance_id] = candidate.fingerprint
+            self._pending_runs.add(assurance_id)
+            self._inspect_calls[assurance_id] = 0
+            return run
 
         assurance_id = f"assure-{_digest(idempotency_key)}"
         run = AssuranceRun(id=assurance_id, candidate_id=candidate.id)
@@ -117,6 +145,11 @@ class ScriptedAssurance(AssurancePort):
             # CONF-ASSURE-002: a settled verdict is immutable -- never
             # re-derived from the (possibly since-mutated) script mapping.
             return self._settled_snapshot[assurance_id]
+
+        if assurance_id in self._pending_runs:
+            # SCN-007: no verdict observed yet -- MUST NOT be reported as
+            # settled (mechanical fact sequencing item 7).
+            return AssuranceObservation(state=LIFECYCLE_STATE_RUNNING)
 
         fingerprint = self._fingerprint_by_run.get(assurance_id)
         if fingerprint is None:
