@@ -34,3 +34,9 @@ means a green PR remotely.
 The full operating model — roles (watchtower/scout/ship/verify), pipeline,
 task sizing, audit trail, and conventions — is documented in
 `docs/delivery/watchtower-operations.md` (`PLAYBOOK-WATCHTOWER`).
+
+Deliveries themselves are tracked in the orc ledger (`.orc/` runs, one
+journal per `DeliveryRun`) — the durable record of what was dispatched,
+attempted, and settled, independent of GitHub's own PR/issue state.
+Dispatch/settle/verify against that ledger per
+`docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`).

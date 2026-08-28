@@ -69,6 +69,7 @@ description: Flat documentation index.
 ## Delivery
 - [M0 pure core](delivery/M0-pure-core.md)
 - [M1 delivery ledger](delivery/M1-delivery-ledger.md)
+- [M2 close the loop](delivery/M2-close-the-loop.md)
 - [Watchtower operations playbook](delivery/watchtower-operations.md)
 - [Delivery stance](delivery/delivery-stance.md)
 - [CLI usage guide](playbooks/cli-usage.md)
@@ -94,3 +95,10 @@ description: Flat documentation index.
 - [TASK-M1-006](delivery/task-cards/TASK-M1-006-agent-cli-playbook.md)
 - [TASK-M1-007](delivery/task-cards/TASK-M1-007-crew-report-log.md)
 - [TASK-M1-008](delivery/task-cards/TASK-M1-008-run-report-renderer.md)
+
+## M2 task cards
+- [TASK-M2-001](delivery/task-cards/TASK-M2-001-no-mistakes-assurance.md)
+- [TASK-M2-002](delivery/task-cards/TASK-M2-002-second-agent-provider-swap.md)
+- [TASK-M2-003](delivery/task-cards/TASK-M2-003-multi-work-real-dags.md)
+- [TASK-M2-004](delivery/task-cards/TASK-M2-004-second-repo-adoption.md)
+- [TASK-M2-005](delivery/task-cards/TASK-M2-005-policy-parameterization.md)

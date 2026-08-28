@@ -8,6 +8,10 @@ description: Second milestone — orc-werk becomes its own first user via a CLI-
 
 # M1 — Delivery ledger
 
+Delivered 2026-08-28 (PRs #22–#44; all task cards TASK-M1-001..008 shipped;
+acceptance demonstrated by the `m1-closeout` multi-work fan-in run and the
+ledger-tracked deliveries in `.orc/`). M-002 continues from here.
+
 ## Goal
 
 M1 makes orc-werk its own first user. M0 proved the pure orchestration kernel could drive a scripted delivery loop to a verified terminal state entirely with in-memory/scripted providers; M1 puts real, valuable work through that same kernel, unamended in its core semantics.

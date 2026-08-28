@@ -3,7 +3,7 @@ id: DFS-009
 type: scenario
 status: current
 authority: informative
-description: Journal recovery at the CLI boundary — torn tail heals, corrupt middle and missing path-like targets fail closed; garbage files and bare unknown run ids still silently succeed (issue #18).
+description: Journal recovery at the CLI boundary — torn tail heals, corrupt middle and missing path-like targets fail closed; garbage files and bare unknown run ids now fail closed too (issue #18, fixed).
 ---
 
 # DFS-009: journal recovery — torn tail, corrupt middle, missing/garbage paths
@@ -95,16 +95,14 @@ runs from `_append`, not from `history()`/`load_projection()`).
 line (corrupt journal file)"}`. Fails closed, per contract, because the
 malformed record is not the last one in the file.
 
-**3 (garbage single-line file) — known bug, issue #18:** exit `0`,
-`status` prints `run: ghost` then `(no work recorded yet)` — silent
-"success" on a file that was never a journal, because the file's one line
-*is* its final line, so it is indistinguishable from a torn write with
-zero preceding good records. Report as BUG each time this reproduces;
-issue #18 proposes only tolerating a torn tail when at least one valid
-record precedes it (a docs amendment to `PORT-JOURNAL` is required before
-implementing that, since current behavior is normatively correct per the
-letter of the existing rule — this is a contract-refinement request, not
-a plain code bug).
+**3 (garbage single-line file) — fixed, confirmed (issue #18):** exit `2`,
+stderr `ERR-VALIDATION: journal file contains no valid records (not a
+journal)`. `PORT-JOURNAL`'s durable-journal recovery clause was amended
+first (per issue #18's proposal: only tolerate a torn tail when at least
+one valid record precedes it) and the CLI now fails closed on a file that
+was never a journal, instead of silently reporting empty success. Report
+PASS each time this reproduces; a regression back to silent `exit 0` would
+be a BUG.
 
 **4a (missing path-looking target) — correct, confirmed:** exit `2`,
 stderr `{"error": "ERR-NOT-FOUND", "message": "journal path does not
@@ -117,19 +115,17 @@ leaked a confusing "not a safe JSONL journal filename component"
 `ERR-VALIDATION` or silently succeeded); guarded by
 `tests/scenarios/test_cli_dogfood_fixes.py`.
 
-**4b (bare nonexistent run id) — still fail-open (same family as issue
-#18's silent-success framing):** `status` prints `run:
-totally-nonexistent-run-id` then `(no work recorded yet)`, exit `0` — a
-bare token with no separator and no `.jsonl` suffix is by design resolved
-as a run id against the CLI-relative default journal directory `./.orc`,
-and an unknown run id there projects to an empty run rather than an
-error. `JSONLJournal.__init__` also unconditionally `mkdir`s that
-directory even for a read-only `status` call — confirmed, a fresh `.orc/`
-directory is created in the invocation cwd as a side effect. Report
-FRICTION with both symptoms (silent success *and* the stray directory)
-each time this reproduces; like case 3, tightening this is a
-contract/behavior refinement to route via the watchtower, not a plain
-code bug.
+**4b (bare nonexistent run id) — fixed, confirmed (resolved as a side
+effect of the same batch that fixed #18, not itself one of the four
+numbered issues):** exit `2`, stderr `ERR-NOT-FOUND: no journal found for
+run id: totally-nonexistent-run-id` — a bare token with no separator and
+no `.jsonl` suffix, resolved as a run id against the CLI-relative default
+journal directory `./.orc`, now correctly fails closed when that run id is
+unknown, instead of projecting an empty run. **No stray `.orc/` directory
+is created** on this read-only `status` call — the old unconditional
+`mkdir` side effect is gone. Report PASS each time this reproduces; a
+regression back to silent `exit 0` and/or the stray directory would be a
+BUG.
 
 **5 (empty dir baseline) — correct, confirmed:** exit `2`, stderr:
 `{"details": {"path": "<dir>"}, "error": "ERR-NOT-FOUND", "message": "no
@@ -140,22 +136,31 @@ and *garbage-file* paths that still leak.
 
 ## Judgment notes
 
-Cases 3 and 4b are exactly the kind of finding this corpus exists for:
-both pass their "did it crash" bar trivially (no traceback, valid JSON
-error shape when there is an error at all) while silently doing the wrong
-thing on a completely wrong target. A checker agent should specifically
-read the `status` output text, not just the exit code, to catch these — a
-mechanical "exit code == expected" assertion would have missed both in
-round 1. Case 4a is the fixed sibling: if it ever regresses to silent
-success or the old "unsafe filename" leak, escalate as BUG (the guard is
-in `tests/scenarios/test_cli_dogfood_fixes.py`).
+Cases 3 and 4b were exactly the kind of finding this corpus exists for:
+both used to pass their "did it crash" bar trivially (no traceback, valid
+JSON error shape when there is an error at all) while silently doing the
+wrong thing on a completely wrong target. Both are now fixed — but the
+methodological point stands as a standing lesson, not just a historical
+warning: a checker agent should specifically read the `status` output
+text, not just the exit code, since a mechanical "exit code == expected"
+assertion would have missed both in round 1 (and would miss a future
+regression on either). Case 4a is the earlier-fixed sibling: if any of the
+three (4a, case 3, case 4b) ever regresses to silent success or the old
+"unsafe filename" leak, escalate as BUG (the guard is in
+`tests/scenarios/test_cli_dogfood_fixes.py`).
 
 ## Verification
 
 All cases re-run against post-round-1-fix `master` (merged into this
 branch) on 2026-08-28; outputs above (including the exact `byte_offset:
-1171`, case 4a's `ERR-NOT-FOUND` naming the path, and case 4b's stray
-`.orc/` directory) are transcribed verbatim from that run. Cases 1/2/5
-are unchanged from round 1; case 4a's fix was confirmed live; cases 3 and
-4b still reproduce round 1's fail-open behavior (issue #18 and its
-bare-run-id sibling remain open).
+1171` and case 4a's `ERR-NOT-FOUND` naming the path) are transcribed
+verbatim from that run. Cases 1/2/5 are unchanged from round 1; case 4a's
+fix was confirmed live; cases 3 and 4b still reproduced round 1's
+fail-open behavior at that point (issue #18 and its bare-run-id sibling
+were open).
+
+Re-executed against `master` for the M1 close-out sweep (2026-08-28,
+`m1-closeout` checker run, PR #32/`TASK-M1-003` landed since the prior
+verification): cases 3 and 4b now both fail closed as described above —
+issue #18's fix and its bare-run-id sibling are confirmed live, with no
+stray `.orc/` directory created in either case.

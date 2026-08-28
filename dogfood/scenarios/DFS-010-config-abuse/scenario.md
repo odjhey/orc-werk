@@ -3,7 +3,7 @@ id: DFS-010
 type: scenario
 status: current
 authority: informative
-description: Six malformed/hostile dispatch configs — four already fail closed correctly, one is silently accepted (issue #17), one now rests pending per SCN-007/PR #29.
+description: Six malformed/hostile dispatch configs — five fail closed correctly (including issue #17's unknown-key case, fixed), one now rests pending per SCN-007/PR #29.
 ---
 
 # DFS-010: config abuse — invalid JSON, cycle, dup id, unknown dep, unknown key, missing attempts
@@ -17,16 +17,17 @@ description: Six malformed/hostile dispatch configs — four already fail closed
 The CLI dispatch-config loader (`src/orc_werk/cli/config.py`) is CLI-owned,
 non-normative composition — but it sits directly on the user-facing
 boundary, so `DELIVERY-STANCE`'s "canonical errors at user-facing
-boundaries" bar still applies to how it fails. Round 1 found it is
+boundaries" bar still applies to how it fails. Round 1 found it was
 fail-open in exactly two ways where the rest of the system (the
 `MemoryWorkGraph`/plan-validation layer underneath it) is already
 fail-closed. This scenario runs all six abuse cases together so the
-contrast is visible: four fail loud and correctly, one fails silently
-(issue #17, `unknownkey.json`). The sixth, `missingattempts.json`, was
-originally grouped with the issue-#17 failures too, but since PR #29
-(pending/incremental mode, `TASK-M1-002`) its missing-`attempts` shape is
-the valid fully-incremental case, not a validation gap — see its
-expected-outcome entry below.
+contrast is visible: four already failed loud and correctly, one failed
+silently (issue #17, `unknownkey.json`) — **now fixed, confirmed**: it
+fails loud too. The sixth, `missingattempts.json`, was originally grouped
+with the issue-#17 failures too, but since PR #29 (pending/incremental
+mode, `TASK-M1-002`) its missing-`attempts` shape is the valid
+fully-incremental case, not a validation gap — see its expected-outcome
+entry below.
 
 ## Setup
 
@@ -82,14 +83,12 @@ shape as `cycle.json`.
 a work not present in the plan: 'ghost'", "details": {"dep_id": "ghost",
 "work_id": "a"}}`. Journal: 1 record.
 
-**`unknownkey.json` — known bug, issue #17:** expected (post-fix)
-canonical `ERR-VALIDATION` at load time, rejecting the unrecognized
-`totally_bogus_key`, no journal created. Actual on current `master`: the
-unknown key is silently dropped and the run proceeds to completion exactly
-as if it were not there — exit `0`, `work work-1: state=ACCEPTED
-attempts=1`, full 19-record journal. A typo'd config key (e.g.
-`exeuction_capabilities` for `execution_capabilities`) produces no signal
-at all that anything was misspelled.
+**`unknownkey.json` — fixed, confirmed (issue #17):** exit `2`, canonical
+`ERR-VALIDATION` at load time: `config contains unknown top-level key(s):
+totally_bogus_key`, with `unknown_keys` and `known_keys` both enumerated in
+`details`. No journal is written. A typo'd config key (e.g.
+`exeuction_capabilities` for `execution_capabilities`) is now signaled
+loudly at load time instead of being silently dropped.
 
 **`missingattempts.json` — superseded by PR #29 (pending/incremental mode,
 `TASK-M1-002`), re-scoped per Item 2's issue-#17 re-scope:** since PR #29,
@@ -109,17 +108,18 @@ re-scope, PR #29 verification ruling).
 
 ## Judgment notes
 
-The four correct cases are worth re-running on every checker pass mainly
-as a regression guard on `MemoryWorkGraph`'s plan validation — they are
-unlikely to break, but if they ever silently started succeeding that would
-be a serious contract regression (fail-open on plan integrity), not mere
-friction. The remaining known-bug case (`unknownkey.json`): report BUG
-each time, quoting exit code and whether the config's mistake was signaled
-at all — the point of this scenario is exactly that a human would not
-otherwise notice their config had a typo until output looked wrong minutes
-later. `missingattempts.json` is no longer a bug case (see above) but is
-still worth re-running as a regression guard on the pending/incremental
-default itself.
+The four originally-correct cases (`invalid`/`cycle`/`dup`/`unknowndep`)
+are worth re-running on every checker pass mainly as a regression guard on
+`MemoryWorkGraph`'s plan validation — they are unlikely to break, but if
+they ever silently started succeeding that would be a serious contract
+regression (fail-open on plan integrity), not mere friction.
+`unknownkey.json` is now a fifth regression guard of the same kind: if it
+ever reverts to silently dropping the unrecognized key and completing, that
+is a BUG, not friction — the point of this scenario is exactly that a
+human would not otherwise notice their config had a typo until output
+looked wrong minutes later. `missingattempts.json` is no longer a bug case
+either (see above) but is still worth re-running as a regression guard on
+the pending/incremental default itself.
 
 ## Verification
 
@@ -127,10 +127,15 @@ default itself.
 against `master` (worktree `feat/dogfood-corpus`) on 2026-08-28: outputs
 above (exact error text, `details`, and 1-line-journal-or-none) are
 transcribed verbatim from that run. `unknownkey.json` was **not**
-re-executed (still known-failing per issue #17); its "actual on current
-master" description is transcribed from the round-1 dogfooding session's
-recorded journal (`s8d-unknown.jsonl`, 19 records ending
-`FACT-WORK-COMPLETED`).
+re-executed at that time (still known-failing per issue #17); its "actual
+on current master" description at that point was transcribed from the
+round-1 dogfooding session's recorded journal (`s8d-unknown.jsonl`, 19
+records ending `FACT-WORK-COMPLETED`).
+
+`unknownkey.json` was re-executed against `master` for the M1 close-out
+sweep (2026-08-28, `m1-closeout` checker run, post-PR-#32/`TASK-M1-003`):
+confirmed fixed as described above — `ERR-VALIDATION`, exit `2`,
+`unknown_keys:["totally_bogus_key"]`, no journal written.
 
 `missingattempts.json` **was** re-executed against `master` (worktree
 `docs-m1a-batch`, commit `fab370f`, post-PR-#29) on 2026-08-28:
