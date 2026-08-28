@@ -35,6 +35,9 @@ Every real adapter must pass the same conformance requirements as its in-memory 
 - `CONF-ASSURE-003`: evidence from a different fingerprint is rejected by the kernel.
 - `CONF-ASSURE-004`: inconclusive remains distinct from rejected/accepted.
 
+### Extensions
+See [extension conformance](extensions.md) for `CONF-EXT-001` through `CONF-EXT-006`.
+
 ### Journal
 - `CONF-JOURNAL-001`: append order is deterministic.
 - `CONF-JOURNAL-002`: history is immutable/append-preserving.
