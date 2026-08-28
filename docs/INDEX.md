@@ -12,6 +12,7 @@ description: Flat documentation index.
 - [Thesis](product/thesis.md)
 - [Principles](product/principles.md)
 - [Boundaries](product/boundaries.md)
+- [Adoption guide](product/adoption.md)
 
 ## Domain
 - [Ubiquitous language](domain/ubiquitous-language.md)
@@ -23,6 +24,7 @@ description: Flat documentation index.
 - [Errors](contracts/errors.md)
 - [Capabilities](contracts/capabilities.md)
 - [Extensions](contracts/extensions.md)
+- [Durability responsibilities](contracts/durability-responsibilities.md)
 - [Ports](contracts/ports/README.md)
 
 ## Protocol
@@ -33,6 +35,7 @@ description: Flat documentation index.
 ## Extensions
 - [Extension registry](extensions/README.md)
 - [`review-findings/v1`](extensions/review-findings/README.md)
+- [`execution-session/v1`](extensions/execution-session/README.md)
 
 ## Verification
 - [Golden scenarios](scenarios/README.md)
@@ -85,5 +88,5 @@ description: Flat documentation index.
 - [TASK-M1-002](delivery/task-cards/TASK-M1-002-pending-mode.md)
 - [TASK-M1-003](delivery/task-cards/TASK-M1-003-cli-ux.md)
 - [TASK-M1-004](delivery/task-cards/TASK-M1-004-durability-contract.md)
-- [TASK-M1-005](delivery/task-cards/TASK-M1-005-claude-code-adapter.md)
+- [TASK-M1-005](delivery/task-cards/TASK-M1-005-acp-adapter.md)
 - [TASK-M1-006](delivery/task-cards/TASK-M1-006-agent-cli-playbook.md)

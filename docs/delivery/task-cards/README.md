@@ -26,6 +26,6 @@ M1 cards, in dependency order:
 3. `TASK-M1-002` pending/incremental dispatch implementation (depends on `TASK-M1-001`)
 4. `TASK-M1-006` agent CLI guidance playbook — M1a+ push mode (depends on `TASK-M1-001`, `TASK-M1-002`)
 5. `TASK-M1-004` durability-responsibilities contract, `execution-session/v1` registration, `CONTRACT-CAPABILITIES` durability amendment (no dependencies within M1)
-6. `TASK-M1-005` Claude Code headless ExecutionPort + real-artifact CandidatePort + conformance (depends on `TASK-M1-004` and `TASK-M1-002`)
+6. `TASK-M1-005` acpx (ACP) ExecutionPort driving Pi + real-artifact CandidatePort + conformance (depends on `TASK-M1-004` and `TASK-M1-002`)
 
 `TASK-M1-002` and `TASK-M1-003` both depend only on `TASK-M1-001` and are independent of each other, so they may ship in parallel worktrees; `TASK-M1-004` has no M1 dependency and may start immediately alongside `TASK-M1-001`. `TASK-M1-006` is the M1a+ stage card: it is authored only after the SCN-007 command surface is fixed and implemented (guidance must not precede the commands it documents). `TASK-M1-005` is the only M1b card and gates on both the durability contract (`TASK-M1-004`) and the pending-mode implementation (`TASK-M1-002`) it dogfoods against.
