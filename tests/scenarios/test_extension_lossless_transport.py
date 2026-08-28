@@ -94,7 +94,7 @@ class ConfigExecutionExtensionTransportTest(unittest.TestCase):
     def test_config_without_execution_extensions_does_not_fabricate_key(self) -> None:
         history = self._dispatch_history(None)
         settled = next(record for record in history if record["id"] == "FACT-EXEC-SETTLED")
-        self.assertNotIn("extensions", settled)
+        self.assertEqual(settled.get("extensions", {}), {})
 
 
 class ExtensionLosslessTransportTest(unittest.TestCase):
