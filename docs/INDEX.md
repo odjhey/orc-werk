@@ -72,6 +72,7 @@ description: Flat documentation index.
 - [Watchtower operations playbook](delivery/watchtower-operations.md)
 - [Delivery stance](delivery/delivery-stance.md)
 - [CLI usage guide](playbooks/cli-usage.md)
+- [Agent CLI usage playbook](playbooks/agent-cli-usage.md)
 
 ## Dogfooding
 - [Dogfood scenario corpus](../dogfood/README.md)
