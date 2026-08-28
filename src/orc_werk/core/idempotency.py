@@ -8,7 +8,11 @@ Key form per effect, verbatim from INV-020:
   - FX-CREATE-WORK: (delivery_run_id, effect_id) -- precedes any attempt,
     creates all Work records for one plan; v0 permits exactly one plan
     creation per DeliveryRun.
-  - FX-CLAIM-WORK, FX-START-EXECUTION, FX-SEND-EXECUTION, FX-CANCEL-EXECUTION,
+  - FX-CLAIM-WORK: the reduced form (delivery_run_id, work_id, effect_id)
+    with NO attempt_number component -- a claim is once per Work lineage,
+    held by its claimant across all retry attempts and never re-acquired
+    on retry, analogous to FX-CREATE-WORK's reduced form.
+  - FX-START-EXECUTION, FX-SEND-EXECUTION, FX-CANCEL-EXECUTION,
     FX-IDENTIFY-CANDIDATE, FX-COMPLETE-WORK, FX-BLOCK-WORK: the standard
     tuple (delivery_run_id, work_id, attempt_number, effect_id).
   - FX-START-ASSURANCE: the standard tuple plus candidate_fingerprint.
@@ -16,7 +20,7 @@ Key form per effect, verbatim from INV-020:
 
 from __future__ import annotations
 
-from orc_werk.core.effects import ALL_EFFECT_IDS, FX_CREATE_WORK, FX_START_ASSURANCE
+from orc_werk.core.effects import ALL_EFFECT_IDS, FX_CLAIM_WORK, FX_CREATE_WORK, FX_START_ASSURANCE
 
 _SEP = "|"
 
@@ -39,6 +43,14 @@ def idempotency_key(
 
     if effect_id == FX_CREATE_WORK:
         return _join(delivery_run_id, effect_id)
+
+    if effect_id == FX_CLAIM_WORK:
+        # INV-020: FX-CLAIM-WORK is once per Work lineage -- keyed on the
+        # reduced form (delivery_run_id, work_id, effect_id), with no
+        # attempt_number component, mirroring FX-CREATE-WORK's reduced form.
+        if work_id is None:
+            raise ValueError("FX-CLAIM-WORK requires work_id for the reduced form (INV-020)")
+        return _join(delivery_run_id, work_id, effect_id)
 
     if work_id is None or attempt_number is None:
         raise ValueError(

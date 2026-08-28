@@ -156,9 +156,16 @@ class Inv020IdempotencyKeyDerivationTest(unittest.TestCase):
         key = idempotency_key("FX-CREATE-WORK", delivery_run_id="dr1")
         self.assertEqual(key, "dr1|FX-CREATE-WORK")
 
+    def test_fx_claim_work_reduced_key_form(self) -> None:
+        # INV-020: FX-CLAIM-WORK is once per Work lineage -- keyed on the
+        # reduced form (delivery_run_id, work_id, effect_id), with no
+        # attempt_number component (analogous to FX-CREATE-WORK's reduced
+        # form).
+        key = idempotency_key("FX-CLAIM-WORK", delivery_run_id="dr1", work_id="w1")
+        self.assertEqual(key, "dr1|w1|FX-CLAIM-WORK")
+
     def test_standard_tuple_effects(self) -> None:
         for effect_id in (
-            "FX-CLAIM-WORK",
             "FX-START-EXECUTION",
             "FX-SEND-EXECUTION",
             "FX-CANCEL-EXECUTION",

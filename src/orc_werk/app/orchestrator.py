@@ -394,8 +394,11 @@ class Orchestrator:
             if wp is None or wp.state != STATE_READY or wp.claim_ref is not None:
                 continue
 
+            # INV-020 reduced form for FX-CLAIM-WORK: (delivery_run_id,
+            # work_id, effect_id) -- once per Work lineage, no
+            # attempt_number component.
             claim_key = derive_idempotency_key(
-                FX_CLAIM_WORK, delivery_run_id=self.delivery_run_id, work_id=work.id, attempt_number=0
+                FX_CLAIM_WORK, delivery_run_id=self.delivery_run_id, work_id=work.id
             )
             history = self.journal.history(delivery_run_id=self.delivery_run_id)
             existing = _find_effect_record(history, claim_key)
