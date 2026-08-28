@@ -33,7 +33,7 @@ Provider-native subject fields are opaque to the core. The adapter must produce 
 Identify the candidate produced by one execution/artifact set. May return no candidate when the execution produced no assurable subject.
 
 ### PORT-CAND-002 `current`
-Return the current candidate for Work when the provider can determine one safely.
+Return the current candidate for Work when the provider can determine one safely. When the current candidate cannot be determined safely, the port MUST return an explicit empty/none result — never a stale or guessed candidate.
 
 ### PORT-CAND-003 `compare`
 Return `same` or `different` according to canonical fingerprint equality.
