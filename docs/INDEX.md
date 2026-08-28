@@ -64,6 +64,7 @@ description: Flat documentation index.
 
 ## Delivery
 - [M0 pure core](delivery/M0-pure-core.md)
+- [M1 delivery ledger](delivery/M1-delivery-ledger.md)
 - [Watchtower operations playbook](delivery/watchtower-operations.md)
 - [Delivery stance](delivery/delivery-stance.md)
 - [CLI usage guide](playbooks/cli-usage.md)
@@ -75,3 +76,10 @@ description: Flat documentation index.
 - [TASK-M0-004](delivery/task-cards/TASK-M0-004-journal.md)
 - [TASK-M0-005](delivery/task-cards/TASK-M0-005-cli.md)
 - [TASK-M0-006](delivery/task-cards/TASK-M0-006-ports-foundation.md)
+
+## M1 task cards
+- [TASK-M1-001](delivery/task-cards/TASK-M1-001-pending-scenario.md)
+- [TASK-M1-002](delivery/task-cards/TASK-M1-002-pending-mode.md)
+- [TASK-M1-003](delivery/task-cards/TASK-M1-003-cli-ux.md)
+- [TASK-M1-004](delivery/task-cards/TASK-M1-004-durability-contract.md)
+- [TASK-M1-005](delivery/task-cards/TASK-M1-005-claude-code-adapter.md)

@@ -8,6 +8,8 @@ description: First milestone proving provider-free orchestration semantics.
 
 # M0 — Pure core
 
+Delivered 2026-08-28 (PRs #2–#21); M-001 continues from here.
+
 ## Goal
 
 Given an intent and scripted/in-memory providers, the Orc Werk CLI can autonomously drive:

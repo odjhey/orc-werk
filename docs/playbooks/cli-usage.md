@@ -55,14 +55,10 @@ Update this table when found; remove rows when the fix merges. "Workaround" is w
 
 | Issue | Symptom | Workaround | Status |
 |---|---|---|---|
-| [#16](https://github.com/odjhey/orc-werk/issues/16) | Statically-doomed runs (capability mismatch, missing `attempts` entry) report generic `blocked_reason=retry-budget-exhausted`; synthetic exec ids always say `capability-failure` | Read `history` → effect `dispatch_result.error` for the real cause | Open (M1) |
-| [#17](https://github.com/odjhey/orc-werk/issues/17) | Unknown/typo'd config keys silently ignored; planned work with no `attempts` entry fails opaquely at dispatch | Double-check config keys by hand; ensure every planned `work_id` has attempts | Open (M1) |
-| [#18](https://github.com/odjhey/orc-werk/issues/18) | Pointing `status` at a non-journal file prints "(no work recorded yet)", exit 0 | Verify the path you pass is the intended `.jsonl` | Open (M1) |
-| fix in flight | Non-finite floats in a config (`NaN`) crash with a raw traceback | Keep candidate/config values strict-JSON | Fix PR open |
-| fix in flight | `max_attempts: 0` silently ignored (default 3 used) | Use `max_attempts >= 1` | Fix PR open |
-| fix in flight | `history` hides record-level `extensions` (e.g. assurance findings) | Read the raw `.jsonl` for extensions | Fix PR open |
-| fix in flight | Nonexistent `.jsonl` path gives a confusing "unsafe filename" error | Check the path; use bare run ids for `./.orc` journals | Fix PR open |
-| unfiled | `status` labels the run id as `intent:` instead of the submitted intent text | Read `history` seq 1 (`FACT-INTENT-SUBMITTED.data.text`) | Found 2026-08-28, to file |
+| [#16](https://github.com/odjhey/orc-werk/issues/16) | Statically-doomed runs (capability mismatch, missing `attempts` entry) report generic `blocked_reason=retry-budget-exhausted`; synthetic exec ids always say `capability-failure` | Read `history` → effect `dispatch_result.error` for the real cause | Open (M1a) |
+| [#17](https://github.com/odjhey/orc-werk/issues/17) | Unknown/typo'd config keys silently ignored; planned work with no `attempts` entry fails opaquely at dispatch | Double-check config keys by hand; ensure every planned `work_id` has attempts | Open (M1a) |
+| [#18](https://github.com/odjhey/orc-werk/issues/18) | Pointing `status` at a non-journal file prints "(no work recorded yet)", exit 0 | Verify the path you pass is the intended `.jsonl` | Open (M1a, docs amendment) |
+| [#23](https://github.com/odjhey/orc-werk/issues/23) | `status` labels the run id as `intent:` instead of the submitted intent text | Read `history` seq 1 (`FACT-INTENT-SUBMITTED.data.text`) | Open (M1a) |
 
 ## Evolution rules
 
