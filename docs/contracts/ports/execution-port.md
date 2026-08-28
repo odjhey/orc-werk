@@ -26,7 +26,10 @@ Output canonical execution observation:
 state: requested | running | settled
 outcome?: completed | failed | cancelled
 artifact_refs?: opaque references
+extensions?: map<versioned_extension_id, json_payload>
 ```
+
+`extensions`, when present, MUST satisfy `CONTRACT-EXTENSIONS`. The generic core records/transports them but MUST NOT inspect their internals to derive the canonical execution state or outcome.
 
 ### PORT-EXEC-003 `send`
 Optional capability `CAP-EXEC-SEND`.
