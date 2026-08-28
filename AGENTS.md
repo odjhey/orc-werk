@@ -30,3 +30,7 @@ The local gate is `bash scripts/check.sh`; CI mirrors it exactly via the
 single required `ci-required` status check (see
 `.github/workflows/ci-required.yml`), so a green `scripts/check.sh` locally
 means a green PR remotely.
+
+The full operating model — roles (watchtower/scout/ship/verify), pipeline,
+task sizing, audit trail, and conventions — is documented in
+`docs/delivery/watchtower-operations.md` (`PLAYBOOK-WATCHTOWER`).
