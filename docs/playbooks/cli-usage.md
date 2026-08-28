@@ -119,7 +119,7 @@ Update this table when found; remove rows when the fix merges. "Workaround" is w
 | Issue | Symptom | Workaround | Status |
 |---|---|---|---|
 
-No open rows currently. Prior rows closed as of `TASK-M1-003` (#16, #17, #18, #23, that task's PR). Issue #52 (`JournalPort.load_projection` replaying against the reducer's default `max_attempts` instead of the run's own recorded budget, breaking `status`/`report`/`report --index`/`--all` on a non-default-budget or `BLOCKED` run) closed by recording the effective budget in `FX-CREATE-WORK`'s effect data (`CONTRACT-DURABILITY`, `PORT-JOURNAL-005`, `SCN-008`) — see that fix's PR.
+No open rows currently. Prior rows closed as of `TASK-M1-003` (#16, #17, #18, #23, that task's PR). Issue #52 (`JournalPort.load_projection` replaying against the reducer's default `max_attempts` instead of the run's own recorded budget, breaking `status`/`report`/`report --index`/`--all` on a non-default-budget or `BLOCKED` run) closed by recording the effective budget in `FX-CREATE-WORK`'s effect data (`CONTRACT-DURABILITY`, `PORT-JOURNAL-005`, `SCN-008`) — see that fix's PR. Issue #78 (one run's replay `CoreError` aborting the entire `report --index`/`--all` portfolio) is closed: portfolio reports now render a critical placeholder with a `status` affordance and continue healthy runs.
 
 ## Evolution rules
 
