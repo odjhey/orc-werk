@@ -31,6 +31,12 @@ single required `ci-required` status check (see
 `.github/workflows/ci-required.yml`), so a green `scripts/check.sh` locally
 means a green PR remotely.
 
+A project skill onboards fresh sessions to the delivery ledger:
+`.claude/skills/orc-ledger` (source: `.agents/skills/orc-ledger/SKILL.md`) —
+orient via bare `orc`, resume-don't-duplicate, seat discipline, recording
+mechanics. The adoption guide (`PRODUCT-ADOPTION`) tells adopting repos to
+copy the same skill.
+
 The full operating model — roles (watchtower/scout/ship/verify), pipeline,
 task sizing, audit trail, and conventions — is documented in
 `docs/delivery/watchtower-operations.md` (`PLAYBOOK-WATCHTOWER`).
