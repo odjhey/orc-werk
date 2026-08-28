@@ -110,6 +110,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 from orc_werk.adapters.acp.execution import AcpExecution
 from orc_werk.adapters.git.candidate import GitDiffCandidate
+from orc_werk.adapters.no_mistakes.assurance import NoMistakesAssurance
 from orc_werk.adapters.scripted.assurance import ScriptedAssurance
 from orc_werk.adapters.scripted.candidate import ScriptedCandidate, fingerprint_of
 from orc_werk.adapters.scripted.execution import ScriptedExecution
@@ -142,22 +143,25 @@ _TOP_LEVEL_KEYS = frozenset(
         "attempts",
         "execution",
         "candidate",
+        "assurance",
     }
 )
 _ATTEMPT_ENTRY_KEYS = frozenset({"outcome", "candidate", "assurance", "states", "artifact_refs", "extensions"})
 _ASSURANCE_ENTRY_KEYS = frozenset({"verdict", "states", "evidence_refs", "extensions"})
 
-# `execution`/`candidate` real-port selection (module docstring, "Real-port
-# selection" section). Keyed exactly to what the two real adapter
-# constructors genuinely accept -- `model` is the one exception, threaded
-# through to the per-call `execution_request` instead (see
-# `_build_acp_execution`), and `adapter` is this CLI's own selector, not an
-# adapter constructor parameter.
+# `execution`/`candidate`/`assurance` real-port selection (module
+# docstring, "Real-port selection" section). Keyed exactly to what each
+# real adapter constructor genuinely accepts -- `model` is the one
+# exception for `execution`, threaded through to the per-call
+# `execution_request` instead (see `_build_acp_execution`), and `adapter`
+# is this CLI's own selector, not an adapter constructor parameter.
 _EXECUTION_CONFIG_KEYS = frozenset({"adapter", "agent", "cwd", "thought_level", "model", "approve_all"})
 _EXECUTION_ADAPTER_ONLY_KEYS = _EXECUTION_CONFIG_KEYS - {"adapter"}
 _EXECUTION_ADAPTERS = frozenset({"scripted", "acp"})
 _CANDIDATE_CONFIG_KEYS = frozenset({"adapter", "repo_path"})
 _CANDIDATE_ADAPTERS = frozenset({"scripted", "git"})
+_ASSURANCE_CONFIG_KEYS = frozenset({"adapter", "repo_path"})
+_ASSURANCE_ADAPTERS = frozenset({"scripted", "no-mistakes"})
 
 
 def _require_portable(value: Any, *, path: str) -> None:
@@ -220,16 +224,23 @@ def _validate_assurance_entry(assurance: Any, *, path: str) -> None:
         )
 
 
-def _attempt_allowed_keys(*, execution_adapter: str, candidate_adapter: str) -> frozenset[str]:
+def _attempt_allowed_keys(
+    *, execution_adapter: str, candidate_adapter: str, assurance_adapter: str = "scripted"
+) -> frozenset[str]:
     """Real-port-aware attempt-entry allowlist (module docstring,
-    "Attempts-merge semantics"). `assurance` is always allowed (the
-    operator/verification agent always records verdicts through this
-    channel, real ports or not). `outcome`/`states`/`artifact_refs` are
-    allowed only when execution stays scripted (a real `ExecutionPort`
-    supplies its own outcome). `candidate` is allowed only when the
-    candidate stays scripted (a real `CandidatePort` supplies its own
-    subject; a config-declared one would be silently ignored)."""
-    allowed = {"assurance"}
+    "Attempts-merge semantics"). `assurance` is allowed only when assurance
+    stays scripted (the operator/verification agent records verdicts
+    through this channel); a real `AssurancePort` (`TASK-M2-001`) derives
+    its own verdict automatically, so a config-declared one would be
+    silently ignored -- the same rationale `candidate` already follows for
+    a real `CandidatePort`. `outcome`/`states`/`artifact_refs` are allowed
+    only when execution stays scripted (a real `ExecutionPort` supplies
+    its own outcome). `candidate` is allowed only when the candidate stays
+    scripted (a real `CandidatePort` supplies its own subject; a
+    config-declared one would be silently ignored)."""
+    allowed: set[str] = set()
+    if assurance_adapter == "scripted":
+        allowed.add("assurance")
     if execution_adapter == "scripted":
         allowed |= {"outcome", "states", "artifact_refs", "extensions"}
     if candidate_adapter == "scripted":
@@ -237,7 +248,13 @@ def _attempt_allowed_keys(*, execution_adapter: str, candidate_adapter: str) -> 
     return frozenset(allowed)
 
 
-def _validate_attempts(attempts: Any, *, execution_adapter: str = "scripted", candidate_adapter: str = "scripted") -> None:
+def _validate_attempts(
+    attempts: Any,
+    *,
+    execution_adapter: str = "scripted",
+    candidate_adapter: str = "scripted",
+    assurance_adapter: str = "scripted",
+) -> None:
     """#17 (re-scoped): reject structurally malformed `attempts` shapes at
     config load time -- a non-mapping `attempts` value, a non-list
     per-work attempts value, a non-mapping attempt entry, an unknown key
@@ -246,10 +263,10 @@ def _validate_attempts(attempts: Any, *, execution_adapter: str = "scripted", ca
     valid fully-incremental case (`SCN-007`'s pending default) and MUST NOT
     be rejected -- see the M1-delivery-ledger #17 re-scope annotation.
 
-    `execution_adapter`/`candidate_adapter` (`TASK-M1-005` CLI wiring):
-    narrow the allowed per-entry key set when either port is real -- see
-    `_attempt_allowed_keys` and the module docstring's "Attempts-merge
-    semantics" section."""
+    `execution_adapter`/`candidate_adapter`/`assurance_adapter`
+    (`TASK-M1-005`/`TASK-M2-001` CLI wiring): narrow the allowed per-entry
+    key set when any port is real -- see `_attempt_allowed_keys` and the
+    module docstring's "Attempts-merge semantics" section."""
     if attempts is None:
         return
     if not isinstance(attempts, Mapping):
@@ -257,7 +274,11 @@ def _validate_attempts(attempts: Any, *, execution_adapter: str = "scripted", ca
             f"config 'attempts' must be a JSON object keyed by work_id, got {type(attempts).__name__}",
             path="<config>.attempts",
         )
-    allowed_keys = _attempt_allowed_keys(execution_adapter=execution_adapter, candidate_adapter=candidate_adapter)
+    allowed_keys = _attempt_allowed_keys(
+        execution_adapter=execution_adapter,
+        candidate_adapter=candidate_adapter,
+        assurance_adapter=assurance_adapter,
+    )
     for work_id, work_attempts in attempts.items():
         path = f"<config>.attempts.{work_id}"
         if not isinstance(work_attempts, list):
@@ -277,8 +298,8 @@ def _validate_attempts(attempts: Any, *, execution_adapter: str = "scripted", ca
             if unknown:
                 raise validation_error(
                     f"config value at {entry_path} has unknown key(s): {', '.join(unknown)} "
-                    f"(execution.adapter={execution_adapter!r}, candidate.adapter={candidate_adapter!r} "
-                    f"allows only {sorted(allowed_keys)})",
+                    f"(execution.adapter={execution_adapter!r}, candidate.adapter={candidate_adapter!r}, "
+                    f"assurance.adapter={assurance_adapter!r} allows only {sorted(allowed_keys)})",
                     path=entry_path,
                     unknown_keys=unknown,
                 )
@@ -395,6 +416,44 @@ def _validate_candidate_config(value: Any) -> None:
         )
 
 
+def _validate_assurance_config(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, Mapping):
+        raise validation_error(
+            f"config value at <config>.assurance must be a JSON object, got {type(value).__name__}",
+            path="<config>.assurance",
+        )
+    unknown = sorted(set(value) - _ASSURANCE_CONFIG_KEYS)
+    if unknown:
+        raise validation_error(
+            f"config value at <config>.assurance has unknown key(s): {', '.join(unknown)}",
+            path="<config>.assurance",
+            unknown_keys=unknown,
+            known_keys=sorted(_ASSURANCE_CONFIG_KEYS),
+        )
+    adapter = value.get("adapter", "scripted")
+    if adapter not in _ASSURANCE_ADAPTERS:
+        raise validation_error(
+            f"config value at <config>.assurance.adapter is not one of {sorted(_ASSURANCE_ADAPTERS)}: {adapter!r}",
+            path="<config>.assurance.adapter",
+        )
+    if adapter == "scripted":
+        if "repo_path" in value:
+            raise validation_error(
+                "config value at <config>.assurance.repo_path requires assurance.adapter == 'no-mistakes'",
+                path="<config>.assurance.repo_path",
+            )
+        return
+    repo_path = value.get("repo_path")
+    if not isinstance(repo_path, str) or not repo_path:
+        raise validation_error(
+            "config value at <config>.assurance.repo_path is required (a non-empty string) when "
+            "assurance.adapter == 'no-mistakes' -- NoMistakesAssurance has no safe default repository",
+            path="<config>.assurance.repo_path",
+        )
+
+
 def _validate_execution_candidate_combo(execution_cfg: Any, candidate_cfg: Any) -> None:
     """`execution.adapter == 'acp'` REQUIRES `candidate.adapter == 'git'`
     (module docstring, "Real-port selection"): a real agent execution's
@@ -415,6 +474,30 @@ def _validate_execution_candidate_combo(execution_cfg: Any, candidate_cfg: Any) 
         )
 
 
+def _validate_assurance_candidate_combo(assurance_cfg: Any, candidate_cfg: Any) -> None:
+    """`assurance.adapter == 'no-mistakes'` REQUIRES `candidate.adapter ==
+    'git'` (`TASK-M2-001`, mirroring `_validate_execution_candidate_combo`'s
+    acp-requires-git precedent exactly): `no-mistakes` reviews real git
+    state at a configured `repo_path`; a config-scripted candidate's
+    `subject_identity` (and therefore fingerprint) would not correspond to
+    anything `no-mistakes` actually reviewed, so a settled verdict could
+    never be honestly bound to it (`INV-007`)."""
+    assurance_adapter = (
+        (assurance_cfg or {}).get("adapter", "scripted") if isinstance(assurance_cfg, Mapping) else "scripted"
+    )
+    if assurance_adapter != "no-mistakes":
+        return
+    candidate_adapter = (candidate_cfg or {}).get("adapter", "scripted") if isinstance(candidate_cfg, Mapping) else "scripted"
+    if candidate_adapter != "git":
+        raise validation_error(
+            "config assurance.adapter == 'no-mistakes' requires candidate.adapter == 'git' "
+            "(a real assurance verdict cannot be bound to a config-scripted candidate)",
+            path="<config>.candidate.adapter",
+            assurance_adapter=assurance_adapter,
+            candidate_adapter=candidate_adapter,
+        )
+
+
 def load_config(path: str) -> Mapping[str, Any]:
     text = Path(path).read_text(encoding="utf-8")
     try:
@@ -427,10 +510,18 @@ def load_config(path: str) -> Mapping[str, Any]:
     _validate_top_level_keys(data)
     _validate_execution_config(data.get("execution"))
     _validate_candidate_config(data.get("candidate"))
+    _validate_assurance_config(data.get("assurance"))
     _validate_execution_candidate_combo(data.get("execution"), data.get("candidate"))
+    _validate_assurance_candidate_combo(data.get("assurance"), data.get("candidate"))
     execution_adapter = (data.get("execution") or {}).get("adapter", "scripted")
     candidate_adapter = (data.get("candidate") or {}).get("adapter", "scripted")
-    _validate_attempts(data.get("attempts"), execution_adapter=execution_adapter, candidate_adapter=candidate_adapter)
+    assurance_adapter = (data.get("assurance") or {}).get("adapter", "scripted")
+    _validate_attempts(
+        data.get("attempts"),
+        execution_adapter=execution_adapter,
+        candidate_adapter=candidate_adapter,
+        assurance_adapter=assurance_adapter,
+    )
     return data
 
 
@@ -572,6 +663,50 @@ class _IntentPromptExecution(ExecutionPort):
         return self._inner.resume(execution_id=execution_id, resume_request=resume_request)
 
 
+class _IntentRequirementsAssurance(AssurancePort):
+    """CLI-local decorator around a real `AssurancePort` (`NoMistakesAssurance`)
+    that fills in a usable `requirements['intent']` for `orc_werk.app.
+    Orchestrator`'s `request()` call -- the exact same rationale as
+    `_IntentPromptExecution` above, one port over: `Orchestrator.
+    _dispatch_policy_effect`'s `FX_START_ASSURANCE` branch always calls
+    `self.assurance.request(candidate=candidate, requirements={}, ...)`
+    (confirmed by reading `orchestrator.py`) -- `requirements` is declared
+    opaque to core per `PORT-ASSURE-001`, and neither `app` nor `core`
+    threads a per-work request payload through it. `NoMistakesAssurance.
+    request()` requires `requirements['intent']` to be a non-empty string.
+    Since `app`/`core`/`adapters` are out of scope for `TASK-M2-001` (CLI +
+    docs + tests only, mirroring `TASK-M1-005`'s own scope note), this
+    class composes around the real adapter instead of changing it or
+    `Orchestrator`: it fills in `{"intent": <the run's intent text>}`
+    whenever the caller passes an empty/absent `intent`, then delegates
+    unchanged."""
+
+    def __init__(self, inner: AssurancePort, *, intent_text: str) -> None:
+        self._inner = inner
+        self._intent_text = intent_text
+
+    def capabilities(self) -> frozenset[str]:
+        return self._inner.capabilities()
+
+    def request(self, *, candidate: Any, requirements: Mapping[str, Any], idempotency_key: str) -> Any:
+        filled = dict(requirements)
+        if not filled.get("intent"):
+            filled["intent"] = self._intent_text
+        return self._inner.request(candidate=candidate, requirements=filled, idempotency_key=idempotency_key)
+
+    def inspect(self, *, assurance_id: str) -> Any:
+        return self._inner.inspect(assurance_id=assurance_id)
+
+
+def _build_no_mistakes_assurance(assurance_cfg: Mapping[str, Any], *, intent_text: str) -> AssurancePort:
+    """`NoMistakesAssurance`, constructed from exactly the `assurance`
+    config keys that constructor genuinely accepts, wrapped in
+    `_IntentRequirementsAssurance` so it receives a usable `--intent` text
+    despite the orchestrator's always-empty `requirements`."""
+    inner = NoMistakesAssurance(repo_path=assurance_cfg["repo_path"])
+    return _IntentRequirementsAssurance(inner, intent_text=intent_text)
+
+
 def _build_acp_execution(
     execution_cfg: Mapping[str, Any], *, intent_text: str, capabilities: Iterable[str]
 ) -> ExecutionPort:
@@ -650,30 +785,45 @@ def build_dispatch_ports(
     journal: Optional[JournalPort] = None,
 ) -> tuple[ExecutionPort, CandidatePort, AssurancePort]:
     """Select and construct the three ports `orc dispatch` wires into the
-    `Orchestrator`, per the `execution`/`candidate` config blocks (module
-    docstring, "Real-port selection"). The all-scripted default (both
-    adapters `"scripted"`, or both keys absent) delegates unchanged to
-    `build_scripted_adapters` -- zero behavior change for every existing
-    config. Past that fast path, `candidate.adapter == "git"` always (the
-    only other config `load_config`'s cross-field validation
-    (`_validate_execution_candidate_combo`) allows), so the candidate/
-    assurance wiring below never needs a scripted-candidate branch.
+    `Orchestrator`, per the `execution`/`candidate`/`assurance` config
+    blocks (module docstring, "Real-port selection"). The all-scripted
+    default (every adapter `"scripted"`, or every key absent) delegates
+    unchanged to `build_scripted_adapters` -- zero behavior change for
+    every existing config. Past that fast path, `candidate.adapter ==
+    "git"` always (the only other config `load_config`'s cross-field
+    validation -- `_validate_execution_candidate_combo`,
+    `_validate_assurance_candidate_combo` -- allows once `execution` or
+    `assurance` is real), so the candidate wiring below never needs a
+    scripted-candidate branch.
+
+    `assurance.adapter == "no-mistakes"` (`TASK-M2-001`) selects
+    `NoMistakesAssurance` -- an automatic, real verdict seat, replacing the
+    operator-recorded-verdict `ScriptedAssurance` path entirely for that
+    run (no `attempts[work_id].assurance` entries are consulted; a real
+    `AssurancePort` derives its own verdict, `_attempt_allowed_keys`
+    rejects a config author's attempt to also script one). Otherwise
+    (`assurance` absent/`"scripted"`, the `TASK-M1-005` M1a+ default)
+    assurance stays the existing operator-recorded `ScriptedAssurance`
+    path, keyed by real, journal-observed candidate fingerprints
+    (`build_real_assurance_script`) when candidate is real.
 
     `journal`, when given, supplies the already-durable history
     `build_real_assurance_script` reads to bind operator-recorded verdicts
-    to real, journal-observed candidate fingerprints. `None` (no journal
-    yet -- not a case `orc dispatch` itself ever hits, since it always has
-    one, but kept optional so other callers can construct ports without a
-    journal when there is nothing to look up yet) yields an empty
-    assurance script, matching a brand-new run before any candidate has
-    ever been observed.
+    to real, journal-observed candidate fingerprints (only consulted on
+    the scripted-assurance path). `None` (no journal yet -- not a case
+    `orc dispatch` itself ever hits, since it always has one, but kept
+    optional so other callers can construct ports without a journal when
+    there is nothing to look up yet) yields an empty assurance script,
+    matching a brand-new run before any candidate has ever been observed.
     """
     execution_cfg: Mapping[str, Any] = config.get("execution") or {}
     candidate_cfg: Mapping[str, Any] = config.get("candidate") or {}
+    assurance_cfg: Mapping[str, Any] = config.get("assurance") or {}
     execution_adapter = execution_cfg.get("adapter", "scripted")
     candidate_adapter = candidate_cfg.get("adapter", "scripted")
+    assurance_adapter = assurance_cfg.get("adapter", "scripted")
 
-    if execution_adapter == "scripted" and candidate_adapter == "scripted":
+    if execution_adapter == "scripted" and candidate_adapter == "scripted" and assurance_adapter == "scripted":
         return build_scripted_adapters(config, delivery_run_id=delivery_run_id)
 
     attempts_by_work: Mapping[str, Any] = config.get("attempts") or {}
@@ -694,11 +844,15 @@ def build_dispatch_ports(
     # candidate_adapter == "git" here unconditionally -- see docstring.
     candidate: CandidatePort = GitDiffCandidate(repo_path=candidate_cfg["repo_path"])
 
-    journal_history: Iterable[Mapping[str, Any]] = (
-        journal.history(delivery_run_id=delivery_run_id) if journal is not None else ()
-    )
-    assurance_script = build_real_assurance_script(attempts_by_work, history=journal_history)
-    assurance: AssurancePort = ScriptedAssurance(script=assurance_script, pending=True)
+    assurance: AssurancePort
+    if assurance_adapter == "no-mistakes":
+        assurance = _build_no_mistakes_assurance(assurance_cfg, intent_text=intent_text)
+    else:
+        journal_history: Iterable[Mapping[str, Any]] = (
+            journal.history(delivery_run_id=delivery_run_id) if journal is not None else ()
+        )
+        assurance_script = build_real_assurance_script(attempts_by_work, history=journal_history)
+        assurance = ScriptedAssurance(script=assurance_script, pending=True)
 
     return execution, candidate, assurance
 

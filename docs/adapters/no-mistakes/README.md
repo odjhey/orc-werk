@@ -1,22 +1,35 @@
 ---
 id: ADAPTER-NO-MISTAKES
 type: adapter
-status: draft
+status: current
 authority: informative
-description: Draft no-mistakes assurance adapter slot.
+description: no-mistakes assurance adapter (TASK-M2-001).
 ---
 
 # no-mistakes adapter
 
-no-mistakes is a candidate assurance provider, not an Orc Werk core dependency.
+`no-mistakes` is a candidate assurance provider (an operator's local
+automated code-review/gate pipeline), not an Orc Werk core dependency.
 
-The adapter is expected to normalize exact candidate identity, terminal assurance verdict, evidence references, and final candidate identity when the pipeline mutates the subject.
+`NoMistakesAssurance` (`src/orc_werk/adapters/no_mistakes/assurance.py`,
+`TASK-M2-001`) implements `PORT-ASSURANCE` as a **read-only judge** of the
+exact observed candidate: it requests a real `no-mistakes` pipeline run
+against the current `repo_path`, never lets it fix findings or push
+(`--yes` is never passed, `axi respond`/`axi sync` are never called), and
+derives its own canonical `accepted`/`rejected`/`inconclusive` verdict from
+what it observes.
 
-Where no-mistakes exposes sufficiently structured and attributable code-review findings, the adapter may additionally produce the optional `review-findings/v1` extension. That extension is not required for generic assurance and does not make no-mistakes the owner of Orc Werk's review-finding schema.
+Where `no-mistakes` exposes structured, attributable code-review findings
+(a parked review gate), the adapter additionally produces the
+`review-findings/v1` extension (`CAP-ASSURE-STRUCTURED-FINDINGS`). That
+extension is not required for generic assurance and does not make
+`no-mistakes` the owner of Orc Werk's review-finding schema.
 
 See:
 
-- [Mapping](mapping.md)
+- [Mapping](mapping.md) -- full provider-to-port mapping, verdict table,
+  judge-only ruling, limitations.
 - [Capabilities](capabilities.md)
 - [Conformance](conformance.md)
 - `EXT-REVIEW-FINDINGS-V1`
+- `docs/delivery/task-cards/TASK-M2-001-no-mistakes-assurance.md`

@@ -93,6 +93,42 @@ orc dispatch "reply with the word ping" --config acp-cfg.json --journal ./.orc  
 
 `docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`) governs the two-seat discipline (ship agent records the settlement; a *different* verification agent independently derives the candidate and records the verdict) — unchanged for real ports.
 
+## Real assurance: `no-mistakes` config (`TASK-M2-001` CLI wiring)
+
+To automate the verdict seat instead of an operator/verification agent
+typing it, add an `assurance` block:
+
+```json
+{ "candidate": {"adapter": "git", "repo_path": "/abs/path/to/worktree"},
+  "assurance": {"adapter": "no-mistakes", "repo_path": "/abs/path/to/worktree"} }
+```
+
+- `assurance.adapter: "no-mistakes"` selects `orc_werk.adapters.no_mistakes.
+  assurance.NoMistakesAssurance` (`docs/adapters/no-mistakes/mapping.md`)
+  — keyed to its one real constructor parameter, `repo_path` (REQUIRED).
+  It is a **read-only judge**: it never lets `no-mistakes` fix findings or
+  push, and never records anything itself if it isn't the exact CLI
+  invocation's own honest observation.
+- **Constraint**: `assurance.adapter == "no-mistakes"` REQUIRES
+  `candidate.adapter == "git"` — rejected otherwise (a real verdict
+  cannot be bound to a config-scripted candidate). `execution` may stay
+  `"scripted"` (assurance only needs real git state to review, not a live
+  agent driving it) or be `"acp"` — both combinations are supported.
+- **The intent text becomes `--intent`.** Same composition pattern as
+  execution's prompt above: a CLI-local wrapper fills in
+  `requirements["intent"]` with the run's own intent text before it
+  reaches `NoMistakesAssurance`.
+- **Attempts-merge semantics**: when `assurance.adapter == "no-mistakes"`,
+  `attempts[work_id]` entries may NOT carry `assurance` at all — the
+  verdict is automatic; nothing to record by hand.
+- **No operator/verification-agent verdict step at all.** Once the
+  candidate is observed, `orc dispatch` keeps resting at exit `3`
+  (`awaiting=assurance-verdict`) purely by re-polling — no config edit is
+  needed between re-dispatches, since a real `no-mistakes` pipeline
+  settles entirely on its own (or, for a parked review gate, this adapter
+  renders its own verdict from the parked findings without waiting for a
+  human at all — see the mapping doc's "Judge-only ruling").
+
 ## Reading a run
 
 - `status` — per-work terminal state, attempt count, current candidate fingerprint.
@@ -118,8 +154,9 @@ Update this table when found; remove rows when the fix merges. "Workaround" is w
 
 | Issue | Symptom | Workaround | Status |
 |---|---|---|---|
+| `no-mistakes` TOON output and step names have no schema/version guard | `assurance.adapter: "no-mistakes"` (`TASK-M2-001`, `NoMistakesAssurance`) parses `axi status` TOON with a small, purpose-built tolerant parser (`orc_werk.adapters.no_mistakes.toon.parse_toon`), reverse-engineered from one CLI version's observed output, and pins the mechanical never-push guarantee to the `push` step name (`--skip push` on every `axi run` spawn). A future `no-mistakes` release that renames/reshapes fields (e.g. `run.status`, the `gate.findings` table columns) would silently parse incorrectly (missing fields read as absent), and one that renames the `push` step would silently regress never-push — neither fails loudly. | Re-probe `axi status`/`axi run` output shape AND `axi logs --help`'s step list against the installed `no-mistakes` version before upgrading it in an environment that uses this adapter; re-run `tests/conformance/test_no_mistakes_assurance_unit.py` (including `ParseToonTest` and `test_every_spawn_passes_skip_push_mechanical_never_push`) and the CONF-ASSURE suite. | Open (recorded at `TASK-M2-001` implementation time; no version pin/guard exists yet — see `docs/adapters/no-mistakes/mapping.md` "TOON parsing"/"Judge-only ruling"/"Limitations"). |
 
-No open rows currently. Prior rows closed as of `TASK-M1-003` (#16, #17, #18, #23, that task's PR). Issue #52 (`JournalPort.load_projection` replaying against the reducer's default `max_attempts` instead of the run's own recorded budget, breaking `status`/`report`/`report --index`/`--all` on a non-default-budget or `BLOCKED` run) closed by recording the effective budget in `FX-CREATE-WORK`'s effect data (`CONTRACT-DURABILITY`, `PORT-JOURNAL-005`, `SCN-008`) — see that fix's PR. Issue #78 (one run's replay `CoreError` aborting the entire `report --index`/`--all` portfolio) is closed: portfolio reports now render a critical placeholder with a `status` affordance and continue healthy runs.
+Prior rows closed as of `TASK-M1-003` (#16, #17, #18, #23, that task's PR). Issue #52 (`JournalPort.load_projection` replaying against the reducer's default `max_attempts` instead of the run's own recorded budget, breaking `status`/`report`/`report --index`/`--all` on a non-default-budget or `BLOCKED` run) closed by recording the effective budget in `FX-CREATE-WORK`'s effect data (`CONTRACT-DURABILITY`, `PORT-JOURNAL-005`, `SCN-008`) — see that fix's PR. Issue #78 (one run's replay `CoreError` aborting the entire `report --index`/`--all` portfolio) is closed: portfolio reports now render a critical placeholder with a `status` affordance and continue healthy runs.
 
 ## Evolution rules
 
