@@ -263,6 +263,195 @@ def _group_reports_by_execution(
     return grouped
 
 
+def _find_create_work_plan(history: Sequence[Mapping[str, Any]]) -> Optional[Mapping[str, Any]]:
+    """The run's topology, read from the journaled `FX-CREATE-WORK` effect
+    record's `data.plan` (`PORT-WORK-001` plan shape) -- never from a
+    dispatch config, which this report never reads and the kernel does not
+    durably own (`CONTRACT-DURABILITY`'s "delegated work specification"
+    row). `CONTRACT-DURABILITY`'s "Run topology" row (operator ruling,
+    issue #41) makes this effect record the normative durable owner of
+    topology -- a journal from which it cannot be reconstructed is
+    non-conformant -- and names this report's dependency-tree view as a
+    presentation surface that MAY rely on it. Mirrors
+    `tests/scenarios/test_topology_durability.py`'s own reconstruction
+    helper, which pins the same record as the regression target."""
+    for record in history:
+        if record.get("kind") == "effect" and record.get("id") == "FX-CREATE-WORK":
+            plan = record.get("data", {}).get("plan")
+            if isinstance(plan, Mapping):
+                return plan
+    return None
+
+
+def _plan_topology(plan: Mapping[str, Any]) -> tuple[list[str], dict[str, list[str]]]:
+    """`(order, deps_by_work)` read directly off the recorded plan's own
+    `works` list -- `order` is plan-declaration order (never re-sorted;
+    that order is itself part of the recorded plan and is what "first
+    blocker" placement below is defined against), `deps_by_work[work_id]`
+    is that work's dep ids in the order the plan declared them. Malformed
+    entries (missing/non-string `work_id`, non-list `deps`) are skipped
+    defensively rather than raised -- this is a read-only presentation
+    derivation over already-durable data, not a validator; a malformed
+    plan is a foreign-journal/adapter-bug concern, not something this
+    report should crash on."""
+    order: list[str] = []
+    deps_by_work: dict[str, list[str]] = {}
+    works = plan.get("works")
+    if not isinstance(works, list):
+        return order, deps_by_work
+    for entry in works:
+        if not isinstance(entry, Mapping):
+            continue
+        work_id = entry.get("work_id")
+        if not isinstance(work_id, str) or not work_id:
+            continue
+        order.append(work_id)
+        deps: list[str] = []
+        raw_deps = entry.get("deps")
+        if isinstance(raw_deps, list):
+            for dep in raw_deps:
+                if isinstance(dep, Mapping):
+                    dep_id = dep.get("work_id")
+                    if isinstance(dep_id, str) and dep_id:
+                        deps.append(dep_id)
+        deps_by_work[work_id] = deps
+    return order, deps_by_work
+
+
+def _build_dependency_tree(
+    order: Sequence[str], deps_by_work: Mapping[str, Sequence[str]]
+) -> tuple[list[str], dict[str, list[str]]]:
+    """Placement rule (issue #41 scope item 1, justified here): every work
+    is placed under exactly one parent -- its *first* declared blocker
+    (`deps[0]`) -- so the rendered structure is a true tree (one
+    indentation site per node, no duplication) even for a diamond/fan-in
+    shape (e.g. `a->b,c->d`: `d` depends on both `b` and `c`, so it is
+    placed once, under `b`, its first-declared blocker). No dependency
+    edge is ever hidden by this choice: the *full* dep list still appears
+    in that node's "unlocked by accepted completion of: ..." annotation
+    (`_render_dependency_node` below) -- only the *indentation* site is
+    singular, not the recorded semantics. "First" means first in the
+    plan's own declared `deps` order, a property of the durably recorded
+    plan itself (`_plan_topology`'s `order`-preserving read), never an
+    invented health/priority judgment about which blocker "matters more".
+
+    Returns `(roots, children)`: `roots` are works with no deps, in plan
+    order; `children[parent]` are the works whose first blocker is
+    `parent`, in plan order. A work whose first blocker is itself absent
+    from `order` (a dangling/malformed dep reference) is simply never
+    added to any parent's children list here -- `_render_dependency_graph_section`'s
+    orphan sweep still renders it, flat, rather than silently dropping it.
+    """
+    roots: list[str] = []
+    children: dict[str, list[str]] = {}
+    for work_id in order:
+        deps = deps_by_work.get(work_id) or []
+        if not deps:
+            roots.append(work_id)
+        else:
+            children.setdefault(deps[0], []).append(work_id)
+    return roots, children
+
+
+def _render_dependency_node(
+    work_id: str,
+    projection: DeliveryProjection,
+    deps_by_work: Mapping[str, Sequence[str]],
+    children: Mapping[str, Sequence[str]],
+    visited: set[str],
+) -> list[str]:
+    """One dependency-tree node: the work's existing state chip (reused
+    verbatim from `_state_chip` -- no new palette, no new judgment) plus
+    its attempt count, an "unlocked by" annotation naming every recorded
+    dep (not just the one it's indented under) when it has any, and its
+    children nested underneath. `visited` guards against ever re-rendering
+    (or infinite-looping on) a node twice -- defensive only, for a
+    malformed/cyclic plan; a well-formed plan visits each work exactly
+    once by construction."""
+    visited.add(work_id)
+    wp = projection.works.get(work_id)
+    if wp is not None:
+        head = _state_chip(work_id, wp)
+        head += f' <span class="dep-attempts">attempts: {wp.attempt_number}</span>'
+    else:
+        # Defensive only: every plan-declared work_id gets a
+        # FACT-WORK-CREATED immediately after FX-CREATE-WORK, so this
+        # should be unreachable in practice -- never invent a chip for a
+        # work the projection has no state for.
+        head = f"<code>{html.escape(work_id)}</code>"
+    parts = ['<li class="dep-node">', f'<div class="dep-node-head">{head}</div>']
+
+    deps = deps_by_work.get(work_id) or []
+    if deps:
+        dep_list = ", ".join(f"<code>{html.escape(d)}</code>" for d in deps)
+        parts.append(
+            '<div class="dep-unlocked-by">unlocked by accepted completion of: '
+            f"{dep_list}</div>"
+        )
+
+    child_ids = [c for c in children.get(work_id, ()) if c not in visited]
+    if child_ids:
+        parts.append('<ul class="dep-tree">')
+        for child_id in child_ids:
+            parts.extend(_render_dependency_node(child_id, projection, deps_by_work, children, visited))
+        parts.append("</ul>")
+
+    parts.append("</li>")
+    return parts
+
+
+def _render_dependency_graph_section(
+    history: Sequence[Mapping[str, Any]], projection: DeliveryProjection
+) -> str:
+    """"Dependency graph" section (issue #41): an indented nested list,
+    roots first, ordered purely by the recorded plan's own depth/edges --
+    reusing this module's existing chip/escape/section machinery, never
+    computing a health/ordering judgment the plan itself doesn't carry.
+
+    Two distinct degradation shapes, deliberately different:
+
+    - A journal with no `FX-CREATE-WORK` plan record at all (shouldn't
+      happen post-#44, but an old or foreign journal might lack one,
+      `CONTRACT-DURABILITY`) -- the section is omitted, but with a small
+      visible note, because this journal *should* have had a topology and
+      didn't: that is worth surfacing to the reader, not silently hiding.
+    - A single-work run (plan has 0 or 1 declared works, the common case
+      -- `orc_werk.app.default_single_work_plan()`) -- omitted entirely,
+      no note at all: a one-node "tree" is noise, and there is nothing
+      degraded about a single-work run lacking a topology to show.
+    """
+    plan = _find_create_work_plan(history)
+    if plan is None:
+        return (
+            '<p class="meta-line muted">dependency graph: unavailable -- '
+            "no FX-CREATE-WORK plan recorded in this journal (pre-topology-durability "
+            "or a foreign journal)</p>"
+        )
+
+    order, deps_by_work = _plan_topology(plan)
+    if len(order) <= 1:
+        return ""
+
+    roots, children = _build_dependency_tree(order, deps_by_work)
+    visited: set[str] = set()
+    parts = [
+        '<section class="dependency-graph"><h2>Dependency graph</h2>',
+        '<ul class="dep-tree dep-tree-root">',
+    ]
+    for root_id in roots:
+        if root_id not in visited:
+            parts.extend(_render_dependency_node(root_id, projection, deps_by_work, children, visited))
+    # Defensive orphan sweep: a work never reached from a root (a dangling
+    # first-blocker reference, or a cycle, in a malformed plan) still
+    # renders -- flat, at the top level -- rather than silently vanishing.
+    # This never invents a placement for it beyond "shown somewhere".
+    for work_id in order:
+        if work_id not in visited:
+            parts.extend(_render_dependency_node(work_id, projection, deps_by_work, children, visited))
+    parts.append("</ul></section>")
+    return "\n".join(parts)
+
+
 def _summarize_states(projection: DeliveryProjection) -> tuple[bool, bool]:
     any_blocked = False
     any_non_accepted = False
@@ -565,6 +754,7 @@ def render_run_report(directory: Path, run_id: str) -> str:
 
     body_parts = [_render_run_header(run_id, intent_text, projection, times, skipped_times)]
     body_parts.append(_render_run_level_section(history, times))
+    body_parts.append(_render_dependency_graph_section(history, projection))
     for work_id in sorted(projection.works):
         body_parts.append(
             _render_work_section(
@@ -885,6 +1075,13 @@ a.citation { color: var(--ink-primary); text-decoration: underline; text-decorat
 .claim-field { font-size: 0.85rem; margin-top: 0.2rem; }
 .claim-field-label { color: var(--ink-muted); margin-right: 0.3em; }
 .report-footer { max-width: 960px; margin: 2rem auto 0; color: var(--ink-muted); font-size: 0.8rem; text-align: center; }
+ul.dep-tree { list-style: none; margin: 0.35rem 0 0; padding-left: 1.4rem; }
+ul.dep-tree.dep-tree-root { padding-left: 0; }
+li.dep-node { margin: 0.3rem 0; border-left: 2px solid var(--gridline); padding-left: 0.75rem; }
+ul.dep-tree.dep-tree-root > li.dep-node { border-left: none; padding-left: 0; }
+.dep-node-head { display: flex; align-items: center; gap: 0.5em; }
+.dep-attempts { color: var(--ink-muted); font-size: 0.82em; }
+.dep-unlocked-by { color: var(--ink-secondary); font-size: 0.82em; margin: 0.15rem 0 0; }
 """
 
 
