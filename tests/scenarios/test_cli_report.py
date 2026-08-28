@@ -165,6 +165,71 @@ class RejectRetryAcceptTest(unittest.TestCase):
             self.assertEqual(created, {f"{self.RUN_ID}/report.html"})
 
 
+class AssuranceEvidenceRefsTransportTest(unittest.TestCase):
+    def _dispatch_and_report(self, tmp_dir: Path, run_id: str, assurance: dict) -> tuple[dict, str]:
+        config = {
+            "run_id": run_id,
+            "attempts": {
+                "work-1": [
+                    {
+                        "outcome": "completed",
+                        "candidate": {"label": "C1"},
+                        "assurance": assurance,
+                    }
+                ]
+            },
+        }
+        config_path = tmp_dir / f"{run_id}.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        dispatch = _run_cli(tmp_dir, "dispatch", "evidence transport", "--config", str(config_path))
+        self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+        records = [
+            json.loads(line)
+            for line in layout.journal_path(tmp_dir / ".orc", run_id)
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        settled = next(
+            record
+            for record in records
+            if record["kind"] == "fact" and record["id"] == "FACT-ASSURE-SETTLED"
+        )
+
+        report = _run_cli(tmp_dir, "report", run_id)
+        self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
+        rendered = layout.report_html_path(tmp_dir / ".orc", run_id).read_text(encoding="utf-8")
+        return settled, rendered
+
+    def test_evidence_refs_are_journaled_verbatim_and_rendered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_refs = ["artifact://report-1", {"uri": "https://example.test/evidence/2"}]
+            settled, rendered = self._dispatch_and_report(
+                Path(tmp),
+                "report-with-evidence",
+                {"verdict": "accepted", "evidence_refs": evidence_refs},
+            )
+
+            self.assertEqual(settled["data"]["evidence_refs"], evidence_refs)
+            assurance_id = re.escape(settled["data"]["assurance_id"])
+            row = re.search(rf"<tr><td><code>{assurance_id}</code></td>.*?</tr>", rendered)
+            self.assertIsNotNone(row)
+            self.assertIn("artifact://report-1", row.group(0))
+            self.assertNotIn("<td>-</td>", row.group(0))
+
+    def test_absent_evidence_refs_stay_absent_and_render_as_dash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settled, rendered = self._dispatch_and_report(
+                Path(tmp), "report-without-evidence", {"verdict": "accepted", "evidence_refs": []}
+            )
+
+            self.assertNotIn("evidence_refs", settled["data"])
+            assurance_id = re.escape(settled["data"]["assurance_id"])
+            row = re.search(rf"<tr><td><code>{assurance_id}</code></td>.*?</tr>", rendered)
+            self.assertIsNotNone(row)
+            self.assertIn("<td>-</td>", row.group(0))
+
+
 class ClaimsQuarantineTest(unittest.TestCase):
     """Crew-report claims must render in visually distinct markup
     (`class="claim"`), and that class must never coincide with a canonical
