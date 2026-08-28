@@ -39,9 +39,11 @@ from tests.scenarios.support import build_run, predicted_execution_id
 
 class _StubBeadsCase(unittest.TestCase):
     """Base case: installs a fresh stub-`bd` binary + log file per test,
-    wires a `BeadsMirror` at a throwaway workspace path (never touched --
-    the stub never actually reads `-C`'s target), and cleans up the
-    `ORC_BEADS_STUB_*` environment afterwards."""
+    wires a `BeadsMirror` at a throwaway workspace carrying its own
+    `.beads` marker directory (required by the walk-up containment guard,
+    `_workspace_owns_database` -- the stub itself never reads `-C`'s
+    target), and cleans up the `ORC_BEADS_STUB_*` environment
+    afterwards."""
 
     def setUp(self) -> None:
         self._tmp = Path(tempfile.mkdtemp())
@@ -50,7 +52,9 @@ class _StubBeadsCase(unittest.TestCase):
         self._prior_env = dict(os.environ)
         os.environ["ORC_BEADS_STUB_LOG"] = str(self._log)
         os.environ.pop("ORC_BEADS_STUB_FAIL_VERBS", None)
-        self.mirror = BeadsMirror(workspace=str(self._tmp / "workspace"), bd_bin=str(self._stub_bin))
+        self._workspace = self._tmp / "workspace"
+        (self._workspace / ".beads").mkdir(parents=True)
+        self.mirror = BeadsMirror(workspace=str(self._workspace), bd_bin=str(self._stub_bin))
 
     def tearDown(self) -> None:
         os.environ.clear()
@@ -416,6 +420,61 @@ class DegradedMirrorTest(_StubBeadsCase):
         self.assertFalse(report.degraded)
         self.assertEqual(report.calls, ())
         self.assertEqual(self.calls(), [])
+
+
+class WorkspaceGuardTest(_StubBeadsCase):
+    """Walk-up containment guard (PR #81 fix round, mapping doc
+    "Workspace guard"): `bd -C <dir>` silently operates on the nearest
+    ANCESTOR `.beads` database when `<dir>` has none of its own (confirmed
+    empirically against real bd 1.2.2) -- a misconfigured workspace could
+    therefore write into a database the operator never configured.
+    `project_run` must refuse to spawn any bd subprocess at all in that
+    case, degrading instead (same non-fatality contract)."""
+
+    def _bootstrapped_run(self, delivery_run_id: str):
+        orch, journal, _wg = build_run(delivery_run_id=delivery_run_id, attempts_by_work={"work-1": []})
+        orch.bootstrap(intent_id=delivery_run_id, text="t")
+        projection = orch.run()
+        history = journal.history(delivery_run_id=delivery_run_id)
+        return history, projection
+
+    def test_workspace_without_beads_spawns_nothing_and_degrades(self) -> None:
+        """The dangerous shape exactly: a child workspace with NO `.beads`
+        of its own nested under an ancestor directory that DOES have one
+        (`self._workspace/.beads` from setUp is the would-be walk-up
+        target). Zero bd invocations may be spawned -- the stub's call log
+        stays empty -- and the report degrades with the guard's own
+        synthesized error naming the workspace."""
+        child = self._workspace / "child-without-beads"
+        child.mkdir()
+        self.assertTrue((self._workspace / ".beads").is_dir())  # ancestor DB present
+        self.assertFalse((child / ".beads").exists())
+
+        mirror = BeadsMirror(workspace=str(child), bd_bin=str(self._stub_bin))
+        history, projection = self._bootstrapped_run("dr-guard")
+        report = mirror.project_run(
+            delivery_run_id="dr-guard", history=history, projection=projection, intent_text="t"
+        )
+
+        self.assertTrue(report.degraded)
+        self.assertEqual(len(report.calls), 1)
+        self.assertFalse(report.calls[0].ok)
+        self.assertIn("workspace guard", report.calls[0].stderr)
+        self.assertIn(str(child), report.calls[0].stderr)
+        # THE assertion that matters: no bd subprocess was ever spawned,
+        # so nothing could have reached the ancestor database.
+        self.assertEqual(self.calls(), [])
+
+    def test_workspace_with_beads_passes_the_guard(self) -> None:
+        """Control: the setUp workspace (which owns `.beads`) projects
+        normally -- proves the guard is the discriminator, not some other
+        difference between the two cases."""
+        history, projection = self._bootstrapped_run("dr-guard-ok")
+        report = self.mirror.project_run(
+            delivery_run_id="dr-guard-ok", history=history, projection=projection, intent_text="t"
+        )
+        self.assertFalse(report.degraded)
+        self.assertIn("create", self.verbs())
 
 
 if __name__ == "__main__":

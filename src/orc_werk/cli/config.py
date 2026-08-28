@@ -121,7 +121,11 @@ projection of run/work state and briefs into a shared `bd` database
   init` in (this CLI never runs `bd init` itself, mirroring the
   `no-mistakes` adapter's own "never `axi init`s a repo" precedent).
   `mirror.bd_bin` optionally overrides the `bd` binary name/path (default
-  `"bd"`, resolved via `PATH`).
+  `"bd"`, resolved via `PATH`). A `workspace` that has no `.beads`
+  directory of its own degrades the whole projection before any `bd`
+  subprocess is spawned (`BeadsMirror`'s walk-up containment guard --
+  `bd -C` would otherwise silently write into the nearest ANCESTOR
+  `.beads` database; see the mapping doc's "Workspace guard" section).
 - `briefs` is a CLI-owned, non-canonical sibling to `plan` (`PORT-WORK-001`
   itself carries no brief/description field -- `CONTRACT-DURABILITY`'s
   multi-work-brief row stays adapter-owned, not core) keyed by `work_id`.

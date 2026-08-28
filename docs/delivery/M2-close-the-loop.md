@@ -110,8 +110,10 @@ view earns it).
   established subprocess pattern — no daemon, synchronous ops.
 - Deterministic `--id <run_id>--<work_id>` (replay-stable per `INV-020`;
   `bd`'s own generated ids are random) and `--label run:<run_id>` on every
-  invocation (the shared-DB isolation discipline the ratified posture
-  depends on).
+  `bd create` (the shared-DB isolation discipline the ratified posture
+  depends on; `update`/`close` address the run-qualified unique id and
+  labels persist -- amended at implementation time, PR #81 fix round, see
+  the task card and `docs/adapters/beads/mapping.md`).
 - Briefs become durable for the first time in a multi-work run (via `bd`
   issue descriptions at create), resolving — for adopters of this adapter
   — the "multi-work briefs are deliberately NOT durable" disposition

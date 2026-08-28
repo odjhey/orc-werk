@@ -82,8 +82,9 @@ one):
 Every one of these is structurally incompatible with two of this card's
 OTHER stated non-negotiable requirements -- deterministic
 `--id <run_id>--<work_id>` (`INV-020`) and `--label run:<run_id>` on every
-invocation (the shared-DB isolation discipline the ratified mirror-mode
-posture, issue #47, depends on). Rather than improvise a different
+`create` (the shared-DB isolation discipline the ratified mirror-mode
+posture, issue #47, depends on -- see "Label discipline" below for the
+exact create-vs-update/close scoping). Rather than improvise a different
 separator or silently drop one of the two conflicting non-negotiable
 requirements, this adapter does not use `--graph` at all: it issues one
 `bd create --id <run_id>--<work_id> --force --label run:<run_id> --title
@@ -118,6 +119,50 @@ passes `--force`. Omitting it produces `Error: prefix mismatch: database
 uses '<prefix>-' but ID '<id>' doesn't match` on every single call, since
 this adapter's ids are never shaped like the target database's own
 auto-generated ones.
+
+### Label discipline: `--label run:<run_id>` on every `create` (not literally every invocation)
+
+Amended wording (PR #81 fix round; the card's original issue-#47 phrasing
+said "on every invocation"): this adapter applies `--label run:<run_id>`
+on every `bd create` call. `update`/`close` calls do NOT re-pass
+`--label` -- they address the run-qualified unique `<run_id>--<work_id>`
+id directly, and `bd update`/`bd close` do not strip or replace existing
+labels (verified against real `bd` 1.2.2: labels applied at create
+persist unchanged through `update --status`/`--set-metadata` and `close
+--reason` calls), so the label-scoped isolation the ratified posture
+depends on holds with create-time application alone. The card's bullet
+carries the same amendment note.
+
+### Workspace guard: `-C` walk-up containment (operator-DB safety)
+
+`bd -C <dir>` does NOT confine itself to `<dir>`: when `<dir>` has no
+`.beads` directory of its own, `bd` walks UP the directory tree and
+operates on the nearest ancestor's `.beads` database (verified against
+real `bd` 1.2.2 -- a `create` issued with `-C` pointing at a child
+directory landed in the parent directory's database). For a write-only
+mirror whose whole safety posture is "never touch a database the operator
+did not explicitly configure", that walk-up is an operator-DB exposure: a
+mistyped/not-yet-initialized `mirror.workspace` could silently write into
+whatever `.beads` happens to exist above it (e.g. a repo checkout's own
+real database).
+
+Guard: before issuing ANY `bd` call, `BeadsMirror.project_run` checks
+that `<workspace>/.beads` exists as a directory
+(`BeadsMirror._workspace_owns_database`). If it does not, the ENTIRE
+projection is treated as degraded -- one synthesized failed
+`MirrorCallResult` explaining the guard, zero `bd` subprocesses spawned,
+same non-fatal surfacing as any other degraded mirror (stderr note;
+dispatch exit code/stdout untouched). A plain directory-existence check
+is deliberately sufficient: this adapter's contract is "the operator
+already ran `bd init` in `mirror.workspace`" (see `BeadsMirror`'s class
+docstring), and `bd init` always creates `<workspace>/.beads`; the guard
+fails closed on anything else rather than trying to reproduce `bd`'s own
+discovery logic. Exercised by
+`tests/conformance/test_beads_mirror_unit.py`'s `WorkspaceGuardTest`
+(stub-level: zero invocations recorded) and the live sandbox test
+`test_workspace_without_beads_never_writes_to_ancestor_database`
+(`tests/conformance/test_beads_mirror_live_smoke.py`: a real ancestor
+`.beads` database observably receives nothing).
 
 ### Idempotency: `bd create`/`update`/`close` are all safe to re-issue
 

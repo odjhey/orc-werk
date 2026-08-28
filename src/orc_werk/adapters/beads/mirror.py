@@ -33,9 +33,12 @@ Design summary (full rationale: the mapping doc):
   with the target database's own configured prefix (confirmed empirically,
   this task's recon) -- every create call therefore always passes
   `--force`.
-- `--label run:<delivery_run_id>` on every invocation -- the shared-DB
+- `--label run:<delivery_run_id>` on every `bd create` -- the shared-DB
   isolation discipline the ratified mirror-mode posture (issue #47)
-  depends on.
+  depends on. `update`/`close` calls address the run-qualified unique id
+  directly and do not strip labels (verified against real bd 1.2.2), so
+  create-time application persists -- see the mapping doc's "Label
+  discipline" section.
 - `bd create --graph` is NOT used, despite being named in the task card's
   inherited design: empirically (this task's recon), `bd create --graph`
   1.2.2's graph-plan JSON schema has no per-node `id` field (silently
@@ -54,6 +57,13 @@ Design summary (full rationale: the mapping doc):
   match, confirmed by `bd statuses`) plus `--set-metadata blocked_reason=
   ...` -- also write-only.
 - Never reaches past the `bd` CLI into Dolt (`bd`'s underlying storage).
+- Workspace guard (`_workspace_owns_database`): `bd -C <dir>` WALKS UP to
+  the nearest ancestor `.beads` database when `<dir>` has none of its own
+  (confirmed empirically) -- `project_run` therefore refuses to spawn any
+  `bd` subprocess at all unless `<workspace>/.beads` exists, degrading
+  the whole projection instead (never a walk-up write into a database
+  the operator did not configure). See the mapping doc's "Workspace
+  guard" section.
 - Mirror failures never raise: `project_run` always returns a
   `MirrorReport` whose `degraded` flag/`.errors` record which `bd`
   invocations failed. The caller (`orc_werk.cli.main.cmd_dispatch`)
@@ -65,6 +75,7 @@ Design summary (full rationale: the mapping doc):
 from __future__ import annotations
 
 import shutil
+import os.path
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional, Sequence
@@ -188,7 +199,11 @@ class BeadsMirror:
     database is an operator/deployment concern, matching the `no-mistakes`
     adapter's own "adapter never `no-mistakes init`s a repo" precedent).
     Every invocation passes `-C <workspace>` so `bd` resolves the intended
-    database regardless of this process's own cwd.
+    database regardless of this process's own cwd -- but `-C` alone is NOT
+    containment (`bd` walks up to an ancestor `.beads` when `workspace`
+    has none), so `project_run` additionally guards that
+    `<workspace>/.beads` actually exists before spawning anything (see
+    `_workspace_owns_database`).
     """
 
     BD_VERSION_PIN = BD_VERSION_PIN
@@ -251,6 +266,34 @@ class BeadsMirror:
         # deliberately NOT wrapped in the non-fatal bd-call handling above.
         validate_plan(plan)
 
+        # Workspace guard (PR #81 fix round, mapping doc "Workspace guard"):
+        # `bd -C <dir>` WALKS UP the directory tree when `<dir>` has no
+        # `.beads` of its own and silently operates on the nearest
+        # ancestor's database (confirmed empirically against real bd
+        # 1.2.2) -- a misconfigured/uninitialized `workspace` could
+        # therefore write into a database the operator never configured
+        # (e.g. a repo checkout's own real one). Fail closed BEFORE any
+        # subprocess is spawned: the whole projection degrades to a no-op
+        # with one synthesized failed call explaining why -- same
+        # non-fatal surfacing as any other degraded mirror, never a
+        # walk-up write.
+        if not self._workspace_owns_database():
+            return MirrorReport(
+                delivery_run_id=delivery_run_id,
+                calls=(
+                    MirrorCallResult(
+                        argv=(self._bd_bin, "--json", "-C", self._workspace),
+                        ok=False,
+                        returncode=-1,
+                        stderr=(
+                            f"workspace guard: {self._workspace!r} has no .beads directory "
+                            "(bd -C would walk UP to an ancestor database -- refusing to "
+                            "write outside the configured workspace; run 'bd init' there first)"
+                        ),
+                    ),
+                ),
+            )
+
         label = f"{_RUN_LABEL_PREFIX}{delivery_run_id}"
         briefs = briefs or {}
         deps_by_work = {
@@ -284,6 +327,17 @@ class BeadsMirror:
         return MirrorReport(delivery_run_id=delivery_run_id, calls=tuple(calls))
 
     # -- per-operation helpers ------------------------------------------------
+
+    def _workspace_owns_database(self) -> bool:
+        """`<workspace>/.beads` exists as a directory -- the containment
+        guard against `bd -C`'s ancestor walk-up (see `project_run`'s
+        guard comment and the mapping doc's "Workspace guard" section). A
+        plain existence check is deliberately sufficient: this adapter's
+        contract is "the operator already ran `bd init` in `workspace`"
+        (class docstring), and `bd init` always creates `.beads` there;
+        anything else fails closed rather than reproducing `bd`'s own
+        discovery logic here."""
+        return os.path.isdir(os.path.join(self._workspace, ".beads"))
 
     def _create_work(
         self,

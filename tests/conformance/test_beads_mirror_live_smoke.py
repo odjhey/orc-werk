@@ -124,6 +124,49 @@ class BeadsMirrorLiveSmokeTest(unittest.TestCase):
         dep_ids = {dep["id"] for dep in c_row["dependencies"]}
         self.assertEqual(dep_ids, {f"{delivery_run_id}--a", f"{delivery_run_id}--b"})
 
+    def test_workspace_without_beads_never_writes_to_ancestor_database(self) -> None:
+        """Walk-up containment guard against the REAL CLI (PR #81 fix
+        round): `bd -C <dir>` walks UP to the nearest ancestor `.beads`
+        when `<dir>` has none of its own -- verified during this fix
+        round's own recon: a `bd create -C <child>` observably landed in
+        the parent's database. This test constructs exactly that dangerous
+        shape (a child workspace with no `.beads`, nested under this
+        test's real sandbox database) and proves the guard prevents it:
+        the projection degrades, zero `bd create` invocations reach the
+        ancestor (its issue list under the run label stays empty)."""
+        child = self._workspace / "child-without-beads"
+        child.mkdir()
+        self.assertFalse((child / ".beads").exists())
+
+        delivery_run_id = "orcwguard1"
+        orch, journal, _wg = build_run(
+            delivery_run_id=delivery_run_id,
+            attempts_by_work={"work-1": [{"outcome": "completed", "candidate": {"label": "G"}, "verdict": "accepted"}]},
+        )
+        projection = orch.run()
+        history = journal.history(delivery_run_id=delivery_run_id)
+
+        mirror = BeadsMirror(workspace=str(child))
+        report = mirror.project_run(
+            delivery_run_id=delivery_run_id, history=history, projection=projection, intent_text="guard probe"
+        )
+
+        self.assertTrue(report.degraded)
+        self.assertEqual(len(report.calls), 1)
+        self.assertIn("workspace guard", report.calls[0].stderr)
+
+        # Nothing reached the ancestor database: listing by this run's
+        # label against the REAL parent DB finds zero issues.
+        proc = subprocess.run(
+            [_BD_BIN, "--json", "-C", str(self._workspace), "list", "--label", f"run:{delivery_run_id}"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        rows = json.loads(proc.stdout) if proc.stdout.strip() else []
+        self.assertEqual(rows or [], [], f"guard failed -- writes reached the ancestor DB: {rows}")
+
 
 if __name__ == "__main__":
     unittest.main()

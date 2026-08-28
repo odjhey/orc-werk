@@ -108,6 +108,11 @@ class MirrorWiringSmokeTest(unittest.TestCase):
         self.journal_dir = self.root / ".orc"
         self.stub_bin = install_stub(self.root)
         self.stub_log = self.root / "bd-stub.log"
+        # The configured workspace must own a `.beads` directory or the
+        # walk-up containment guard (PR #81 fix round) degrades the whole
+        # projection before any bd call is issued.
+        self.workspace = self.root / "bd-workspace"
+        (self.workspace / ".beads").mkdir(parents=True)
 
     def _env(self, *, fail_verbs: str = "") -> dict:
         env = dict(os.environ)
@@ -133,7 +138,7 @@ class MirrorWiringSmokeTest(unittest.TestCase):
     def _write_config(self, tmp: Path, *, with_mirror: bool) -> Path:
         data: dict = {"attempts": {"work-1": [{"outcome": "completed"}]}}
         if with_mirror:
-            data["mirror"] = {"adapter": "beads", "workspace": str(self.root / "bd-workspace"), "bd_bin": str(self.stub_bin)}
+            data["mirror"] = {"adapter": "beads", "workspace": str(self.workspace), "bd_bin": str(self.stub_bin)}
         path = tmp / ("cfg-mirror.json" if with_mirror else "cfg-baseline.json")
         path.write_text(json.dumps(data))
         return path
@@ -190,6 +195,32 @@ class MirrorWiringSmokeTest(unittest.TestCase):
         )
         self.assertIn("mirror: degraded", degraded.stderr)
         self.assertEqual(baseline.stderr, "")
+
+    def test_workspace_without_beads_degrades_with_note_and_zero_bd_calls(self) -> None:
+        """Walk-up containment guard at the CLI boundary (PR #81 fix
+        round): a configured workspace WITHOUT its own `.beads` (the
+        dangerous `bd -C` walk-up shape) degrades the mirror -- the
+        `mirror: degraded` stderr note names the guard, exit code stays
+        the ordinary pending 3, and zero bd subprocesses were ever spawned
+        (empty stub call log)."""
+        bare_workspace = self.root / "workspace-without-beads"
+        bare_workspace.mkdir()
+        config = {
+            "attempts": {"work-1": [{"outcome": "completed"}]},
+            "mirror": {"adapter": "beads", "workspace": str(bare_workspace), "bd_bin": str(self.stub_bin)},
+        }
+        config_path = self.root / "cfg-guard.json"
+        config_path.write_text(json.dumps(config))
+
+        result = self._run_cli(
+            "dispatch", "ship it",
+            "--config", str(config_path), "--journal", str(self.journal_dir),
+            "--run-id", "guard-run",
+        )
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("mirror: degraded", result.stderr)
+        self.assertIn("workspace guard", result.stderr)
+        self.assertEqual(read_calls(self.stub_log), [])
 
 
 if __name__ == "__main__":

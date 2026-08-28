@@ -35,9 +35,13 @@ complete design, not an open debate:
   violate `INV-020`'s replay-stable naming if left to default; the
   separator is checked against `bd`'s id charset at implementation time,
   per the issue thread).
-- **`--label run:<run_id>`** on every invocation — the shared-DB label
+- **`--label run:<run_id>`** on every `bd create` — the shared-DB label
   discipline the ratified posture depends on for isolation between runs
-  sharing one `bd` database.
+  sharing one `bd` database. (Amended at implementation time, PR #81 fix
+  round: `update`/`close` calls address the run-qualified unique
+  `<run_id>--<work_id>` id directly and do not strip labels — verified
+  against real `bd` 1.2.2 — so the label is applied at create and
+  persists; see `docs/adapters/beads/mapping.md`.)
 - **Briefs → issue descriptions at `bd create`** — per the PR #49
   adapter-owned-briefs ruling (`docs/contracts/durability-
   responsibilities.md`'s multi-work-brief row): this adapter is where
@@ -48,9 +52,19 @@ complete design, not an open debate:
   `DEC-ACCEPT`/`FACT-WORK-COMPLETED` — a write-only echo, never a trigger.
   Block state is projected via `bd` metadata (label/field, decided at
   implementation time), also write-only.
-- **`bd create --graph`** issued after this adapter's own plan-validation
-  pre-flight (mirroring `PORT-WORK-001`'s `validate_plan` discipline before
-  any external write).
+- **Graph creation: per-Work `bd create --id <run_id>--<work_id> --force
+  --deps <upstream ids>`, in dependency-first (topological) order, issued
+  after this adapter's own plan-validation pre-flight** (mirroring
+  `PORT-WORK-001`'s `validate_plan` discipline before any external write).
+  (Amended at implementation time, PR #81 fix round: the issue thread's
+  original `bd create --graph` mechanism was empirically ruled out
+  against real `bd` 1.2.2 — its graph-plan JSON schema silently drops a
+  per-node `id` field, always assigning `bd`'s own random ids, and
+  `--parent`/`--id` are mutually exclusive flags — both structurally
+  incompatible with this card's own non-negotiable deterministic-id and
+  label-discipline requirements above, which remain unchanged. Full
+  empirical trail: `docs/adapters/beads/mapping.md`'s "`--graph` was
+  evaluated and rejected" section.)
 - **Never reach past the CLI into Dolt** (`bd`'s underlying storage) — the
   adapter boundary is the `bd` CLI surface only, matching `INV-014`'s
   provider-vocabulary quarantine.
