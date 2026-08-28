@@ -352,6 +352,60 @@ class WorkGraphPlanValidationTest(unittest.TestCase):
                 }
             )
 
+    def test_rejects_non_accepted_condition(self) -> None:
+        with self._assert_validation_error():
+            validate_plan(
+                {
+                    "works": [
+                        {"work_id": "a", "deps": []},
+                        {"work_id": "b", "deps": [{"work_id": "a", "condition": "settled"}]},
+                    ]
+                }
+            )
+
+    def test_rejects_missing_condition(self) -> None:
+        with self._assert_validation_error():
+            validate_plan(
+                {
+                    "works": [
+                        {"work_id": "a", "deps": []},
+                        {"work_id": "b", "deps": [{"work_id": "a"}]},
+                    ]
+                }
+            )
+
+    def test_rejects_plan_that_is_not_a_mapping(self) -> None:
+        with self._assert_validation_error():
+            validate_plan(["not", "a", "mapping"])  # type: ignore[arg-type]
+
+    def test_rejects_missing_works_key(self) -> None:
+        with self._assert_validation_error():
+            validate_plan({})
+
+    def test_rejects_non_list_works(self) -> None:
+        with self._assert_validation_error():
+            validate_plan({"works": "not-a-list"})
+
+    def test_rejects_non_mapping_works_entry(self) -> None:
+        with self._assert_validation_error():
+            validate_plan({"works": ["not-a-mapping"]})
+
+    def test_rejects_works_entry_missing_work_id(self) -> None:
+        with self._assert_validation_error():
+            validate_plan({"works": [{"deps": []}]})
+
+    def test_rejects_works_entry_with_non_string_work_id(self) -> None:
+        with self._assert_validation_error():
+            validate_plan({"works": [{"work_id": 123, "deps": []}]})
+
+    def test_rejects_non_list_deps(self) -> None:
+        with self._assert_validation_error():
+            validate_plan({"works": [{"work_id": "a", "deps": "not-a-list"}]})
+
+    def test_rejects_non_mapping_dep_entry(self) -> None:
+        with self._assert_validation_error():
+            validate_plan({"works": [{"work_id": "a", "deps": ["not-a-mapping"]}]})
+
     def _assert_validation_error(self):
         return _ExpectsCanonicalError(self, ERR_VALIDATION)
 

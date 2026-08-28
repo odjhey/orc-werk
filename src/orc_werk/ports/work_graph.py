@@ -25,29 +25,47 @@ VALID_DEPENDENCY_CONDITIONS = frozenset({DEPENDENCY_CONDITION_ACCEPTED})
 
 def validate_plan(plan: Mapping[str, Any]) -> None:
     """Validate a `PORT-WORK-001` plan shape, raising the exact
-    `ERR-VALIDATION` cases the port doc enumerates:
+    `ERR-VALIDATION` cases the (amended) port doc enumerates:
 
     - a duplicate `work_id`;
     - a `deps` entry naming a work not present in the plan, or naming the
       work itself;
     - an empty `works` list;
-    - a dependency cycle.
+    - a dependency cycle;
+    - a `deps` entry whose `condition` is not `"accepted"` (the only v0
+      condition).
+
+    Structurally malformed plans (missing required keys, wrong types --
+    e.g. a non-list `deps`, a non-mapping `works`/`deps` entry) are also
+    rejected with `ERR-VALIDATION`; this function never lets a
+    `KeyError`/`TypeError`/`AttributeError` escape.
 
     Pure/stdlib-only so every WorkGraphPort adapter (in-memory, real
-    provider) shares one implementation of these four rejection cases
-    rather than reimplementing them. Does not mutate or return the plan;
-    callers pass a validated plan through to `WorkGraphPort.create`
-    unchanged.
+    provider) shares one implementation of these rejection cases rather
+    than reimplementing them. Does not mutate or return the plan; callers
+    pass a validated plan through to `WorkGraphPort.create` unchanged.
     """
+    if not isinstance(plan, Mapping):
+        raise validation_error("work-graph plan must be a mapping", plan=_safe_repr(plan))
+
     works = plan.get("works")
-    if not works:
+    if not isinstance(works, list) or not works:
         raise validation_error(
-            "work-graph plan must have a non-empty 'works' list", plan=plan
+            "work-graph plan must have a non-empty 'works' list", plan=_safe_repr(plan)
         )
 
     seen: set[str] = set()
     for entry in works:
+        if not isinstance(entry, Mapping):
+            raise validation_error(
+                "work-graph plan 'works' entry must be a mapping", entry=_safe_repr(entry)
+            )
         work_id = entry.get("work_id")
+        if not isinstance(work_id, str) or not work_id:
+            raise validation_error(
+                "work-graph plan 'works' entry must have a non-empty string 'work_id'",
+                entry=_safe_repr(entry),
+            )
         if work_id in seen:
             raise validation_error(
                 f"work-graph plan has a duplicate work_id: {work_id!r}", work_id=work_id
@@ -56,7 +74,20 @@ def validate_plan(plan: Mapping[str, Any]) -> None:
 
     for entry in works:
         work_id = entry["work_id"]
-        for dep in entry.get("deps", []):
+        deps = entry.get("deps", [])
+        if not isinstance(deps, list):
+            raise validation_error(
+                f"work-graph plan 'deps' must be a list for work_id: {work_id!r}",
+                work_id=work_id,
+                deps=_safe_repr(deps),
+            )
+        for dep in deps:
+            if not isinstance(dep, Mapping):
+                raise validation_error(
+                    f"work-graph plan dependency entry must be a mapping for work_id: {work_id!r}",
+                    work_id=work_id,
+                    dep=_safe_repr(dep),
+                )
             dep_id = dep.get("work_id")
             if dep_id == work_id:
                 raise validation_error(
@@ -70,8 +101,28 @@ def validate_plan(plan: Mapping[str, Any]) -> None:
                     work_id=work_id,
                     dep_id=dep_id,
                 )
+            condition = dep.get("condition")
+            if condition not in VALID_DEPENDENCY_CONDITIONS:
+                raise validation_error(
+                    "work-graph plan dependency condition must be "
+                    f"{DEPENDENCY_CONDITION_ACCEPTED!r}: {condition!r}",
+                    work_id=work_id,
+                    dep_id=dep_id,
+                    condition=_safe_repr(condition),
+                )
 
     _reject_cycles(works)
+
+
+def _safe_repr(value: Any) -> Any:
+    """Return `value` unchanged if it is already portable-ish JSON-like
+    data, otherwise its `repr()`. Keeps `ERR-VALIDATION` `details` from
+    ever carrying an arbitrary/unportable object straight through when the
+    plan itself is structurally malformed (e.g. `plan` is not a mapping at
+    all)."""
+    if value is None or isinstance(value, (str, int, float, bool, list, dict)):
+        return value
+    return repr(value)
 
 
 def _reject_cycles(works: Sequence[Mapping[str, Any]]) -> None:

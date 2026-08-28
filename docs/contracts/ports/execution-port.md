@@ -26,7 +26,10 @@ Output canonical execution observation:
 state: requested | running | settled
 outcome?: completed | failed | cancelled
 artifact_refs?: opaque references
+extensions?: map<versioned_extension_id, json_payload>
 ```
+
+`extensions`, when present, MUST satisfy `CONTRACT-EXTENSIONS`. The generic core records/transports them but MUST NOT inspect their internals to derive the canonical execution state or outcome.
 
 ### PORT-EXEC-003 `send`
 Optional capability `CAP-EXEC-SEND`.
@@ -36,6 +39,8 @@ Optional/required according to adapter profile; capability `CAP-EXEC-CANCEL`.
 
 ### PORT-EXEC-005 `resume`
 Optional. Adapter MUST distinguish best-effort from exact resume. See `INV-013`.
+
+The caller expresses the required resume strength via a `capability` field on the resume request, valued `CAP-EXEC-RESUME-BEST-EFFORT` or `CAP-EXEC-RESUME-EXACT`. A resume request with a missing or unknown `capability` value MUST be rejected with `ERR-VALIDATION`. An adapter MUST NOT silently substitute a weaker resume strength than the one requested — an adapter that cannot meet the requested strength MUST fail per `INV-013` rather than default down.
 
 ## Explicit non-semantics
 
