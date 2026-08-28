@@ -61,7 +61,7 @@ An adapter advertising `CAP-EXEC-RESUME-EXACT` for this session persisted exactl
 
 Useful for operator inspection/debugging even when the adapter offers neither `CAP-EXEC-RESUME-BEST-EFFORT` nor `CAP-EXEC-RESUME-EXACT` for this provider.
 
-## Invalid: dispatcher field present
+## Producer violation: dispatcher field present
 
 ```json
 {
@@ -73,4 +73,4 @@ Useful for operator inspection/debugging even when the adapter offers neither `C
 }
 ```
 
-Not a valid `execution-session/v1` payload — `dispatcher` belongs to the planned, separate provenance extension, not this schema.
+A producer MUST NOT emit this — `dispatcher` belongs to the planned, separate provenance extension, not this schema — and a validator MAY reject it. A component promising lossless round-trip nevertheless preserves the unknown `dispatcher` key unchanged per `EXT-005`/`CONF-EXT-003`.

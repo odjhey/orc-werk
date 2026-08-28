@@ -51,4 +51,6 @@ This is a durability-honesty amendment: it strengthens `INV-013`, `EXT-004`, and
 
 Concretely: `CAP-EXEC-RESUME-EXACT` requires durable `execution-session/v1` provenance for the session it would resume. An adapter MUST NOT advertise `CAP-EXEC-RESUME-EXACT` unless it durably persists the native session/resume identity that a resume request would need to reconstruct that exact session. An adapter that can resume a session operationally but does not durably persist that provenance MUST either advertise only `CAP-EXEC-RESUME-BEST-EFFORT`, or fail explicitly per `INV-013` and `PORT-EXEC-005` rather than claim `CAP-EXEC-RESUME-EXACT` on a best-effort footing.
 
+Exemption: in-memory conformance fixtures and test doubles (the scripted reference adapters) are not durability-bearing providers. They exercise resume-strength gating (`INV-013`, `PORT-EXEC-005`) and reconstruct session identity deterministically in-process, satisfying the durability obligation trivially — there is no provider-native session that could outlive the process they run in. This rule binds real provider adapters, first exercised at `TASK-M1-005`.
+
 The full ownership matrix and the capability -> durable-information -> owner -> contract -> conformance mapping this rule generalizes to is recorded in `CONTRACT-DURABILITY`, not restated here.

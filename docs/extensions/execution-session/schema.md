@@ -80,7 +80,7 @@ Opaque strings. See the opaque-strings rule below. `native_session_id` MUST be s
 
 When present, `resume.strength` MUST be exactly `"exact"` or `"best-effort"`; no other value is valid. `resume.ref` MUST be an opaque reference the adapter's own `resume` operation (`PORT-EXEC-005`) can consume — it is not required to be human-readable or to have any meaning outside that adapter.
 
-`resume.strength` corresponds to, but is a payload-level field distinct from, the `capability` value (`CAP-EXEC-RESUME-EXACT` / `CAP-EXEC-RESUME-BEST-EFFORT`) a caller supplies on a `PORT-EXEC-005` resume request. See [Semantics](semantics.md) for how the two relate.
+`resume.strength` corresponds to, but is a payload-level field distinct from, the `capability` value a caller supplies on a `PORT-EXEC-005` resume request. The explicit mapping: `"exact"` corresponds to `CAP-EXEC-RESUME-EXACT`, and `"best-effort"` corresponds to `CAP-EXEC-RESUME-BEST-EFFORT`. The payload vocabulary and the capability identifiers remain distinct namespaces — they are checked against each other, never merged. See [Semantics](semantics.md) for how that check works.
 
 ### `transcript_ref`
 
@@ -104,7 +104,9 @@ When present, every field inside it (`model`, `effort`, `permission_mode`) is an
 
 ## Dispatcher/watchtower provenance is out of scope
 
-`dispatcher` (watchtower/preset/policy attribution: which watchtower dispatched this, which preset/policy version, policy hash) is explicitly not a field of `execution-session/v1`. It is orchestration provenance, not session provenance, and is recorded in `CONTRACT-DURABILITY`'s ownership matrix as a planned, separate, currently unregistered extension. A payload that includes a `dispatcher` field is not a valid `execution-session/v1` payload.
+`dispatcher` (watchtower/preset/policy attribution: which watchtower dispatched this, which preset/policy version, policy hash) is explicitly not a field of `execution-session/v1`. It is orchestration provenance, not session provenance, and is recorded in `CONTRACT-DURABILITY`'s ownership matrix as a planned, separate, currently unregistered extension.
+
+This exclusion binds producers and validators, not transports: an `execution-session/v1` producer MUST NOT emit a `dispatcher` field, and a validator MAY reject a payload containing one. A component that promises lossless extension round-trip still preserves an unknown `dispatcher` key unchanged per `EXT-005` and `CONF-EXT-003` — transport-level tolerance of unknown keys is not producer-level permission to emit them.
 
 ## Portability
 

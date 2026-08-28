@@ -64,6 +64,8 @@ The concrete mapping this contract is responsible for populating:
 
 Exact capability names for the deferred rows may change when their owning contract is designed; the requirement is the explicit mapping, not these particular identifiers.
 
+Per the `CONTRACT-CAPABILITIES` exemption, in-memory conformance fixtures/test doubles (the scripted reference adapters) satisfy these obligations trivially — they reconstruct session identity deterministically in-process — and the mapping binds real provider adapters, first exercised at `TASK-M1-005`.
+
 ## Rozoro retirement ledger
 
 This ledger audits Rozoro's durable inventory line by line, per the completeness/migration-closure rule from issue #12. Each row reaches exactly one disposition: **canonicalized**, **delegated**, **implementation-local**, or **intentionally dropped**. A "planned" or "OPEN GATE" delegated disposition is allowed — it still names an owner and, where possible, a contract — but every row must reach a disposition; none may be left unclassified.
