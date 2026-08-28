@@ -187,24 +187,30 @@ process the way `AcpExecution` can.
 
 What `request()` actually does, before ever spawning a new run: query
 `axi status` (bare, no `--run`) for `repo_path`. If it shows an ACTIVE
-(non-terminal: not `completed`/`cancelled`/`aborted`/`failed`) run:
+(non-terminal: not `completed`/`cancelled`/`aborted`/`failed`) run, the
+adapter adopts it only after positively confirming that its observed head
+matches the git-shaped candidate's `subject_identity['head_sha']`. The
+provider run's `run.head` is the primary identity signal; when absent, the
+adapter falls back to `branch_sync.pipeline.submitted_head` and then
+`branch_sync.local.head`.
 
-- if the candidate carries a git-shaped `subject_identity['head_sha']`
-  (the `GitDiffCandidate` shape this adapter is normally paired with) AND
-  it does not match the active run's observed head
-  (`branch_sync.pipeline.submitted_head`/`branch_sync.local.head`), this
-  is a DIFFERENT candidate's run still owning the branch --
-  `request()` raises `ERR-UNSAFE-STATE` rather than guess (see "Stale
-  parked run" in Limitations) or spawn a conflicting second run;
-- otherwise (heads match, or no `head_sha` signal is available at all --
-  e.g. a non-git-shaped candidate, exercised by the shared
-  `AssurancePortConformance` mixin's `ScriptedCandidate`-backed fixtures)
-  the active run is ADOPTED: its native id becomes this request's
-  `native_run_id`, no new `axi run` spawn. This best-effort adoption
-  assumes at most one Work drives one `repo_path` at a time -- the same
-  "one Work per one configured worktree" assumption
-  `docs/adapters/git/mapping.md`/`AcpExecution` already state for their
-  own real-adapter pairings.
+A divergent head, an active status with no readable provider-run head, or a
+candidate with no readable `head_sha` makes identity unconfirmable.
+`request()` raises `ERR-UNSAFE-STATE` rather than guess or spawn a
+conflicting second run. Only a positive head match adopts the active run:
+its native id becomes this request's `native_run_id`, with no new `axi run`
+spawn. Never adopt on absence of evidence (`P-004`, `INV-007` through
+`INV-010`).
+
+**Hard operational constraint: one active no-mistakes run per repository.**
+This is repository-wide, not worktree-local: no-mistakes stores its active
+pipeline state in the repository's shared bare repo, so every worktree of
+that repository sees and competes for the same active-run slot. Separate
+Orc `repo_path` worktrees therefore do not isolate concurrent no-mistakes
+assurance requests. Operators MUST await the active pipeline or abort it
+with `no-mistakes axi abort --run <id>` before requesting assurance for a
+different candidate. The adapter is a read-only judge and never performs
+that recovery itself.
 
 Exercised by `test_active_run_is_adopted_not_respawned_across_instances`
 and the CLI wiring smoke test's "re-dispatch while pipeline is still
@@ -338,7 +344,7 @@ selection" section, `TASK-M2-001` addition):
 | stdout/stderr contains `"not initialized"` (the plain-text, non-TOON `repo not initialized (run 'no-mistakes init' first)` shape, confirmed empirically) | `ERR-PROVIDER-UNAVAILABLE` |
 | `axi status --run <id>` exits non-zero with stdout/stderr containing `"not found"`/`"no run"` | Not an error -- treated as nothing durable observed yet (`state: requested`), the same honest-absence posture `AcpExecution` takes for a missing `stopReason`. |
 | Any other non-zero exit from `axi status` | `ERR-TEMPORARY` (default posture: may succeed on retry, mirroring `AcpExecution`'s default) |
-| A different, non-terminal run already owns `repo_path` and its observed head does not match the requested candidate's `head_sha` | `ERR-UNSAFE-STATE` (this adapter never resolves another run's branch ownership itself -- judge-only ruling) |
+| A non-terminal repository-wide active run cannot be positively matched to the requested candidate: its `run.head` (falling back to `branch_sync.pipeline.submitted_head`/`branch_sync.local.head`) is absent, diverges from the candidate's `head_sha`, or the candidate head is absent | `ERR-UNSAFE-STATE`; an unrelated or unconfirmable no-mistakes pipeline is active in this repo, so the operator must abort or await it before requesting assurance (this adapter never resolves another run's ownership itself -- judge-only ruling) |
 | `axi run` spawn succeeds but no run id appears within the bounded spawn-wait | `ERR-TEMPORARY` (see "Limitations" -- this also covers an `axi run` invocation that failed immediately, since this adapter never observes a detached process's own exit code) |
 | `requirements['intent']` missing/empty/non-string | `ERR-VALIDATION` |
 | Malformed/unrecognizable `assurance_id` on `inspect()` | `ERR-NOT-FOUND` |
@@ -413,10 +419,12 @@ known-issues row in `docs/playbooks/cli-usage.md`.
   (see "Cross-process request() idempotency" above) -- a structural
   consequence of `no-mistakes` assigning opaque run ids with no
   caller-supplied naming hook, unlike `acpx`'s `-s <session-name>`.
-- **Stale parked run blocks a retry's `repo_path`.** If a candidate's run
-  parks at a gate and this adapter settles `rejected`, the underlying
-  `no-mistakes` run itself is left parked (judge-only ruling: this
-  adapter never calls `axi respond`/`axi abort`). Per real `no-mistakes`
+- **A repository-wide active run blocks every worktree's next request.**
+  no-mistakes keeps pipeline state in the shared bare repository across
+  all worktrees, so its one-active-run slot is not scoped to this adapter's
+  `repo_path`. If a candidate's run parks at a gate and this adapter settles
+  `rejected`, the underlying run itself is left parked (judge-only ruling:
+  this adapter never calls `axi respond`/`axi abort`). Per real no-mistakes
   behavior observed during recon, a parked run's `branch_sync.safety`
   reads `blocked_pipeline_owned` with the note "a validation run is
   active on this branch; do not make local follow-up commits until it
