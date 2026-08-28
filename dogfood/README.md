@@ -95,6 +95,7 @@ the checker runs the union.
 | `capability` | Capability advertisement/mismatch between policy and provider. |
 | `idempotency` | Re-running an effect/dispatch must not duplicate it. |
 | `journal-recovery` | Torn tails, corruption, missing/garbage journal targets. |
+| `journal-layout` | Per-run artifact layout, legacy flat read-fallback, journal-root precedence, and persisted config. |
 | `config-validation` | CLI dispatch-config load-time correctness. |
 | `cli-errors` | Canonical error surfacing at the CLI boundary. |
 | `cli-output` | Legibility/completeness of `status`/`history` output. |
@@ -152,6 +153,7 @@ for a filed reason (#16-18), the scenario says so explicitly.
 | [`DFS-010`](scenarios/DFS-010-config-abuse/scenario.md) | Config abuse: invalid JSON, cycle, dup id, unknown dep, unknown key, missing attempts | `config-validation`, `cli-errors` |
 | [`DFS-011`](scenarios/DFS-011-adversarial-payloads/scenario.md) | Adversarial payloads: NaN, unicode/emoji + 100k intent, deep nesting | `adversarial` |
 | [`DFS-012`](scenarios/DFS-012-real-work-docs-page/scenario.md) | Real-work simulation: "write docs page" with structured candidate + assurance findings | `real-work`, `cli-output` |
+| [`DFS-013`](scenarios/DFS-013-journal-layout-cli-surface/scenario.md) | Issue-#55 journal layout, precedence, durable resume, and pipe-safe output | `journal-layout`, `cli-output`, `idempotency` |
 
 #16, #17, #18 (and #23) — the round-1 issues referenced by DFS-006/007/009/010
 above — are now `CLOSED`, resolved by PR #32 (`TASK-M1-003`); see each
