@@ -62,8 +62,9 @@ class ScriptedExecution(ExecutionPort):
 
     `resume_request["capability"]` names the exact resume strength the
     caller requires -- `CAP-EXEC-RESUME-BEST-EFFORT` or
-    `CAP-EXEC-RESUME-EXACT`; omitted defaults to best-effort (least
-    commitment, since the port doc does not name a default). A request for
+    `CAP-EXEC-RESUME-EXACT`. A missing or unknown value is ambiguous and
+    raises the canonical `ERR-VALIDATION` -- never a silent default to the
+    weakest strength (`PORT-EXEC-005` ambiguity rule). A request for
     a strength this instance does not advertise in `capabilities()` raises
     the canonical `ERR-UNSUPPORTED-CAPABILITY` (`INV-013`, `CONF-EXEC-004`,
     `SCN-006`) -- it never silently starts a fresh conversation. This
@@ -170,10 +171,13 @@ class ScriptedExecution(ExecutionPort):
         self._cancelled.add(execution_id)
 
     def resume(self, *, execution_id: str, resume_request: Mapping[str, Any]) -> Execution:
-        requested = resume_request.get("capability", CAP_EXEC_RESUME_BEST_EFFORT)
+        # PORT-EXEC-005 ambiguity rule: a missing or unknown resume-strength
+        # is ERR-VALIDATION -- never a silent default to the weakest strength.
+        requested = resume_request.get("capability")
         if requested not in _RESUME_STRENGTHS:
             raise validation_error(
-                "resume_request['capability'] must name a resume-strength capability id",
+                "resume_request['capability'] must name a resume-strength capability id "
+                f"(one of {sorted(_RESUME_STRENGTHS)})",
                 requested=requested,
             )
         # INV-013 / CONF-EXEC-004 / SCN-006: never silently emulate a

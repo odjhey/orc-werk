@@ -92,6 +92,60 @@ class ExecutionPortConformance:
         self.assertEqual(canonical["error"], "ERR-UNSUPPORTED-CAPABILITY")
         self.assertEqual(canonical["details"]["capability"], CAP_EXEC_RESUME_EXACT)
 
+    # -- PORT-EXEC-005 ambiguity rule: missing/unknown resume strength is
+    # -- ERR-VALIDATION, never a silent default to the weakest strength. --
+
+    def test_resume_with_missing_capability_key_yields_err_validation(self) -> None:
+        adapter = self.make_execution(
+            script={"w1": [{"outcome": "completed"}]},
+            capabilities={CAP_EXEC_RESUME_BEST_EFFORT},
+        )
+        ref = adapter.start(work_id="w1", execution_request={}, idempotency_key="k1")
+        with self.assertRaises(CoreError) as ctx:
+            adapter.resume(execution_id=ref.id, resume_request={})
+        self.assertEqual(ctx.exception.to_canonical()["error"], "ERR-VALIDATION")
+
+    def test_resume_with_unknown_capability_value_yields_err_validation(self) -> None:
+        adapter = self.make_execution(
+            script={"w1": [{"outcome": "completed"}]},
+            capabilities={CAP_EXEC_RESUME_BEST_EFFORT},
+        )
+        ref = adapter.start(work_id="w1", execution_request={}, idempotency_key="k1")
+        with self.assertRaises(CoreError) as ctx:
+            adapter.resume(
+                execution_id=ref.id, resume_request={"capability": "CAP-NOT-A-RESUME-STRENGTH"}
+            )
+        self.assertEqual(ctx.exception.to_canonical()["error"], "ERR-VALIDATION")
+
+    # -- Adapter-boundary lossless transport (CONF-EXT-001/CONF-EXT-003):
+    # -- scripted artifact_refs/extensions read back unchanged via inspect. --
+
+    def test_inspect_transports_scripted_artifact_refs_and_extensions_losslessly(self) -> None:
+        artifact_refs = ["ref-1", {"kind": "diff", "path": "a.py", "nested": [1, None, True]}]
+        extensions = {
+            "review-findings/v1": {"findings": []},
+            "some-unregistered-extension/v7": {"payload": {"deep": [1, {"b": None}]}},
+        }
+        adapter = self.make_execution(
+            script={
+                "w1": [
+                    {
+                        "outcome": "completed",
+                        "artifact_refs": artifact_refs,
+                        "extensions": extensions,
+                    }
+                ]
+            }
+        )
+        ref = adapter.start(work_id="w1", execution_request={}, idempotency_key="k1")
+        observed = adapter.inspect(execution_id=ref.id)
+        self.assertEqual(list(observed.artifact_refs), artifact_refs)
+        self.assertEqual(dict(observed.extensions), extensions)
+        # unknown extension identifiers are preserved verbatim, and the
+        # portable to_dict shape round-trips them unchanged too.
+        self.assertIn("some-unregistered-extension/v7", observed.extensions)
+        self.assertEqual(observed.to_dict()["extensions"], extensions)
+
     # -- Capability honesty: every advertised CAP exercised by a passing test. --
 
     def test_capability_honesty_send_when_advertised(self) -> None:

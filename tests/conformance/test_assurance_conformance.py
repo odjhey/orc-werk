@@ -115,6 +115,32 @@ class AssurancePortConformance:
         self.assertEqual(second.state, LIFECYCLE_STATE_SETTLED)
         self.assertEqual(second.verdict, "accepted")
 
+    # -- Adapter-boundary lossless transport (CONF-EXT-001/CONF-EXT-003):
+    # -- scripted extensions read back unchanged via inspect, unknown keys preserved. --
+
+    def test_inspect_transports_scripted_extensions_losslessly(self) -> None:
+        candidate = _candidate("w1", "e1", {"a": 1})
+        extensions = {
+            "review-findings/v1": {"findings": [{"severity": "note", "summary": "ok"}]},
+            "some-unregistered-extension/v9": {"nested": {"a": [1, {"b": None}], "flag": True}},
+        }
+        adapter = self.make_assurance(
+            script={
+                candidate.fingerprint: {
+                    "verdict": "accepted",
+                    "evidence_refs": ["report-1"],
+                    "extensions": extensions,
+                }
+            }
+        )
+        run = adapter.request(candidate=candidate, requirements={}, idempotency_key="k1")
+        observed = adapter.inspect(assurance_id=run.id)
+        self.assertEqual(dict(observed.extensions), extensions)
+        # unknown extension identifiers are preserved verbatim, and the
+        # portable to_dict shape round-trips them unchanged too.
+        self.assertIn("some-unregistered-extension/v9", observed.extensions)
+        self.assertEqual(observed.to_dict()["extensions"], extensions)
+
     # -- Capability honesty. --
 
     def test_capability_honesty_candidate_bound_advertised_and_exercised(self) -> None:
