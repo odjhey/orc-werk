@@ -3,7 +3,7 @@ id: M-001
 type: milestone
 status: current
 authority: normative
-description: Second milestone — orc-werk becomes its own first user via a CLI-usable durable delivery ledger (M1a) and a first real execution adapter (M1b).
+description: Second milestone — orc-werk becomes its own first user via a CLI-usable durable delivery ledger (M1a), agent-recorded push mode (M1a+), and a first real execution adapter (M1b).
 ---
 
 # M1 — Delivery ledger
@@ -12,9 +12,10 @@ description: Second milestone — orc-werk becomes its own first user via a CLI-
 
 M1 makes orc-werk its own first user. M0 proved the pure orchestration kernel could drive a scripted delivery loop to a verified terminal state entirely with in-memory/scripted providers; M1 puts real, valuable work through that same kernel, unamended in its core semantics.
 
-M1 is delivered in two phases:
+M1 is delivered in two phases, with an explicit intermediate stage between them:
 
 - **Phase M1a — CLI-usable ledger (no integrations).** The human/watchtower operator is the execution provider. The CLI becomes durable and usable enough to run a real multi-work delivery by hand, with outcomes recorded by the operator as they become known rather than supplied up front by a script.
+- **Stage M1a+ — agents record via CLI (push mode).** Subagents (ship/verify agents) call the orc CLI themselves to record observations, instead of the operator transcribing on their behalf. Push mode delivers real multi-agent orchestration with zero adapters and de-risks M1b's ExecutionPort design.
 - **Phase M1b — first real adapter.** The execution seat is automated with the first genuine `PORT-EXECUTION` provider: Claude Code headless (`claude -p`).
 
 Both phases exercise value claims that only matter once real, non-scripted work is on the line:
@@ -51,6 +52,31 @@ This must not disturb `STATE-DELIVERY`'s existing dispatch-gate-failure normaliz
 ### M1a acceptance
 
 An operator can run a real multi-work delivery (e.g. this repo's own PRs modeled as Works) purely through `orc dispatch`/`status`/`history`, in the default pending/incremental mode, with hand-recorded outcomes appended between dispatches, surviving process exits between every step.
+
+## Stage M1a+ — agents record via CLI (push mode)
+
+Between M1a and M1b sits an explicit intermediate stage: the recording seat moves from the human operator to the subagents themselves, while the execution seat stays unautomated (no adapters). Ship/verify agents call the orc CLI to record their own observations:
+
+- a **ship agent** claims its Work, does the work, and records the execution settlement and candidate;
+- a **separate verification agent** records the assurance verdict with `evidence_refs`;
+- **no agent ever records a decision** — decisions remain kernel policy per `INV-011`.
+
+Recorded outcomes are observations/claims only: an agent recording `completed` or `accepted` is submitting a claim into the ledger, never committing acceptance itself. The kernel enforces claim ≠ acceptance structurally (`INV-003`, `INV-011`); role separation — the settlement recorder and the verdict recorder MUST be different agents — is process discipline, documented rather than kernel-enforced at this stage.
+
+Rationale: push mode delivers real multi-agent orchestration with zero adapters and de-risks M1b's ExecutionPort design.
+
+### M1a+ deliverable — agent CLI guidance playbook
+
+A written guidance playbook for agents using the CLI, under `docs/playbooks/` (e.g. an agent-cli-usage playbook, or a clearly-scoped section of `PLAYBOOK-CLI-USAGE`), covering:
+
+- role separation — never self-assurance: the settlement recorder and the verdict recorder MUST be different agents;
+- claim-before-work;
+- one writer per run journal;
+- what belongs in candidate content;
+- exit-code handling (including the M1a in-progress exit code);
+- that recorded outcomes are observations/claims only, with the structural-vs-discipline note above.
+
+Sequencing: this playbook is authored **after** SCN-007 fixes the command surface — guidance must not precede the commands it documents. It depends on `TASK-M1-001` and `TASK-M1-002`.
 
 ## Phase M1b — first real adapter (Claude Code headless ExecutionPort)
 
@@ -94,6 +120,7 @@ Durable ownership of `crew-report/v1` (the adapter's append-only execution repor
 
 - pending/incremental dispatch semantics in the application layer and CLI;
 - CLI UX batch: root-cause presentation, strict config validation, refined torn-tail recovery, intent-text display;
+- agent CLI guidance playbook under `docs/playbooks/` (M1a+, authored after SCN-007 fixes the command surface);
 - `docs/contracts/durability-responsibilities.md` and the `execution-session/v1` extension schema;
 - `CONTRACT-CAPABILITIES` durability-honesty amendment;
 - Claude Code headless `PORT-EXECUTION` adapter under `src/orc_werk/` (adapters layer only — `src/orc_werk/core` remains integration-free per `CLAUDE.md`);
@@ -102,6 +129,7 @@ Durable ownership of `crew-report/v1` (the adapter's append-only execution repor
 ## Acceptance
 
 - **M1a:** an operator can run a real multi-work delivery (e.g. this repo's own PRs as works) purely through `orc dispatch`/`status`/`history` with hand-recorded outcomes, surviving process exits between every step.
+- **M1a+:** ship/verify agents record their own observations (settlement + candidate by the ship agent; assurance verdict with `evidence_refs` by a separate verification agent) through the orc CLI per the agent guidance playbook, with no agent recording decisions and no self-assurance.
 - **M1b:** `orc dispatch "<real task>"` produces a real candidate authored by a Claude Code headless run, journaled with `execution-session/v1` provenance, resumable after orchestrator restart.
 
 ## Out of scope
