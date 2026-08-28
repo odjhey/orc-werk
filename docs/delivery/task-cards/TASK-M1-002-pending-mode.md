@@ -6,7 +6,8 @@ authority: normative
 description: Implement pending/incremental mode as the default M1a dispatch behavior, per SCN-007.
 implements:
   - STATE-DELIVERY
-verifies: []
+verifies:
+  - SCN-007
 ---
 
 # TASK-M1-002 — Pending/incremental dispatch implementation
