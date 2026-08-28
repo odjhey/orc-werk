@@ -470,6 +470,72 @@ class TimesSidecarRenderingTest(unittest.TestCase):
             self.assertEqual(status_before.stdout, status_after.stdout)
 
 
+class PoisonedRunPortfolioDegradationTest(unittest.TestCase):
+    """Issue #78: portfolio reports isolate a CoreError to its run."""
+
+    def _build_run(self, tmp_dir: Path, run_id: str) -> None:
+        config = {
+            "run_id": run_id,
+            "attempts": {
+                "work-1": [
+                    {
+                        "outcome": "completed",
+                        "candidate": {"run": run_id},
+                        "assurance": {"verdict": "accepted"},
+                    }
+                ]
+            },
+        }
+        config_path = tmp_dir / f"{run_id}.config.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        result = _run_cli(tmp_dir, "dispatch", f"intent for {run_id}", "--config", str(config_path))
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def _build_portfolio(self, tmp_dir: Path) -> None:
+        for run_id in ("healthy-a", "poisoned", "healthy-b"):
+            self._build_run(tmp_dir, run_id)
+        journal_path = layout.journal_path(tmp_dir / ".orc", "poisoned")
+        records = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()]
+        duplicate = next(record for record in records if record["id"] == "FACT-CANDIDATE-OBSERVED")
+        duplicate["seq"] = records[-1]["seq"] + 1
+        with journal_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(duplicate, sort_keys=True) + "\n")
+
+    def test_index_renders_healthy_runs_and_critical_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            self._build_portfolio(tmp_dir)
+
+            result = _run_cli(tmp_dir, "report", "--index")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            index_html = (tmp_dir / ".orc" / "index.html").read_text(encoding="utf-8")
+            self.assertIn("healthy-a", index_html)
+            self.assertIn("healthy-b", index_html)
+            self.assertIn("poisoned", index_html)
+            self.assertIn("ERR-CONFLICT", index_html)
+            self.assertIn("see orc status poisoned", index_html)
+            self.assertIn('chip chip-critical', index_html)
+
+    def test_all_skips_poisoned_report_and_always_writes_scoped_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            self._build_portfolio(tmp_dir)
+            out_dir = tmp_dir / "reports"
+
+            result = _run_cli(tmp_dir, "report", "--all", "--out-dir", str(out_dir))
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertTrue((out_dir / "healthy-a.report.html").exists())
+            self.assertTrue((out_dir / "healthy-b.report.html").exists())
+            self.assertFalse((out_dir / "poisoned.report.html").exists())
+            self.assertTrue((out_dir / "index.html").exists())
+            index_html = (out_dir / "index.html").read_text(encoding="utf-8")
+            self.assertIn("healthy-a", index_html)
+            self.assertIn("healthy-b", index_html)
+            self.assertIn("poisoned", index_html)
+            self.assertIn("ERR-CONFLICT", index_html)
+            self.assertIn("see orc status poisoned", index_html)
+
+
 class WildcardAllRenderingTest(unittest.TestCase):
     """Issue #40: `orc report --all [--match GLOB] [--out-dir DIR]`
     renders every run whose run_id fnmatches `--match` (default `'*'`)

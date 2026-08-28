@@ -63,7 +63,7 @@ from orc_werk.cli.journal_reading import (
     _root_cause_for_work,
     resolve_journal_dir,
 )
-from orc_werk.core.errors import not_found_error, validation_error
+from orc_werk.core.errors import CoreError, not_found_error, validation_error
 from orc_werk.core.state import (
     STATE_ACCEPTED,
     STATE_ASSURING,
@@ -808,6 +808,20 @@ def _render_index_row(
     )
 
 
+def _render_unreadable_index_row(run_id: str, exc: CoreError) -> str:
+    error_code = str(exc.error.get("error", "ERR-UNKNOWN"))
+    affordance = f"see orc status {run_id}"
+    return (
+        "<tr>"
+        f'<td><code>{html.escape(run_id)}</code></td>'
+        f'<td><span class="muted">(unreadable)</span></td>'
+        f"<td>{_chip(error_code, 'critical')}</td>"
+        "<td>-</td>"
+        f"<td>{html.escape(affordance)}</td>"
+        "</tr>"
+    )
+
+
 def _render_index_table(rows: Sequence[str], *, empty_message: str) -> str:
     if not rows:
         return f'<p class="meta-line">{html.escape(empty_message)}</p>'
@@ -862,14 +876,15 @@ def render_index(
             href = f"{run_id}.report.html"
         else:
             href = layout.report_html_path(directory, run_id).relative_to(directory).as_posix()
-        rows.append(
-            _render_index_row(
-                run_id,
-                journal.history(delivery_run_id=run_id),
-                journal.load_projection(delivery_run_id=run_id),
-                href=href,
-            )
-        )
+        try:
+            history = journal.history(delivery_run_id=run_id)
+            projection = journal.load_projection(delivery_run_id=run_id)
+        except CoreError as exc:
+            # Portfolio views degrade per run: one replay defect must remain
+            # visible without poisoning every healthy run's report (#78).
+            rows.append(_render_unreadable_index_row(run_id, exc))
+            continue
+        rows.append(_render_index_row(run_id, history, projection, href=href))
     empty_message = (
         "(no runs matched this filter)" if scoped else "(no runs found under this journal directory)"
     )
@@ -902,12 +917,19 @@ def render_all(directory: Path, *, match: str, out_dir: Path) -> tuple[list[tupl
 
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs: list[tuple[str, Path]] = []
+    unreadable_run_ids: list[str] = []
     for run_id in run_ids:
-        html_text = render_run_report(directory, run_id)
+        try:
+            html_text = render_run_report(directory, run_id)
+        except CoreError:
+            unreadable_run_ids.append(run_id)
+            continue
         out_path = out_dir / f"{run_id}.report.html"
         out_path.write_text(html_text, encoding="utf-8")
         outputs.append((run_id, out_path))
 
+    # The scoped index replays every matched id in discovery order; this
+    # includes the failures recorded above, which become critical rows.
     index_html = render_index(directory, run_ids=run_ids, flat_hrefs=True)
     index_path = out_dir / "index.html"
     index_path.write_text(index_html, encoding="utf-8")
