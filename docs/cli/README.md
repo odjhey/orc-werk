@@ -108,6 +108,20 @@ demo-run-1: work-1=ACCEPTED attempts=1
 orc status <run-id> for next-step guidance on one run; orc report --index for the full unpaginated HTML index over /abs/path/.orc.
 ```
 
+### `orc config-schema`
+
+```text
+usage: orc config-schema [-h]
+```
+
+Prints the canonical dispatch config reference to stdout and exits `0`.
+The output is the `src/orc_werk/cli/config.py` module docstring verbatim,
+not a second copy of the schema.
+
+```bash
+orc config-schema
+```
+
 ### `orc dispatch`
 
 ```text
@@ -381,14 +395,13 @@ orc dispatch "bad" --config does-not-exist.json --journal ./.orc --run-id demo-b
 
 ## Config schema
 
-The `orc dispatch --config <path>` schema (top-level keys `run_id`,
-`max_attempts`, `resume_capability`, `execution_capabilities`, `plan`,
-`attempts`, and the real-port `execution`/`candidate` blocks) is CLI-owned
-composition, not a canonical protocol shape -- it is documented once, in
-full, in the module docstring of `src/orc_werk/cli/config.py`. That
-docstring is the source of truth; this reference does not fork it. A
-one-minute example lives in `docs/playbooks/cli-usage.md`'s "Config in one
-minute" section.
+The `orc dispatch --config <path>` schema (including `execution`,
+`candidate`, `assurance`, `mirror`, `briefs`, `plan`, and `attempts`) is
+CLI-owned composition, not a canonical protocol shape. Run `orc
+config-schema` to print it. The command emits the module docstring of
+`src/orc_werk/cli/config.py` verbatim; that docstring remains the sole source
+of truth, and this reference does not fork it. A one-minute example lives in
+`docs/playbooks/cli-usage.md`'s "Config in one minute" section.
 
 ## Journal file layout
 

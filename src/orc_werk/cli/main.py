@@ -29,7 +29,12 @@ from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.adapters.memory.work_graph import MemoryWorkGraph
 from orc_werk.app.orchestrator import Orchestrator, is_pending
 from orc_werk.cli.affordances import render_next_block
+from orc_werk.cli import config as config_module
 from orc_werk.cli.config import (
+    _ASSURANCE_ADAPTERS,
+    _CANDIDATE_ADAPTERS,
+    _EXECUTION_ADAPTERS,
+    _MIRROR_ADAPTERS,
     build_dispatch_ports,
     build_mirror,
     build_run_config,
@@ -149,6 +154,12 @@ def _persist_effective_config(path: Path, config: Mapping[str, Any]) -> None:
         path.write_text(json.dumps(dict(config), sort_keys=True, indent=2) + "\n", encoding="utf-8")
     except OSError:
         pass
+
+
+def cmd_config_schema(_args: argparse.Namespace) -> int:
+    """Print the single-source dispatch config reference verbatim."""
+    sys.stdout.write(config_module.__doc__ or "")
+    return 0
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
@@ -536,6 +547,24 @@ docs: docs/playbooks/cli-usage.md (commands, config, exit codes),
 """
 
 
+def _adapter_values(values: frozenset[str], *, default: Optional[str] = None) -> str:
+    ordered = ([default] if default is not None else []) + sorted(values - ({default} if default else set()))
+    return "|".join(ordered)
+
+
+_DISPATCH_CONFIG_EPILOG = f"""\
+config blocks:
+  execution  selects the execution seat ({_adapter_values(_EXECUTION_ADAPTERS, default='scripted')})
+  candidate  selects candidate identification ({_adapter_values(_CANDIDATE_ADAPTERS, default='scripted')})
+  assurance  selects the assurance seat ({_adapter_values(_ASSURANCE_ADAPTERS, default='scripted')})
+  mirror     selects the optional state projection ({_adapter_values(_MIRROR_ADAPTERS)})
+  briefs     supplies per-work prompts and mirror descriptions
+  plan       declares the work graph and dependencies
+  attempts   records per-work scripted outcomes and verdicts
+  orc config-schema for the full reference
+"""
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="orc",
@@ -544,6 +573,13 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    config_schema_parser = subparsers.add_parser(
+        "config-schema",
+        help="print the canonical dispatch config reference",
+        description="Print the canonical dispatch config reference.",
+    )
+    config_schema_parser.set_defaults(func=cmd_config_schema)
 
     dispatch_parser = subparsers.add_parser(
         "dispatch",
@@ -558,10 +594,10 @@ def build_parser() -> argparse.ArgumentParser:
         '    #                "candidate": {"adapter": "git", "repo_path": "/abs/worktree"}}\n'
         "    # exits 3 (pending) while Pi works; re-run the identical command to poll; once\n"
         "    # settled, record the assurance verdict in the config's attempts and re-run again\n\n"
-        "defaults: --journal $ORC_JOURNAL_DIR or ./.orc, --max-attempts 3 (policy default), --run-id derived "
+        + _DISPATCH_CONFIG_EPILOG
+        + "\ndefaults: --journal $ORC_JOURNAL_DIR or ./.orc, --max-attempts 3 (policy default), --run-id derived "
         "deterministically from the intent text when omitted; config execution.adapter="
-        "scripted, candidate.adapter=scripted (see docs/playbooks/cli-usage.md for the real "
-        "acp/git config schema)",
+        "scripted, candidate.adapter=scripted",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     dispatch_parser.add_argument("intent", help="the intent text to submit")

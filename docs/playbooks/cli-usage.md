@@ -17,6 +17,7 @@ Living operational guide for the `orc` CLI. This document evolves with the tool:
 alias orc='PYTHONPATH=src python3 -m orc_werk.cli'
 
 orc                                                             # live text index of ./.orc (issue #43)
+orc config-schema                                               # full dispatch config reference
 orc dispatch "<intent text>" --config cfg.json [--journal DIR] [--max-attempts N]
 orc status  <journal.jsonl | run-id | dir> [--journal DIR]
 orc history <journal.jsonl | run-id | dir> [--journal DIR] [--limit N] [--since-seq SEQ]
@@ -55,7 +56,7 @@ This CLI's help/output conventions follow the [axi 10 principles](https://github
                       {"outcome": "completed", "candidate": {"v": 2}, "assurance": {"verdict": "accepted"}}]} }
 ```
 
-Omit `plan` for a single work (`work-1`). Attempts are consumed in order; verdicts are `accepted | rejected | inconclusive`. Full schema: `src/orc_werk/cli/config.py` module docstring (CLI-owned, non-normative).
+Omit `plan` for a single work (`work-1`). Attempts are consumed in order; verdicts are `accepted | rejected | inconclusive`. Run `orc config-schema` for the full schema; it prints the `src/orc_werk/cli/config.py` module docstring verbatim (CLI-owned, non-normative), so the reference has exactly one source.
 
 ## Real execution: `acp`/`git` config (`TASK-M1-005` CLI wiring)
 

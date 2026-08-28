@@ -39,19 +39,24 @@ normative contract.
 - `plan` is an optional `PORT-WORK-001` multi-work plan (needed to exercise
   a fan-in run like `SCN-005` from the CLI); defaults to
   `orc_werk.app.default_single_work_plan()`.
+- `max_attempts` is the positive retry budget (default `3`);
+  `resume_capability` is the optional capability policy uses for resume;
+  `execution_capabilities` is the list advertised by the execution port.
 
-## Real-port selection (`execution`/`candidate`, `TASK-M1-005` CLI wiring)
+## Port selection (`execution`/`candidate`/`assurance`)
 
-Two further optional top-level objects select real (non-scripted) ports in
-place of `ScriptedExecution`/`ScriptedCandidate`, per `M1-delivery-ledger`'s
-M1b acceptance ("`orc dispatch \"<real task>\"` produces a real candidate
-authored by a Pi run driven over ACP"):
+Three optional top-level objects select the adapters for the delivery seats.
+Their complete adapter vocabularies are: `execution.adapter` is `"scripted"`
+(default) or `"acp"`; `candidate.adapter` is `"scripted"` (default) or
+`"git"`; and `assurance.adapter` is `"scripted"` (default) or
+`"no-mistakes"`.
 
 ```json
 {
   "execution": {"adapter": "acp", "cwd": "/abs/worktree", "agent": "pi",
                  "thought_level": "low", "model": null, "approve_all": false},
-  "candidate": {"adapter": "git", "repo_path": "/abs/worktree"}
+  "candidate": {"adapter": "git", "repo_path": "/abs/worktree"},
+  "assurance": {"adapter": "no-mistakes", "repo_path": "/abs/worktree"}
 }
 ```
 
@@ -71,6 +76,13 @@ authored by a Pi run driven over ACP"):
 - `candidate.adapter`: `"scripted"` (default) or `"git"`. `"git"` selects
   `orc_werk.adapters.git.candidate.GitDiffCandidate(repo_path=...)`.
   `repo_path` is REQUIRED when `adapter == "git"`.
+- `assurance.adapter`: `"scripted"` (default) or `"no-mistakes"`.
+  `"no-mistakes"` selects
+  `orc_werk.adapters.no_mistakes.assurance.NoMistakesAssurance(repo_path=...)`.
+  `repo_path` is REQUIRED when `adapter == "no-mistakes"`. A real assurance
+  adapter derives its own verdict, so attempt entries MUST NOT also provide
+  `assurance`. `assurance.adapter == "no-mistakes"` REQUIRES
+  `candidate.adapter == "git"`.
 - **Constraint**: `execution.adapter == "acp"` REQUIRES `candidate.adapter
   == "git"` -- rejected otherwise. A real agent execution's outcome cannot
   be matched against a config-scripted candidate (`ScriptedCandidate`'s
