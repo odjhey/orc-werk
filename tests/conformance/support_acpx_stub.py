@@ -341,6 +341,54 @@ class AcpxStubWorld:
         rec["last_agent_exit_code"] = exit_code
         self._save(session_name, rec)
 
+    def force_settle(self, session_name: str, *, outcome: str = "completed") -> None:
+        """Directly materialize the OUTSTANDING turn's `stopReason` into the
+        raw stream, independent of any further `sessions show` polling
+        (`current_turn_show_calls`/states-list progression) -- the
+        `AcpExecution` CLI-wiring smoke test's analogue of
+        `mark_daemon_dead`: another direct world-state mutation standing in
+        for real wall-clock time passing.
+
+        Why this exists (`TASK-M1-005` CLI wiring, found while building the
+        real dispatch->pending->poll->settled smoke test): a real turn
+        settles when the agent genuinely finishes, independent of how many
+        times a caller happened to poll `sessions show` -- but this stub's
+        ordinary `states`-list progression (each entry's state only
+        advances on its OWN session's next `sessions show` call) is
+        additionally reset every time `orc_werk.app.Orchestrator`'s
+        unconditional `FX-START-EXECUTION` replay (`_reconcile_ports`,
+        "self-healing") re-submits the prompt on every fresh dispatch
+        process -- `AcpExecution.start()` has no cross-process
+        de-duplication for an idempotency key it already accepted, only an
+        in-process cache, so every ordinary re-poll from a fresh `orc
+        dispatch` invocation resubmits and resets `current_turn_show_calls`
+        to 0 before that dispatch's own single `sessions show` call, which
+        therefore always re-observes the SAME (never-advancing) states
+        entry. A poll-count-driven `states` script literally cannot
+        simulate "still running on dispatch 1, settled by dispatch 2"
+        across two real subprocess invocations for this reason (verified
+        empirically building this test, not merely asserted) -- this
+        method sidesteps it by appending the terminal result directly, the
+        same way a real agent's completion is independent of poll count."""
+        rec = self.session_record(session_name)
+        assert rec is not None, f"session {session_name!r} does not exist yet"
+        stop_reason = {"completed": "end_turn", "cancelled": "cancelled"}.get(outcome, "stub-refusal")
+        next_id = rec["turns_materialized"] + 10
+        self.append_stream(session_name, {"jsonrpc": "2.0", "id": next_id, "result": {"stopReason": stop_reason}})
+        rec["turns_materialized"] += 1
+        rec["current_turn_show_calls"] = 0
+        self._save(session_name, rec)
+
+    def append_stream(self, session_name: str, obj: Mapping[str, Any]) -> None:
+        """Append one raw JSON-RPC-shaped line directly to a session's
+        stream file -- the same file `AcpExecution.inspect()`'s
+        `_scan_stream_terminal_results` reads. Shared by `force_settle`;
+        exposed separately for tests that want to simulate other raw
+        stream shapes (e.g. a `session/load` line with no `stopReason`)."""
+        path = self.world_dir / "sessions" / f"{session_name}.stream.ndjson"
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(dict(obj)) + "\n")
+
     def session_record(self, session_name: str) -> Optional[dict[str, Any]]:
         path = self.world_dir / "sessions" / f"{session_name}.json"
         if not path.exists():

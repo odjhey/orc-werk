@@ -56,6 +56,42 @@ This CLI's help/output conventions follow the [axi 10 principles](https://github
 
 Omit `plan` for a single work (`work-1`). Attempts are consumed in order; verdicts are `accepted | rejected | inconclusive`. Full schema: `src/orc_werk/cli/config.py` module docstring (CLI-owned, non-normative).
 
+## Real execution: `acp`/`git` config (`TASK-M1-005` CLI wiring)
+
+The config above uses the `scripted` adapters (both `execution`/`candidate` default to `"scripted"`) — deterministic test doubles, useful for CI and simulation. To have `orc dispatch` hand work to a real agent (Pi, over ACP) and fingerprint a real git worktree instead, add `execution`/`candidate` blocks:
+
+```json
+{ "execution": {"adapter": "acp", "cwd": "/abs/path/to/worktree", "agent": "pi",
+                 "thought_level": "low", "model": null, "approve_all": false},
+  "candidate": {"adapter": "git", "repo_path": "/abs/path/to/worktree"} }
+```
+
+- `execution.adapter: "acp"` selects `orc_werk.adapters.acp.execution.AcpExecution` (`docs/adapters/acp/mapping.md`) — keyed to exactly what that constructor accepts: `cwd` (REQUIRED — the worktree the agent runs in), `agent` (default `pi`), `thought_level` (default `low`), `approve_all` (default `false` — fail-closed; see the mapping doc's `--approve-all` footgun before ever setting `true`), and `model` (not a constructor parameter — this is the default injected into the per-call prompt request; see below). `execution_capabilities` (the existing top-level key) is reused to constrain `AcpExecution`'s advertised capability set — there is no separate `execution.capabilities` field.
+- `candidate.adapter: "git"` selects `orc_werk.adapters.git.candidate.GitDiffCandidate` (`docs/adapters/git/mapping.md`) fingerprinting `repo_path` (REQUIRED)'s real `HEAD`/worktree diff instead of scripted content.
+- **Constraint**: `execution.adapter == "acp"` REQUIRES `candidate.adapter == "git"` — rejected otherwise (a real execution's outcome cannot be matched to a config-scripted candidate).
+- **The intent text becomes the prompt.** `orc_werk.app.Orchestrator` always calls `ExecutionPort.start()` with an opaque, empty `execution_request` (confirmed by reading `orchestrator.py`: neither `app` nor `core` threads a per-work request payload through it) — a CLI-local wrapper fills in `execution_request["prompt"]` with the run's own intent text (`orc dispatch "<this becomes the prompt>" ...`) before it reaches `AcpExecution`. There is no separate config key for the prompt.
+- **Attempts-merge semantics**: when `candidate.adapter == "git"`, `attempts[work_id]` entries carry no `outcome`/`candidate` — a real port supplies those. When `execution.adapter` is also `"acp"`, an entry may carry **only** `assurance` (the operator/verification agent still records the verdict through the same channel; nothing else is config-scriptable). The candidate's real fingerprint is never authored by hand — it comes from the run's own journal (`orc status`/`orc history` print it as `candidate_fingerprint=fp-...` once observed) and `orc dispatch` matches your recorded verdict to it automatically.
+
+### Real-execution walkthrough
+
+```bash
+orc dispatch "reply with the word ping" --config acp-cfg.json --journal ./.orc
+# exit 3: work-1 pending=true awaiting=execution-outcome -- Pi is working, nothing to do yet.
+
+orc dispatch "reply with the word ping" --config acp-cfg.json --journal ./.orc   # re-run, identical command
+# once Pi's turn settles: exit 3 again, now awaiting=assurance-verdict, and
+# candidate_fingerprint=fp-<real hash> is printed -- a real candidate was
+# identified and journaled with execution-session/v1 provenance.
+
+# a (different) verification agent edits acp-cfg.json to add, e.g.:
+#   "attempts": {"work-1": [{"assurance": {"verdict": "accepted"}}]}
+
+orc dispatch "reply with the word ping" --config acp-cfg.json --journal ./.orc   # re-run again
+# exit 0: work-1 ACCEPTED.
+```
+
+`docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`) governs the two-seat discipline (ship agent records the settlement; a *different* verification agent independently derives the candidate and records the verdict) — unchanged for real ports.
+
 ## Reading a run
 
 - `status` — per-work terminal state, attempt count, current candidate fingerprint.
@@ -75,7 +111,8 @@ Update this table when found; remove rows when the fix merges. "Workaround" is w
 
 | Issue | Symptom | Workaround | Status |
 |---|---|---|---|
-| Found dogfooding issue #43's bare-`orc` index | `JournalPort.load_projection` (`JSONLJournal`) does not accept/forward a per-run `max_attempts`, so `reduce()` always replays against its own default. A run `dispatch`ed with a non-default `max_attempts` whose budget-exhaustion transition depends on that value (e.g. `attempt_number` sits between the run's actual budget and the reducer default) can fail a *fresh* replay — `orc status <run>`, `orc report <run>`, `report --index`/`--all`, and the bare-`orc` index — with a canonical `ERR-CONFLICT` ("`FACT-WORK-BLOCKED` illegal from state 'READY'"), even though the live `dispatch` that produced the journal completed and printed the correct terminal state (the in-process orchestrator's own projection, not a `load_projection` replay, is what `dispatch` prints). | None known short of avoiding non-default `max_attempts` for runs you'll later `status`/`report`. The bare-`orc` index (issue #43) degrades this per-run to `<run_id>: (unreadable: ERR-CONFLICT -- see orc status <run_id>)` rather than failing the whole listing; `status`/`report`/`history` on the affected run still exit `2`. | Open — root cause is `core`/`PORT-JOURNAL` (`JournalPort.load_projection`'s signature and `reduce()`'s default), out of scope for a CLI-only task; needs its own task card. |
+| Found dogfooding issue #43's bare-`orc` index (**#52**) | `JournalPort.load_projection` (`JSONLJournal`) does not accept/forward a per-run `max_attempts`, so `reduce()` always replays against its own default. A run `dispatch`ed with a non-default `max_attempts` whose budget-exhaustion transition depends on that value (e.g. `attempt_number` sits between the run's actual budget and the reducer default) can fail a *fresh* replay — `orc status <run>`, `orc report <run>`, `report --index`/`--all`, and the bare-`orc` index — with a canonical `ERR-CONFLICT` ("`FACT-WORK-BLOCKED` illegal from state 'READY'"), even though the live `dispatch` that produced the journal completed and printed the correct terminal state (the in-process orchestrator's own projection, not a `load_projection` replay, is what `dispatch` prints). | None known short of avoiding non-default `max_attempts` for runs you'll later `status`/`report`. The bare-`orc` index (issue #43) degrades this per-run to `<run_id>: (unreadable: ERR-CONFLICT -- see orc status <run_id>)` rather than failing the whole listing; `status`/`report`/`history` on the affected run still exit `2`. | Open — tracked as issue [#52](https://github.com/odjhey/orc-werk/issues/52) (verification follow-up from PR #51); root cause is `core`/`PORT-JOURNAL` (`JournalPort.load_projection`'s signature and `reduce()`'s default), out of scope for a CLI-only task; needs its own task card. |
+| Found building `TASK-M1-005`'s CLI wiring (real `execution.adapter: "acp"`) | `Orchestrator._reconcile_ports` unconditionally replays every historical `FX-START-EXECUTION` effect by calling `ExecutionPort.start()` again on **every** fresh `orc dispatch` process ("self-healing" rebuild of volatile port-side state). Harmless for the scripted adapters (pure, no real side effect), but `AcpExecution.start()`'s own idempotency cache is in-process only — a fresh CLI process has an empty cache and unconditionally resubmits the prompt to the same `acpx` session, so **every** re-poll of a still-in-flight real attempt (not just genuine crash recovery) queues a duplicate turn. Verified empirically against the stub-`acpx` harness while building this task's wiring smoke test. | Not correctness-breaking for a real agent (a real turn settles on wall-clock completion, independent of poll count, so `inspect()`'s "use the latest recorded result" fallback still resolves correctly) — but wasteful (the agent is asked to redo the same turn on every poll while it is still working). No workaround short of polling less often. | Open — `app`/`adapters`-layer (`Orchestrator._reconcile_ports` and/or `AcpExecution.start()`'s cross-process idempotency), out of scope for a CLI-only task; needs its own docs-first task card (candidate fixes sketched in that PR's body). |
 
 Prior rows closed as of `TASK-M1-003` (#16, #17, #18, #23, that task's PR).
 
