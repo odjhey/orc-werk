@@ -39,6 +39,8 @@ This contract is the completeness ledger: every category of non-core durable inf
 | Runtime lifecycle/background evidence (session/turn/background start-stop, derived availability) | no | runtime/execution adapter | boundary noted here only; no port defined yet | deferred — hook is `CAP-EXEC-STRUCTURED-LIFECYCLE`; a future `RuntimeEvidencePort` or provider-owned durable lifecycle store is the anticipated shape, not yet designed |
 | Attention identity and handling history | not yet | future attention adapter/port | none | deferred — boundary note only; M0 excludes attention, `INV-017` is conditional on attention being enabled |
 
+Disposition: narrative/report content is provider-owned and the ledger journals resolvable references; sidecar extensions are the fallback where no provider-native store exists, with `execution-session/v1` and `EXT-CREW-REPORT-V1` as instances.
+
 `CONTRACT-CAPABILITIES` records the normative rule tying advertised capabilities to these durability obligations; see "Capability durability obligations" below.
 
 ## Capability durability obligations
