@@ -46,4 +46,4 @@ Orc Werk's canonical domain, protocol, persistence, and port semantics must not 
 
 ## P-010 — Specialized semantics extend rather than contaminate the core
 
-A concept that is useful to a provider/workflow but is not required by the generic delivery state machine should use `CONTRACT-EXTENSIONS` instead of becoming a mandatory core field. Extension semantics must not override canonical Orc Werk semantics.
+A concept that is useful to a provider/workflow but is not required by the generic delivery state machine should use `CONTRACT-EXTENSIONS` instead of becoming a mandatory core field. Extension semantics must not override canonical Orc Werk semantics; policy may consume a known extension only when it explicitly opts into that extension/version.
