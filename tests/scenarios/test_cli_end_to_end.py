@@ -70,6 +70,33 @@ class CliEndToEndTest(unittest.TestCase):
             self.assertEqual(history.stdout.count("DEC-DISPATCH"), 1)
             self.assertEqual(history.stdout.count("DEC-RETRY"), 1)
 
+            run_id_only_resume = self._run_cli(tmp_dir, "dispatch", "--run-id", "cli-e2e-run")
+            self.assertEqual(run_id_only_resume.returncode, 0, msg=run_id_only_resume.stderr)
+            self.assertIn("run: cli-e2e-run", run_id_only_resume.stdout)
+
+            positional_resume = self._run_cli(
+                tmp_dir, "dispatch", "ship the widget", "--run-id", "cli-e2e-run"
+            )
+            self.assertEqual(positional_resume.returncode, 0, msg=positional_resume.stderr)
+
+    def test_new_run_intent_equal_to_existing_run_id_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config_path = tmp_dir / "config.json"
+            config_path.write_text(json.dumps(CONFIG), encoding="utf-8")
+            created = self._run_cli(tmp_dir, "dispatch", "normal new work", "--config", str(config_path))
+            self.assertEqual(created.returncode, 0, msg=created.stderr)
+
+            collision = self._run_cli(tmp_dir, "dispatch", "cli-e2e-run")
+            self.assertEqual(collision.returncode, 2)
+            error = json.loads(collision.stderr)
+            self.assertEqual(error["error"], "ERR-VALIDATION")
+            self.assertIn("intent 'cli-e2e-run'", error["message"])
+            self.assertIn("existing run id 'cli-e2e-run'", error["message"])
+            self.assertIn("orc dispatch --run-id cli-e2e-run", error["message"])
+            self.assertIn("reword the intent", error["message"])
+            self.assertEqual(layout.discover_run_ids(tmp_dir / ".orc"), ["cli-e2e-run"])
+
     def test_blocked_run_exits_nonzero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
