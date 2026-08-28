@@ -100,16 +100,17 @@ predicts each attempt's `execution_id` up front via the same public
 `orc_werk.core.idempotency.idempotency_key` derivation so a human-authored
 config never has to spell out a hash by hand.
 
-## Beads mirror (optional, write-only, `TASK-M2-006`)
+## Per-work briefs and Beads mirror (optional, `TASK-M2-006`)
 
-A further optional top-level object wires an optional, write-only
-projection of run/work state and briefs into a shared `bd` database
+The optional `briefs` mapping supplies per-work ACP prompts and, when the
+mirror is configured, descriptions for the write-only projection of
+run/work state into a shared `bd` database
 (`docs/adapters/beads/mapping.md` has the full design):
 
 ```json
 {
   "mirror": {"adapter": "beads", "workspace": "/abs/bd-initialized/dir", "bd_bin": "bd"},
-  "briefs": {"work-1": "per-work brief text, becomes the bd issue description"}
+  "briefs": {"work-1": "per-work brief text, becomes the ACP prompt and bd issue description"}
 }
 ```
 
@@ -128,10 +129,11 @@ projection of run/work state and briefs into a shared `bd` database
   `.beads` database; see the mapping doc's "Workspace guard" section).
 - `briefs` is a CLI-owned, non-canonical sibling to `plan` (`PORT-WORK-001`
   itself carries no brief/description field -- `CONTRACT-DURABILITY`'s
-  multi-work-brief row stays adapter-owned, not core) keyed by `work_id`.
-  A work with no entry falls back to the run's own intent text -- never an
-  empty description when the run-level intent text is available (see the
-  mapping doc's brief-fallback note).
+  multi-work-brief row stays outside core) keyed by `work_id`. Each entry
+  feeds both that work's ACP execution prompt and its Beads mirror issue
+  description. A work with no entry falls back to the run's own intent text
+  for both uses -- never an empty prompt/description when the run-level
+  intent text is available (see the mapping doc's brief-fallback note).
 - A degraded mirror (one or more `bd` invocations failed) is NEVER a
   dispatch failure: `cmd_dispatch` prints a `mirror: degraded (...)` note
   to stderr and returns the SAME exit code the run would have had without
@@ -548,8 +550,8 @@ def _validate_mirror_config(value: Any) -> None:
 def _validate_briefs(value: Any) -> None:
     """`briefs` (`TASK-M2-006`): a CLI-owned, non-canonical `work_id ->
     brief text` mapping, entirely optional and independent of `mirror` --
-    a config MAY supply briefs even when no mirror is configured (they are
-    simply unused in that case), matching how `attempts` is validated
+    a config MAY supply briefs even when no mirror is configured (ACP
+    execution still consumes them), matching how `attempts` is validated
     independently of which ports are real."""
     if value is None:
         return
@@ -736,23 +738,31 @@ class _IntentPromptExecution(ExecutionPort):
     a non-empty string. Since `app`/`core`/`adapters` are out of scope for
     this task (CLI + docs + tests only), this class composes around the
     real adapter instead of changing it or `Orchestrator`: it fills in
-    `{"prompt": <the run's intent text>}` (and an optional configured
-    default `model`) whenever the caller passes an empty/absent `prompt`,
-    then delegates unchanged. Every other operation passes straight
-    through -- this is composition, not a reimplementation."""
+    `{"prompt": <the work's brief, or the run's intent text>}` (and an
+    optional configured default `model`) whenever the caller passes an
+    empty/absent `prompt`, then delegates unchanged. Every other operation
+    passes straight through -- this is composition, not a reimplementation."""
 
-    def __init__(self, inner: ExecutionPort, *, intent_text: str, model: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        inner: ExecutionPort,
+        *,
+        intent_text: str,
+        briefs: Mapping[str, str],
+        model: Optional[str] = None,
+    ) -> None:
         self._inner = inner
         self._intent_text = intent_text
+        self._briefs = dict(briefs)
         self._model = model
 
     def capabilities(self) -> frozenset[str]:
         return self._inner.capabilities()
 
-    def _filled_request(self, request: Mapping[str, Any]) -> dict[str, Any]:
+    def _filled_request(self, request: Mapping[str, Any], *, work_id: Optional[str] = None) -> dict[str, Any]:
         filled = dict(request)
         if not filled.get("prompt"):
-            filled["prompt"] = self._intent_text
+            filled["prompt"] = self._briefs.get(work_id, self._intent_text)
         if self._model is not None and "model" not in filled:
             filled["model"] = self._model
         return filled
@@ -760,7 +770,7 @@ class _IntentPromptExecution(ExecutionPort):
     def start(self, *, work_id: str, execution_request: Mapping[str, Any], idempotency_key: str) -> Any:
         return self._inner.start(
             work_id=work_id,
-            execution_request=self._filled_request(execution_request),
+            execution_request=self._filled_request(execution_request, work_id=work_id),
             idempotency_key=idempotency_key,
         )
 
@@ -822,7 +832,11 @@ def _build_no_mistakes_assurance(assurance_cfg: Mapping[str, Any], *, intent_tex
 
 
 def _build_acp_execution(
-    execution_cfg: Mapping[str, Any], *, intent_text: str, capabilities: Iterable[str]
+    execution_cfg: Mapping[str, Any],
+    *,
+    intent_text: str,
+    briefs: Mapping[str, str],
+    capabilities: Iterable[str],
 ) -> ExecutionPort:
     """`AcpExecution`, constructed from exactly the `execution` config keys
     that constructor genuinely accepts (module docstring, "Real-port
@@ -840,7 +854,12 @@ def _build_acp_execution(
     if caps:
         kwargs["capabilities"] = caps
     inner = AcpExecution(**kwargs)
-    return _IntentPromptExecution(inner, intent_text=intent_text, model=execution_cfg.get("model"))
+    return _IntentPromptExecution(
+        inner,
+        intent_text=intent_text,
+        briefs=briefs,
+        model=execution_cfg.get("model"),
+    )
 
 
 def _observed_candidate_fingerprints(history: Iterable[Mapping[str, Any]]) -> dict[str, list[str]]:
@@ -946,7 +965,10 @@ def build_dispatch_ports(
     execution: ExecutionPort
     if execution_adapter == "acp":
         execution = _build_acp_execution(
-            execution_cfg, intent_text=intent_text, capabilities=execution_capabilities
+            execution_cfg,
+            intent_text=intent_text,
+            briefs=config.get("briefs") or {},
+            capabilities=execution_capabilities,
         )
     else:
         execution_script = {

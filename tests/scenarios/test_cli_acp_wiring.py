@@ -24,10 +24,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from orc_werk.adapters.acp.execution import session_name_for_idempotency_key
 from orc_werk.adapters.git.candidate import GitDiffCandidate
 from orc_werk.adapters.jsonl import layout
+from orc_werk.cli import config as cli_config
 from orc_werk.cli.config import build_dispatch_ports, load_config
 from orc_werk.core.effects import FX_START_EXECUTION
 from orc_werk.core.errors import CoreError
@@ -191,6 +193,60 @@ class AcpConfigValidationTest(unittest.TestCase):
             )
             with self.assertRaises(CoreError):
                 load_config(bad_path)
+
+
+class AcpPromptWiringTest(unittest.TestCase):
+    """CLI-owned briefs become per-work ACP start prompts."""
+
+    class _RecordingExecution:
+        def __init__(self) -> None:
+            self.starts: list[dict] = []
+
+        def capabilities(self):
+            return frozenset()
+
+        def start(self, *, work_id, execution_request, idempotency_key):
+            self.starts.append({"work_id": work_id, "execution_request": dict(execution_request)})
+            return object()
+
+    def _build(self, *, briefs=None):
+        inner = self._RecordingExecution()
+        config = {
+            "execution": {"adapter": "acp", "cwd": "/tmp"},
+            "candidate": {"adapter": "git", "repo_path": "/tmp"},
+        }
+        if briefs is not None:
+            config["briefs"] = briefs
+        with patch.object(cli_config, "AcpExecution", return_value=inner):
+            execution, _, _ = build_dispatch_ports(
+                config, delivery_run_id="r1", intent_text="run intent"
+            )
+        return execution, inner
+
+    def test_multi_work_briefs_supply_distinct_prompts(self) -> None:
+        execution, inner = self._build(briefs={"a": "brief a", "b": "brief b"})
+
+        execution.start(work_id="a", execution_request={}, idempotency_key="ka")
+        execution.start(work_id="b", execution_request={}, idempotency_key="kb")
+
+        self.assertEqual(
+            [start["execution_request"]["prompt"] for start in inner.starts],
+            ["brief a", "brief b"],
+        )
+
+    def test_absent_brief_entry_falls_back_to_intent(self) -> None:
+        execution, inner = self._build(briefs={"a": "brief a"})
+
+        execution.start(work_id="b", execution_request={}, idempotency_key="kb")
+
+        self.assertEqual(inner.starts[0]["execution_request"]["prompt"], "run intent")
+
+    def test_single_work_without_briefs_is_unchanged(self) -> None:
+        execution, inner = self._build()
+
+        execution.start(work_id="work-1", execution_request={}, idempotency_key="k1")
+
+        self.assertEqual(inner.starts[0]["execution_request"]["prompt"], "run intent")
 
 
 class AcpWiringSmokeTest(unittest.TestCase):
