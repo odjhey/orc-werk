@@ -83,6 +83,30 @@ The reference CLI's config format is explicitly non-normative, CLI-owned composi
 
 The canonical state machine, its invariants, the facts/decisions/effects vocabulary, and the portable record shapes are not customization surfaces. Cross-deployment interoperability and the product's guarantees exist precisely because these stay fixed across every adapter and extension. When one of them does not fit your case, that is a contract-change proposal upstream (`docs/README.md`'s authoring rules), not a local fork.
 
+## 4. Worked example — a fleet control tower (Rozoro)
+
+Rozoro is a control-tower persona: an operator delegating parallel work to a fleet of coding agents, then watching, steering, and reaping what comes back. It is a useful worked example precisely because it is not itself an Orc Werk deployment — mapping it onto the four questions any adopter must answer (`PRODUCT-THESIS`) exposes both the fit and the honest gaps.
+
+**Candidate.** The artifact a crew's report points at — a head sha or PR for repo work. For artifact-less tasks (research, a written recommendation), the written findings are themselves promoted to candidate. This is the central reframing a tower persona forces: a crew report is a claim, not a fact — the eventual `claimed_verdict` field of a future crew-report extension (see the cross-reference below) — and only an accepted artifact satisfies `INV-003`. The tower's job is to stop treating "the crew said done" as "done."
+
+**Assurance.** The operator, a verifier crew member, or a validation pipeline, each wrapped as an `AssurancePort`. Nothing about assurance requires it to be human; the port boundary is what lets a tower swap a hasty human glance for a real verification pipeline without touching the rest of the model.
+
+**Work.** Tower tasks map 1:1 onto `Work`, mostly as flat plans rather than deep dependency graphs. Claim-once-per-lineage *is* crew assignment: a crew member claiming a task is exactly `INV-011`'s single-claimant discipline. A crew sitting in "waiting"/"inputs needed" maps onto the pending state (`SCN-007`) — it is not a failure, it is a Work resting at `EXECUTING`/`ASSURING` for an outcome not yet observed. Steering a crew member — sending it a follow-up instruction mid-task — is the send operation, `CAP-EXEC-SEND`.
+
+**Durable domain data.** `execution-session/v1` (already registered, `EXT-EXECUTION-SESSION-V1`) covers session/resume provenance. A future `crew-report/v1` — the adapter-owned append-only turn log — is the open gate `CONTRACT-DURABILITY` already records for M1b design time; this persona is exactly the design input that gate is waiting on. Work-spec briefs (the delegated task description a crew member starts from) are the multi-work delegated-brief case the same contract leaves open.
+
+### Honest misfits
+
+Not everything about a tower experience is in scope for Orc Werk's kernel:
+
+- **Live cockpit/panes.** Watching a crew member's terminal in real time is a feed; `PORT-JOURNAL` is a record. The journal replays what happened, it does not stream what is happening.
+- **Fleet-wide dashboards.** A view spanning many crew members/runs at once is composition-layer aggregation over many individual run journals, not a kernel concern — the kernel's unit is one `DeliveryRun`.
+- **Needs-action/ack workflows.** Surfacing "this crew member needs your attention" and tracking acknowledgement waits on the reserved attention model (`INV-017`, out of scope through M1 per the milestone ledger).
+
+### Conclusion
+
+A tower tool is not replaced by Orc Werk — it is split. State, acceptance, and durability move into the kernel (`Work`/`Execution`/`Candidate`/`Assurance`, the journal, candidate-bound acceptance); the cockpit and fleet-wide UX stay in the composition layer, built on top. An end user driving a tower adopts the kernel underneath it without ever needing to know the kernel's name.
+
 ## Related
 
 - `PRODUCT-THESIS`

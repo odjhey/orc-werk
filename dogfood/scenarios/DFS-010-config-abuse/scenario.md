@@ -3,7 +3,7 @@ id: DFS-010
 type: scenario
 status: current
 authority: informative
-description: Six malformed/hostile dispatch configs — four already fail closed correctly, two are silently accepted (issue #17).
+description: Six malformed/hostile dispatch configs — four already fail closed correctly, one is silently accepted (issue #17), one now rests pending per SCN-007/PR #29.
 ---
 
 # DFS-010: config abuse — invalid JSON, cycle, dup id, unknown dep, unknown key, missing attempts
@@ -21,8 +21,12 @@ boundaries" bar still applies to how it fails. Round 1 found it is
 fail-open in exactly two ways where the rest of the system (the
 `MemoryWorkGraph`/plan-validation layer underneath it) is already
 fail-closed. This scenario runs all six abuse cases together so the
-contrast is visible: four fail loud and correctly, two fail silently
-(issue #17).
+contrast is visible: four fail loud and correctly, one fails silently
+(issue #17, `unknownkey.json`). The sixth, `missingattempts.json`, was
+originally grouped with the issue-#17 failures too, but since PR #29
+(pending/incremental mode, `TASK-M1-002`) its missing-`attempts` shape is
+the valid fully-incremental case, not a validation gap — see its
+expected-outcome entry below.
 
 ## Setup
 
@@ -87,17 +91,21 @@ attempts=1`, full 19-record journal. A typo'd config key (e.g.
 `exeuction_capabilities` for `execution_capabilities`) produces no signal
 at all that anything was misspelled.
 
-**`missingattempts.json` — known bug, issue #17:** expected (post-fix)
-canonical `ERR-VALIDATION` at load time (or an explicit documented
-opt-out), rejecting a planned work with no `attempts` coverage, no journal
-created. Actual on current `master`: work `a` completes normally, then
-work `b` — which has no scripted attempts — hits `ScriptedExecution`'s
-"no scripted outcome for this attempt" (`ERR-NOT-FOUND`) on every attempt,
-which the orchestrator converts into synthetic
-`exec-capability-failure-...` failed attempts (same masking pattern as
-DFS-006/DFS-007), exhausting the budget: exit `1`,
-`blocked_reason=retry-budget-exhausted` for `b` — the real cause ("this
-work was never scripted") is buried exactly like issue #16's cases.
+**`missingattempts.json` — superseded by PR #29 (pending/incremental mode,
+`TASK-M1-002`), re-scoped per Item 2's issue-#17 re-scope:** since PR #29,
+pending/incremental mode is the M1a default, so a work with no `attempts`
+coverage is no longer an error — it is the valid fully-incremental case.
+Confirmed on current `master`: work `a` (fully scripted) completes and
+reaches `ACCEPTED`; work `b` — which has no scripted attempts at all —
+starts its first attempt (`FACT-EXEC-STARTED` journaled) and rests
+`EXECUTING`, `pending=true`, `awaiting=execution-outcome`, exactly per
+`SCN-007`. `dispatch` exits `3` (run non-terminal, pending operator
+input), not `1`/budget-exhausted. Issue #17's *remaining* scope for this
+config shape is load-time strict validation only: `unknownkey.json`
+(a structurally-unknown top-level key) is still the live bug case, and any
+stricter attempts-coverage requirement is opt-in (e.g. `--strict`), never
+a load-time rejection of the missing-`attempts` shape itself (per Item 2's
+re-scope, PR #29 verification ruling).
 
 ## Judgment notes
 
@@ -105,20 +113,48 @@ The four correct cases are worth re-running on every checker pass mainly
 as a regression guard on `MemoryWorkGraph`'s plan validation — they are
 unlikely to break, but if they ever silently started succeeding that would
 be a serious contract regression (fail-open on plan integrity), not mere
-friction. The two known-bug cases: report BUG each time, quoting exit code
-and whether the config's mistake was signaled at all — the point of this
-scenario is exactly that a human would not otherwise notice their config
-had a typo or a validation gap until output looked wrong minutes later.
+friction. The remaining known-bug case (`unknownkey.json`): report BUG
+each time, quoting exit code and whether the config's mistake was signaled
+at all — the point of this scenario is exactly that a human would not
+otherwise notice their config had a typo until output looked wrong minutes
+later. `missingattempts.json` is no longer a bug case (see above) but is
+still worth re-running as a regression guard on the pending/incremental
+default itself.
 
 ## Verification
 
 `invalid.json`, `cycle.json`, `dup.json`, `unknowndep.json` executed
 against `master` (worktree `feat/dogfood-corpus`) on 2026-08-28: outputs
 above (exact error text, `details`, and 1-line-journal-or-none) are
-transcribed verbatim from that run. `unknownkey.json` and
-`missingattempts.json` were **not** re-executed (both are known-failing
-per issue #17); their "actual on current master" descriptions are
-transcribed from the round-1 dogfooding session's recorded journals
-(`s8d-unknown.jsonl`, 19 records ending `FACT-WORK-COMPLETED`;
-`s8h-missing.jsonl`, 38 records ending `FACT-WORK-BLOCKED` with
-`reason: retry-budget-exhausted` for work `b`).
+transcribed verbatim from that run. `unknownkey.json` was **not**
+re-executed (still known-failing per issue #17); its "actual on current
+master" description is transcribed from the round-1 dogfooding session's
+recorded journal (`s8d-unknown.jsonl`, 19 records ending
+`FACT-WORK-COMPLETED`).
+
+`missingattempts.json` **was** re-executed against `master` (worktree
+`docs-m1a-batch`, commit `fab370f`, post-PR-#29) on 2026-08-28:
+
+```sh
+JOURNAL_DIR=/tmp/dfs010/missingattempts
+PYTHONPATH=src python3 -m orc_werk.cli dispatch "config abuse: missingattempts" \
+  --config "dogfood/scenarios/DFS-010-config-abuse/missingattempts.json" \
+  --journal "$JOURNAL_DIR"
+```
+
+Real output:
+
+```
+run: s8h-missing
+journal: /tmp/dfs010/missingattempts/s8h-missing.jsonl
+work a: state=ACCEPTED attempts=1 candidate_fingerprint=fp-5041bf1f713df204784353e8
+work b: state=EXECUTING attempts=1 candidate_fingerprint=- pending=true awaiting=execution-outcome attempt=1
+pending: run is non-terminal, awaiting operator-recorded input for: b
+exit=3
+```
+
+Journal: 26 records, last record `FACT-WORK-COMPLETED` for work `a`
+(work `b`'s last record is `FACT-EXEC-STARTED`, attempt 1, matching
+`SCN-007` invocation-1 shape) — this supersedes the round-1 recorded
+`s8h-missing.jsonl` (38 records ending `FACT-WORK-BLOCKED`,
+`reason: retry-budget-exhausted`), which reflected pre-PR-#29 behavior.
