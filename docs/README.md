@@ -59,6 +59,7 @@ Research sources explain where ideas came from; they never override current Orc 
 | `P-` | Product principle |
 | `INV-` | Invariant |
 | `ENT-` | Domain entity |
+| `CONTRACT-` | Cross-cutting contract |
 | `PORT-` | Port |
 | `FACT-` | Fact |
 | `DEC-` | Decision |
