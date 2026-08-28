@@ -1,0 +1,714 @@
+"""`orc report` (`TASK-M1-008`): read-only, stdlib-only, self-contained HTML
+renderer for one DeliveryRun's journal (`PORT-JOURNAL-ENVELOPE`) plus its
+`crew-report/v1` log (`EXT-CREW-REPORT-V1`), for async human review by a
+reader who did not watch the run happen; and a small local index page over
+a journal directory's runs.
+
+This module is CLI-owned composition, not product semantics
+(`docs/delivery/task-cards/TASK-M1-008-run-report-renderer.md`): it
+displays exactly what the journal/report log already recorded, computing
+no derived judgments the kernel did not make. It reuses:
+
+- the reducer projection (`orc_werk.core.reducer` via
+  `JSONLJournal.load_projection`) for per-work state, never re-deriving it
+  by hand;
+- the same target-resolution/presentation helpers `status`/`history`
+  already use (`orc_werk.cli.journal_reading`), so a missing run fails
+  closed with canonical `ERR-NOT-FOUND` the same way;
+- the public `JournalPort`/`CrewReportLog` adapter APIs for all reads --
+  never raw file parsing.
+
+Presentation rules (normative for this surface, from the task card):
+claims (`crew-report/v1`) are visually quarantined from canonical
+facts/decisions/verdicts (muted/outlined, labeled "claim", never colored by
+status); status colors are reserved for canonical delivery
+state/verdict/outcome and always paired with a text label (icon + word,
+never color alone -- `dataviz` skill's status-palette/marks-and-anatomy
+guidance); output is self-contained (inline CSS only, no external
+requests), light+dark via `prefers-color-scheme`; all dynamic text is
+`html.escape`d; wide content scrolls in its own container. Hard
+constraints: stdlib-only string templating (no template engine); strictly
+read-only except the one announced output HTML file.
+"""
+
+from __future__ import annotations
+
+import argparse
+import html
+import json
+from pathlib import Path
+from typing import Any, Mapping, Optional, Sequence
+
+from orc_werk.adapters.jsonl.crew_report import CrewReportLog
+from orc_werk.adapters.jsonl.journal import JSONLJournal
+from orc_werk.app.orchestrator import is_pending
+from orc_werk.cli.journal_reading import (
+    DEFAULT_JOURNAL_DIR,
+    _awaiting_label,
+    _intent_text,
+    _require_journal_file,
+    _resolve_journal,
+    _root_cause_for_work,
+)
+from orc_werk.core.errors import not_found_error, validation_error
+from orc_werk.core.state import (
+    STATE_ACCEPTED,
+    STATE_ASSURING,
+    STATE_BLOCKED,
+    STATE_EXECUTING,
+    STATE_READY,
+    DeliveryProjection,
+    WorkProjection,
+)
+
+# ---------------------------------------------------------------------------
+# Status-color mapping (dataviz skill's status palette: good/warning/
+# serious/critical, "fixed -- never themed"; reserved for canonical
+# delivery state/verdict/outcome only -- never used for crew-report claims,
+# per the task card's quarantine rule).
+# ---------------------------------------------------------------------------
+
+_STATE_STATUS: Mapping[str, str] = {
+    STATE_ACCEPTED: "good",
+    STATE_BLOCKED: "critical",
+    STATE_EXECUTING: "warning",
+    STATE_ASSURING: "warning",
+    STATE_READY: "neutral",
+}
+_VERDICT_STATUS: Mapping[str, str] = {
+    "accepted": "good",
+    "rejected": "critical",
+    "inconclusive": "warning",
+}
+_OUTCOME_STATUS: Mapping[str, str] = {
+    "completed": "good",
+    "failed": "critical",
+}
+_STATUS_ICON: Mapping[str, str] = {
+    "good": "✓",
+    "warning": "⏳",
+    "serious": "⚠",
+    "critical": "✕",
+    "neutral": "○",
+}
+
+
+def _compact_json(data: Any) -> str:
+    return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
+
+def _esc(value: Any) -> str:
+    return html.escape(str(value))
+
+
+def _esc_json(data: Any) -> str:
+    return f"<code>{html.escape(_compact_json(data))}</code>"
+
+
+def _chip(label: str, status: str) -> str:
+    """A status chip: icon + word, never color-alone (marks-and-anatomy:
+    "labels+icons never color-alone"; "text never wears the data color" --
+    the colored icon carries the status, the label text stays in the ink
+    token)."""
+    icon = _STATUS_ICON.get(status, _STATUS_ICON["neutral"])
+    return (
+        f'<span class="chip chip-{html.escape(status)}">'
+        f'<span class="chip-icon" aria-hidden="true">{icon}</span>'
+        f'<span class="chip-label">{html.escape(label)}</span>'
+        "</span>"
+    )
+
+
+def _state_chip(work_id: str, wp: WorkProjection) -> str:
+    status = _STATE_STATUS.get(wp.state, "neutral")
+    return _chip(f"{work_id}: {wp.state}", status)
+
+
+# ---------------------------------------------------------------------------
+# Journal-record helpers (read-only derivations over already-loaded
+# history; no new semantics -- pure presentation lookups).
+# ---------------------------------------------------------------------------
+
+
+def _work_id_of(record: Mapping[str, Any]) -> Optional[str]:
+    return record.get("data", {}).get("work_id") or None
+
+
+def _fact_seq_index(history: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str], int]:
+    """Map `(fact_id, compact-json(data))` -> `seq`, so a decision's
+    embedded `basis` fact snapshots (which carry no `seq` of their own --
+    `PORT-JOURNAL-ENVELOPE`'s basis snapshots are plain fact dicts) can be
+    linked back to the exact journaled record that quotes the same id+data,
+    when one exists in this run's history."""
+    index: dict[tuple[str, str], int] = {}
+    for record in history:
+        if record.get("kind") == "fact":
+            key = (record.get("id", ""), _compact_json(record.get("data", {})))
+            index[key] = record.get("seq", 0)
+    return index
+
+
+def _candidate_subject_identities(
+    history: Sequence[Mapping[str, Any]], work_id: str
+) -> dict[str, Any]:
+    """Portable `subject_identity` per `candidate_id`, read from this
+    Work's journaled `FX-IDENTIFY-CANDIDATE` effect records --
+    `FACT-CANDIDATE-OBSERVED` itself only carries the fingerprint, not the
+    subject identity (`PROTOCOL-FACTS`)."""
+    result: dict[str, Any] = {}
+    for record in history:
+        if record.get("kind") != "effect" or record.get("id") != "FX-IDENTIFY-CANDIDATE":
+            continue
+        if _work_id_of(record) != work_id:
+            continue
+        candidate = record.get("data", {}).get("dispatch_result", {}).get("candidate")
+        if isinstance(candidate, Mapping):
+            candidate_id = candidate.get("id")
+            if candidate_id:
+                result[candidate_id] = candidate.get("subject_identity")
+    return result
+
+
+def _verdict_evidence_refs(
+    history: Sequence[Mapping[str, Any]], work_id: str, assurance_id: Optional[str]
+) -> Any:
+    """`evidence_refs`, when the journaled `FACT-ASSURE-SETTLED` record
+    happens to carry one -- read defensively (`.get`), never invented: the
+    v0 orchestrator does not currently transport `AssuranceObservation.
+    evidence_refs` into the canonical fact, so this is commonly absent, and
+    absence renders as absence, not a fabricated value."""
+    for record in history:
+        if record.get("kind") != "fact" or record.get("id") != "FACT-ASSURE-SETTLED":
+            continue
+        data = record.get("data", {})
+        if data.get("work_id") == work_id and data.get("assurance_id") == assurance_id:
+            return data.get("evidence_refs")
+    return None
+
+
+def _group_reports_by_execution(
+    reports: Sequence[Mapping[str, Any]]
+) -> dict[str, list[Mapping[str, Any]]]:
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for record in reports:
+        execution_id = record.get("execution_id")
+        if not execution_id:
+            continue
+        grouped.setdefault(execution_id, []).append(record)
+    for execution_id, records in grouped.items():
+        records.sort(key=lambda r: r.get("report", {}).get("turn", 0))
+    return grouped
+
+
+def _summarize_states(projection: DeliveryProjection) -> tuple[bool, bool]:
+    any_blocked = False
+    any_non_accepted = False
+    for wp in projection.works.values():
+        if wp.state == STATE_BLOCKED:
+            any_blocked = True
+        if wp.state != STATE_ACCEPTED:
+            any_non_accepted = True
+    return any_blocked, any_non_accepted
+
+
+# ---------------------------------------------------------------------------
+# Rendering: run report
+# ---------------------------------------------------------------------------
+
+
+def _render_basis_citation(item: Mapping[str, Any], seq_index: Mapping[tuple[str, str], int]) -> str:
+    """`DEC-*`'s `basis` visibly linked to the fact(s) it cites (task
+    card): when the cited fact snapshot matches a record already in this
+    run's `seq`-ordered history, link to it in-page; otherwise render the
+    quoted id+data inline (still a citation, just not one this run's
+    history can anchor)."""
+    fact_id = item.get("id", "")
+    data = item.get("data", {})
+    key = (fact_id, _compact_json(data))
+    seq = seq_index.get(key)
+    if seq is not None:
+        return (
+            f'<a class="citation" href="#seq-{seq:04d}">'
+            f"cites [{seq:04d}] {html.escape(fact_id)}</a>"
+        )
+    return (
+        f'<span class="citation citation-unlinked">cites {html.escape(fact_id)} '
+        f"{_esc_json(data)}</span>"
+    )
+
+
+def _render_timeline_record(
+    record: Mapping[str, Any], seq_index: Mapping[tuple[str, str], int]
+) -> str:
+    seq = record.get("seq", 0)
+    kind = record.get("kind", "")
+    record_id = record.get("id", "")
+    parts = [f'<li id="seq-{seq:04d}" class="record record-{html.escape(kind)}">']
+    parts.append(
+        '<div class="record-head">'
+        f'<span class="record-seq">[{seq:04d}]</span> '
+        f'<span class="record-kind">{html.escape(kind)}</span> '
+        f'<span class="record-id">{html.escape(record_id)}</span>'
+        "</div>"
+    )
+    if kind == "decision":
+        basis = record.get("data", {}).get("basis") or []
+        if basis:
+            parts.append('<div class="basis"><span class="basis-label">basis</span><ul>')
+            for item in basis:
+                if isinstance(item, Mapping):
+                    parts.append(f"<li>{_render_basis_citation(item, seq_index)}</li>")
+            parts.append("</ul></div>")
+    parts.append(
+        f'<div class="scroll"><pre class="record-data">{html.escape(_compact_json(record.get("data", {})))}</pre></div>'
+    )
+    extensions = record.get("extensions")
+    if extensions:
+        parts.append(
+            '<div class="scroll"><pre class="record-extensions">extensions: '
+            f'{html.escape(_compact_json(extensions))}</pre></div>'
+        )
+    parts.append("</li>")
+    return "\n".join(parts)
+
+
+def _render_claim(execution_id: str, record: Mapping[str, Any]) -> str:
+    """A `crew-report/v1` entry, visually quarantined (task card /
+    `EXT-CREW-REPORT-V1`'s claim-vs-fact distinction, applied visually):
+    outlined/muted, explicitly labeled "claim", and -- unlike the chips
+    above -- never painted with a reserved status color, regardless of
+    `claimed_verdict`. This is the one place status color is deliberately
+    withheld."""
+    report = record.get("report", {})
+    turn = report.get("turn")
+    claimed_verdict = report.get("claimed_verdict")
+    parts = ['<li class="claim">']
+    parts.append('<div class="claim-label">crew report -- claim, not a canonical verdict</div>')
+    parts.append(
+        '<div class="claim-head">execution '
+        f"<code>{html.escape(execution_id)}</code> "
+        f"&middot; turn {html.escape(str(turn))} "
+        f'&middot; claimed_verdict: <span class="claim-verdict">{html.escape(str(claimed_verdict))}</span>'
+        "</div>"
+    )
+    for field in ("reason", "did", "pending"):
+        if report.get(field) is not None:
+            parts.append(
+                f'<div class="claim-field"><span class="claim-field-label">{field}</span> '
+                f"{html.escape(str(report[field]))}</div>"
+            )
+    for field in ("inputs_needed", "artifact_refs"):
+        if report.get(field):
+            parts.append(
+                f'<div class="claim-field"><span class="claim-field-label">{field}</span> '
+                f"{_esc_json(report[field])}</div>"
+            )
+    parts.append("</li>")
+    return "\n".join(parts)
+
+
+def _render_candidates_table(history: Sequence[Mapping[str, Any]], work_id: str, wp: WorkProjection) -> str:
+    if not wp.candidates:
+        return ""
+    subject_identities = _candidate_subject_identities(history, work_id)
+    rows = []
+    for candidate_id, candidate in wp.candidates.items():
+        subject_identity = subject_identities.get(candidate_id)
+        subject_text = _esc_json(subject_identity) if subject_identity is not None else "-"
+        rows.append(
+            "<tr>"
+            f'<td><code>{html.escape(candidate_id)}</code></td>'
+            f'<td><code>{html.escape(str(candidate.get("fingerprint", "")))}</code></td>'
+            f'<td><code>{html.escape(str(candidate.get("execution_id", "")))}</code></td>'
+            f"<td>{subject_text}</td>"
+            "</tr>"
+        )
+    return (
+        "<h3>Candidates</h3>"
+        '<div class="scroll"><table class="data-table"><thead><tr>'
+        "<th>candidate_id</th><th>fingerprint</th><th>execution_id</th><th>subject_identity</th>"
+        "</tr></thead><tbody>" + "\n".join(rows) + "</tbody></table></div>"
+    )
+
+
+def _render_verdicts_table(history: Sequence[Mapping[str, Any]], work_id: str, wp: WorkProjection) -> str:
+    if not wp.assurances:
+        return ""
+    rows = []
+    for assurance in wp.assurances:
+        verdict = assurance.get("verdict")
+        evidence_refs = _verdict_evidence_refs(history, work_id, assurance.get("assurance_id"))
+        evidence_text = _esc_json(evidence_refs) if evidence_refs else "-"
+        if verdict:
+            verdict_cell = _chip(verdict, _VERDICT_STATUS.get(verdict, "neutral"))
+        else:
+            verdict_cell = '<span class="muted">pending</span>'
+        rows.append(
+            "<tr>"
+            f'<td><code>{html.escape(str(assurance.get("assurance_id", "")))}</code></td>'
+            f'<td><code>{html.escape(str(assurance.get("candidate_id", "")))}</code></td>'
+            f"<td>{verdict_cell}</td>"
+            f"<td>{evidence_text}</td>"
+            "</tr>"
+        )
+    return (
+        "<h3>Assurance verdicts</h3>"
+        '<div class="scroll"><table class="data-table"><thead><tr>'
+        "<th>assurance_id</th><th>candidate_id</th><th>verdict</th><th>evidence_refs</th>"
+        "</tr></thead><tbody>" + "\n".join(rows) + "</tbody></table></div>"
+    )
+
+
+def _render_work_section(
+    work_id: str,
+    wp: WorkProjection,
+    history: Sequence[Mapping[str, Any]],
+    seq_index: Mapping[tuple[str, str], int],
+    reports_by_execution: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> str:
+    status = _STATE_STATUS.get(wp.state, "neutral")
+    parts = [f'<section class="work" id="work-{html.escape(work_id)}">']
+    parts.append(f"<h2>Work {html.escape(work_id)} {_chip(wp.state, status)}</h2>")
+    parts.append(f'<p class="meta-line">attempts: {wp.attempt_number}</p>')
+
+    if wp.blocked_reason:
+        root_cause = _root_cause_for_work(history, work_id)
+        detail = f"blocked_reason={html.escape(wp.blocked_reason)}"
+        if root_cause:
+            detail += f" (root_cause={html.escape(root_cause)})"
+        parts.append(
+            '<div class="callout callout-critical">'
+            '<span class="callout-icon" aria-hidden="true">✕</span>'
+            f"<span><strong>Blocked</strong> — {detail}</span></div>"
+        )
+
+    if is_pending(wp):
+        awaiting = _awaiting_label(wp)
+        parts.append(
+            '<div class="callout callout-warning">'
+            '<span class="callout-icon" aria-hidden="true">⏳</span>'
+            f"<span><strong>Pending</strong> — awaiting {html.escape(awaiting)}, "
+            f"attempt {wp.attempt_number}</span></div>"
+        )
+
+    parts.append(_render_candidates_table(history, work_id, wp))
+    parts.append(_render_verdicts_table(history, work_id, wp))
+
+    parts.append("<h3>Timeline</h3>")
+    parts.append('<ol class="timeline">')
+    emitted_executions: set[str] = set()
+    for record in history:
+        if _work_id_of(record) != work_id:
+            continue
+        parts.append(_render_timeline_record(record, seq_index))
+        if record.get("kind") == "fact" and record.get("id") == "FACT-EXEC-STARTED":
+            execution_id = record.get("data", {}).get("execution_id")
+            if execution_id and execution_id not in emitted_executions:
+                emitted_executions.add(execution_id)
+                for report in reports_by_execution.get(execution_id, ()):
+                    parts.append(_render_claim(execution_id, report))
+    parts.append("</ol>")
+
+    parts.append("</section>")
+    return "\n".join(part for part in parts if part)
+
+
+def _render_run_level_section(history: Sequence[Mapping[str, Any]]) -> str:
+    records = [r for r in history if _work_id_of(r) is None]
+    if not records:
+        return ""
+    seq_index = _fact_seq_index(history)
+    parts = ['<section class="run-level"><h2>Run-level records</h2><ol class="timeline">']
+    for record in records:
+        parts.append(_render_timeline_record(record, seq_index))
+    parts.append("</ol></section>")
+    return "\n".join(parts)
+
+
+def _render_run_header(run_id: str, intent_text: Optional[str], projection: DeliveryProjection) -> str:
+    parts = ['<header class="run-header">']
+    parts.append(f"<h1>orc report — {html.escape(run_id)}</h1>")
+    if intent_text is not None:
+        parts.append(f'<div class="intent-text">{html.escape(intent_text)}</div>')
+    else:
+        parts.append('<div class="intent-text muted">(no intent text recorded)</div>')
+    parts.append(f'<p class="meta-line">run: <code>{html.escape(run_id)}</code></p>')
+
+    if projection.works:
+        any_blocked, any_non_accepted = _summarize_states(projection)
+        if any_blocked:
+            disposition, dstatus = "blocked", "critical"
+        elif any_non_accepted:
+            disposition, dstatus = "in progress", "warning"
+        else:
+            disposition, dstatus = "accepted", "good"
+        parts.append(f'<p class="meta-line">exit disposition: {_chip(disposition, dstatus)}</p>')
+        chips = " ".join(_state_chip(wid, wp) for wid, wp in sorted(projection.works.items()))
+        parts.append(f'<p class="meta-line">works: {chips}</p>')
+    else:
+        parts.append('<p class="meta-line">(no work recorded yet)</p>')
+    parts.append("</header>")
+    return "\n".join(parts)
+
+
+def render_run_report(directory: Path, run_id: str) -> str:
+    """Render one DeliveryRun's journal (+ crew-report log, when present)
+    into a self-contained HTML document. Raises canonical `ERR-NOT-FOUND`
+    (via `_require_journal_file`) for a missing run, checked before any
+    adapter is constructed -- no side effect on a failed lookup."""
+    _require_journal_file(directory, run_id, target=run_id)
+    journal = JSONLJournal(directory)
+    history = journal.history(delivery_run_id=run_id)
+    projection = journal.load_projection(delivery_run_id=run_id)
+    reports = CrewReportLog(directory).list_reports(delivery_run_id=run_id)
+
+    intent_text = _intent_text(history)
+    seq_index = _fact_seq_index(history)
+    reports_by_execution = _group_reports_by_execution(reports)
+
+    body_parts = [_render_run_header(run_id, intent_text, projection)]
+    body_parts.append(_render_run_level_section(history))
+    for work_id in sorted(projection.works):
+        body_parts.append(
+            _render_work_section(
+                work_id, projection.works[work_id], history, seq_index, reports_by_execution
+            )
+        )
+
+    body = "\n".join(part for part in body_parts if part)
+    return _PAGE_TEMPLATE.format(
+        title=html.escape(f"orc report — {run_id}"), css=_CSS, body=body
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rendering: index
+# ---------------------------------------------------------------------------
+
+
+def _render_index_row(run_id: str, history: Sequence[Mapping[str, Any]], projection: DeliveryProjection) -> str:
+    intent_text = _intent_text(history) or ""
+    if projection.works:
+        chips = " ".join(_state_chip(wid, wp) for wid, wp in sorted(projection.works.items()))
+        attempts = ", ".join(
+            f"{html.escape(wid)}: {wp.attempt_number}" for wid, wp in sorted(projection.works.items())
+        )
+    else:
+        chips = '<span class="muted">(no work)</span>'
+        attempts = "-"
+    href = f"{run_id}.report.html"
+    return (
+        "<tr>"
+        f'<td><code>{html.escape(run_id)}</code></td>'
+        f"<td>{html.escape(intent_text)}</td>"
+        f"<td>{chips}</td>"
+        f"<td>{attempts}</td>"
+        f'<td><a href="{html.escape(href)}">{html.escape(href)}</a></td>'
+        "</tr>"
+    )
+
+
+def render_index(directory: Path) -> str:
+    """Render a small local index page over `directory`'s `*.jsonl` run
+    journals (excluding `*.reports.jsonl` crew-report logs). Strictly
+    read-only over the journal directory: it only ever reads `history`/
+    `load_projection` for each discovered run, never writes anything but
+    its own announced output file."""
+    if not directory.is_dir():
+        raise not_found_error(
+            f"journal directory does not exist: {directory}", path=str(directory)
+        )
+    journal = JSONLJournal(directory)
+    rows = []
+    for path in sorted(directory.glob("*.jsonl")):
+        if path.name.endswith(".reports.jsonl"):
+            continue
+        run_id = path.stem
+        history = journal.history(delivery_run_id=run_id)
+        projection = journal.load_projection(delivery_run_id=run_id)
+        rows.append(_render_index_row(run_id, history, projection))
+
+    if rows:
+        table = (
+            '<div class="scroll"><table class="index-table"><thead><tr>'
+            "<th>run</th><th>intent</th><th>works</th><th>attempts</th><th>report</th>"
+            "</tr></thead><tbody>" + "\n".join(rows) + "</tbody></table></div>"
+        )
+    else:
+        table = '<p class="meta-line">(no runs found under this journal directory)</p>'
+
+    body = (
+        '<header class="run-header">'
+        f"<h1>orc report index — {html.escape(str(directory))}</h1>"
+        "</header>" + table
+    )
+    return _PAGE_TEMPLATE.format(title=html.escape("orc report index"), css=_CSS, body=body)
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
+def _resolve_report_target(run_arg: str, journal_arg: Optional[str]) -> tuple[Path, str]:
+    """`--journal DIR` explicitly given: `run_arg` is a bare run id under
+    that directory. Otherwise fall back to the same flexible target
+    resolution `status`/`history` use (`_resolve_journal`): a
+    `<run_id>.jsonl` path, a directory containing exactly one journal, or a
+    bare run id under the default `./.orc`."""
+    if journal_arg is not None:
+        return Path(journal_arg), run_arg
+    return _resolve_journal(run_arg)
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    if args.index:
+        if args.run:
+            raise validation_error(
+                "orc report --index does not take a positional run argument", run=args.run
+            )
+        directory = Path(args.journal) if args.journal else Path(DEFAULT_JOURNAL_DIR)
+        html_text = render_index(directory)
+        out_path = Path(args.out) if args.out else directory / "index.html"
+        out_path.write_text(html_text, encoding="utf-8")
+        print(f"report: {out_path}")
+        return 0
+
+    if not args.run:
+        raise validation_error("orc report requires a run id/path positional argument, or --index")
+
+    directory, run_id = _resolve_report_target(args.run, args.journal)
+    html_text = render_run_report(directory, run_id)
+    out_path = Path(args.out) if args.out else directory / f"{run_id}.report.html"
+    out_path.write_text(html_text, encoding="utf-8")
+    print(f"report: {out_path}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Page shell + CSS (dataviz skill palette: light/dark chart chrome & ink
+# tokens, status palette fixed across themes; inline only, no external
+# requests, `prefers-color-scheme` for dark mode).
+# ---------------------------------------------------------------------------
+
+_PAGE_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+{css}
+</style>
+</head>
+<body>
+<main class="report">
+{body}
+</main>
+<footer class="report-footer">Static snapshot rendered by <code>orc report</code> from the journal on disk -- not a live view; re-run to refresh.</footer>
+</body>
+</html>
+"""
+
+_CSS = """
+:root {
+  color-scheme: light dark;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #ffffff;
+  --ink-primary: #0b0b0b;
+  --ink-secondary: #52514e;
+  --ink-muted: #898781;
+  --border: rgba(11,11,11,0.10);
+  --gridline: #e1e0d9;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #202020;
+    --ink-primary: #ffffff;
+    --ink-secondary: #c3c2b7;
+    --ink-muted: #898781;
+    --border: rgba(255,255,255,0.10);
+    --gridline: #2c2c2a;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 2rem 1.25rem 3rem;
+  background: var(--page);
+  color: var(--ink-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+.report { max-width: 960px; margin: 0 auto; }
+h1 { font-size: 1.4rem; margin: 0 0 0.75rem; }
+h2 { font-size: 1.1rem; margin-top: 2.25rem; border-bottom: 1px solid var(--gridline); padding-bottom: 0.4rem; }
+h3 { font-size: 0.9rem; color: var(--ink-secondary); margin-top: 1.5rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.run-header { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.5rem; }
+.intent-text { white-space: pre-wrap; word-break: break-word; font-size: 1.05rem; }
+.intent-text.muted { color: var(--ink-muted); font-style: italic; }
+.meta-line { color: var(--ink-secondary); font-size: 0.9rem; margin: 0.3rem 0; }
+.muted { color: var(--ink-muted); }
+.scroll { overflow-x: auto; }
+table.data-table, table.index-table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+table.data-table th, table.data-table td,
+table.index-table th, table.index-table td {
+  text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--gridline); vertical-align: top;
+}
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82em; }
+pre.record-data, pre.record-extensions {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.5rem 0.75rem; margin: 0.35rem 0 0; white-space: pre-wrap; word-break: break-word;
+}
+.chip {
+  display: inline-flex; align-items: center; gap: 0.35em; padding: 0.15em 0.65em;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--ink-primary); font-size: 0.82em; font-weight: 600;
+}
+.chip-icon { display: inline-block; }
+.chip-good .chip-icon { color: var(--good); }
+.chip-warning .chip-icon { color: var(--warning); }
+.chip-critical .chip-icon { color: var(--critical); }
+.chip-serious .chip-icon { color: var(--serious); }
+.chip-neutral .chip-icon { color: var(--ink-muted); }
+.callout {
+  display: flex; gap: 0.5em; align-items: baseline; border-radius: 8px;
+  padding: 0.6em 0.9em; margin: 0.75rem 0; border: 1px solid var(--border); background: var(--surface);
+}
+.callout-warning .callout-icon { color: var(--warning); }
+.callout-critical .callout-icon { color: var(--critical); }
+.timeline { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+.timeline > li.record {
+  padding: 0.5rem 0 0.5rem 1rem; margin: 0 0 0.15rem; border-left: 3px solid var(--gridline);
+}
+.timeline > li.record-fact { border-left-color: var(--ink-muted); }
+.timeline > li.record-decision { border-left-color: var(--warning); }
+.timeline > li.record-effect { border-left-color: var(--ink-secondary); }
+.record-head { font-weight: 600; font-size: 0.88rem; }
+.record-seq { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.basis { margin: 0.3rem 0 0; font-size: 0.85rem; }
+.basis-label { color: var(--ink-muted); text-transform: uppercase; font-size: 0.7em; letter-spacing: 0.06em; }
+.basis ul { margin: 0.15rem 0 0; padding-left: 1.1rem; }
+.citation { color: var(--ink-secondary); }
+a.citation { color: var(--ink-primary); text-decoration: underline; text-decoration-color: var(--ink-muted); }
+.timeline > li.claim {
+  list-style: none; border: 1px dashed var(--ink-muted); border-radius: 8px;
+  padding: 0.55rem 0.9rem; margin: 0.15rem 0 0.35rem 1.25rem; background: transparent; color: var(--ink-secondary);
+}
+.claim-label { text-transform: uppercase; font-size: 0.66em; letter-spacing: 0.08em; color: var(--ink-muted); font-weight: 700; margin-bottom: 0.25em; }
+.claim-head { font-size: 0.88rem; }
+.claim-verdict { font-weight: 600; color: var(--ink-primary); }
+.claim-field { font-size: 0.85rem; margin-top: 0.2rem; }
+.claim-field-label { color: var(--ink-muted); margin-right: 0.3em; }
+.report-footer { max-width: 960px; margin: 2rem auto 0; color: var(--ink-muted); font-size: 0.8rem; text-align: center; }
+"""
+
+
+__all__ = ["cmd_report", "render_index", "render_run_report"]
