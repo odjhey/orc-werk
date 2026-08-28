@@ -15,6 +15,7 @@ All extensions MUST satisfy `CONTRACT-EXTENSIONS`.
 ## Registered extensions
 
 - `EXT-REVIEW-FINDINGS-V1` — structured code-review findings under `review-findings/v1`
+- `EXT-EXECUTION-SESSION-V1` — durable provider session/resume provenance under `execution-session/v1`
 
 ## Rules
 

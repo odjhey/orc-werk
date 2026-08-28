@@ -23,6 +23,7 @@ description: Flat documentation index.
 - [Errors](contracts/errors.md)
 - [Capabilities](contracts/capabilities.md)
 - [Extensions](contracts/extensions.md)
+- [Durability responsibilities](contracts/durability-responsibilities.md)
 - [Ports](contracts/ports/README.md)
 
 ## Protocol
@@ -33,6 +34,7 @@ description: Flat documentation index.
 ## Extensions
 - [Extension registry](extensions/README.md)
 - [`review-findings/v1`](extensions/review-findings/README.md)
+- [`execution-session/v1`](extensions/execution-session/README.md)
 
 ## Verification
 - [Golden scenarios](scenarios/README.md)
