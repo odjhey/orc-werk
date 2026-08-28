@@ -418,6 +418,34 @@ class MemoryWorkGraphAdapterTest(unittest.TestCase):
         entry = next(e for e in snapshot["works"] if e["work_id"] == "w")
         self.assertEqual(entry["blocked_reason"], "retry-budget-exhausted")
 
+    def test_reblock_with_same_reason_is_idempotent(self) -> None:
+        graph = MemoryWorkGraph()
+        graph.create(delivery_run_id="dr-reblock-same", plan=_chain_plan())
+        graph.block(work_id="w", reason="retry-budget-exhausted")
+        # Matching reason: idempotent no-op, not an error.
+        graph.block(work_id="w", reason="retry-budget-exhausted")
+
+        snapshot = graph.snapshot(delivery_run_id="dr-reblock-same")
+        entry = next(e for e in snapshot["works"] if e["work_id"] == "w")
+        self.assertEqual(entry["blocked_reason"], "retry-budget-exhausted")
+
+    def test_reblock_with_different_reason_conflicts(self) -> None:
+        # Silently overwriting the recorded reason would violate the
+        # append-preserving spirit (watchtower ruling on the TASK-M0-002
+        # review): a different reason must reject with canonical
+        # ERR-CONFLICT and leave the originally recorded reason intact.
+        graph = MemoryWorkGraph()
+        graph.create(delivery_run_id="dr-reblock-diff", plan=_chain_plan())
+        graph.block(work_id="w", reason="retry-budget-exhausted")
+
+        with self.assertRaises(CoreError) as ctx:
+            graph.block(work_id="w", reason="assurance-inconclusive")
+        self.assertEqual(ctx.exception.to_canonical()["error"], "ERR-CONFLICT")
+
+        snapshot = graph.snapshot(delivery_run_id="dr-reblock-diff")
+        entry = next(e for e in snapshot["works"] if e["work_id"] == "w")
+        self.assertEqual(entry["blocked_reason"], "retry-budget-exhausted")
+
 
 if __name__ == "__main__":
     unittest.main()

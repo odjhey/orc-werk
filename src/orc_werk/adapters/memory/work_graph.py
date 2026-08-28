@@ -38,9 +38,12 @@ Design decisions (also recorded in the TASK-M0-002 PR body):
   mechanical fact sequencing).
 - `block` records `reason` verbatim (free-form per `PROTOCOL-FACTS`).
   Blocking an already-completed Work raises `ERR-CONFLICT` (accepted is
-  terminal); re-blocking an already-blocked Work is idempotent and
-  overwrites `reason` with the latest call, mirroring `complete`'s
-  idempotency choice above.
+  terminal). Re-blocking an already-blocked Work with the SAME `reason`
+  is idempotent, mirroring `complete`'s idempotency choice above;
+  re-blocking with a DIFFERENT `reason` raises `ERR-CONFLICT` -- silently
+  overwriting the recorded reason has no doc basis and would violate the
+  append-preserving spirit (watchtower ruling on the TASK-M0-002 review;
+  the docs amendment making this normative ships separately).
 - `claim`/`complete`/`block` take only `work_id` (matching the
   `WorkGraphPort` ABC signatures, which do not pass `delivery_run_id`).
   This adapter therefore assumes `work_id` values are unique across all
@@ -167,6 +170,16 @@ class MemoryWorkGraph(WorkGraphPort):
         if state["completed"]:
             raise conflict_error(
                 f"cannot block a completed work: {work_id!r}", work_id=work_id
+            )
+        if state["blocked_reason"] is not None and state["blocked_reason"] != reason:
+            # Silently overwriting the recorded reason would violate the
+            # append-preserving spirit; a matching reason stays idempotent
+            # (see module docstring).
+            raise conflict_error(
+                f"work is already blocked with a different reason: {work_id!r}",
+                work_id=work_id,
+                recorded_reason=state["blocked_reason"],
+                requested_reason=reason,
             )
 
         state["blocked_reason"] = reason
