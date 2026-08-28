@@ -64,6 +64,13 @@ partial final line. On read/reopen:
   records", it is no file at all, and continues to mean "no journal yet"
   (a fresh run's first dispatch).
 
+The line-scan/torn-tail-recovery/append mechanics below are implemented
+once, shared with the crew-report log adapter (`TASK-M1-007`,
+`orc_werk.adapters.jsonl.crew_report`), in
+`orc_werk.adapters.jsonl.tailsafe`; this module keeps only what is
+journal-specific (`seq` assignment/caching, fact/decision/effect envelope
+construction).
+
 ## Reopen / concurrency
 
 Sequence numbers are derived by counting good records already on disk for a
@@ -80,11 +87,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from orc_werk.adapters.journal_support import build_effect_envelope
+from orc_werk.adapters.jsonl import tailsafe
 from orc_werk.core.decisions import Decision
 from orc_werk.core.effects import Effect
 from orc_werk.core.errors import validation_error
@@ -94,15 +101,11 @@ from orc_werk.core.serialization import KIND_FACT, decision_to_envelope, fact_fr
 from orc_werk.core.state import DeliveryProjection
 from orc_werk.ports.journal import JournalPort
 
-# delivery_run_id becomes a filename component -- restrict it to a safe,
-# unambiguous charset (no path separators, no ".."/hidden-file tricks)
-# rather than attempting to encode/escape arbitrary strings. Least-commitment
-# stopgap pending a normative delivery_run_id charset (see PR body).
-_SAFE_DELIVERY_RUN_ID = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?$")
-
 # (truncate_to_byte_offset, append_needs_leading_newline) -- pending tail
-# repair discovered by _scan, applied lazily by the next append.
-_TailRepair = Tuple[int, bool]
+# repair discovered by _scan, applied lazily by the next append. Re-exported
+# alias of the shared primitive (module docstring's "Torn-tail recovery
+# rule" section, `orc_werk.adapters.jsonl.tailsafe`).
+_TailRepair = tailsafe.TailRepair
 
 
 class JSONLJournal(JournalPort):
@@ -118,88 +121,26 @@ class JSONLJournal(JournalPort):
     # -- internal helpers --------------------------------------------------
 
     def _path_for(self, delivery_run_id: str) -> Path:
-        if not delivery_run_id or not _SAFE_DELIVERY_RUN_ID.match(delivery_run_id):
-            raise validation_error(
-                "delivery_run_id is not a safe JSONL journal filename component",
-                delivery_run_id=delivery_run_id,
-            )
+        tailsafe.ensure_safe_run_id(
+            delivery_run_id,
+            message="delivery_run_id is not a safe JSONL journal filename component",
+        )
         return self._directory / f"{delivery_run_id}.jsonl"
 
     def _scan(self, delivery_run_id: str) -> Tuple[List[Dict[str, Any]], Optional[_TailRepair]]:
-        """Read all good records for one run, applying the amended
-        torn-tail rule (module docstring / `PORT-JOURNAL`'s durable-journal
-        recovery clause, issue #18): an unparseable FINAL line is ignored
-        as a torn write only when at least one valid record precedes it;
-        an unparseable NON-final line raises canonical `ERR-VALIDATION`;
-        and a file with zero valid records at all (garbage content, no
-        tolerable prefix) also raises canonical `ERR-VALIDATION` rather
-        than presenting an empty history. Returns the good records plus
-        any pending tail repair the next append must apply."""
+        """Read all good records for one run via the shared torn-tail
+        primitive (`orc_werk.adapters.jsonl.tailsafe.scan_tolerant`,
+        `PORT-JOURNAL`'s durable-journal recovery clause, issue #18).
+        Returns the good records plus any pending tail repair the next
+        append must apply."""
         path = self._path_for(delivery_run_id)
-        if not path.exists():
-            # No file at all is not "a file with no valid records" -- it is
-            # simply no journal yet (a fresh run's first dispatch).
-            return [], None
-        raw = path.read_bytes()
-        total = len(raw)
-        records: List[Dict[str, Any]] = []
-        good_end = 0
-        offset = 0
-        last_good_has_newline = True
-        for chunk in raw.splitlines(keepends=True):
-            offset += len(chunk)
-            stripped = chunk.strip()
-            if not stripped:
-                good_end = offset
-                continue
-            try:
-                record = json.loads(stripped.decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
-                if offset >= total:
-                    # Torn write: partial final line -- ignore it; the next
-                    # append truncates it away (heal-while-use). #18: this
-                    # tolerance is only meaningful when `records` already
-                    # has a good prefix -- when it does not, the
-                    # zero-valid-records check below (after the loop) fails
-                    # this closed instead, since a torn-looking final line
-                    # with nothing preceding it is indistinguishable from a
-                    # plain garbage file.
-                    break
-                raise validation_error(
-                    "malformed non-final JSONL journal line (corrupt journal file)",
-                    delivery_run_id=delivery_run_id,
-                    byte_offset=offset - len(chunk),
-                )
-            records.append(record)
-            good_end = offset
-            last_good_has_newline = chunk.endswith((b"\n", b"\r"))
-        if not records:
-            raise validation_error(
-                "journal file contains no valid records (not a journal)",
-                delivery_run_id=delivery_run_id,
-                path=str(path),
-            )
-        needs_newline = good_end == total and total > 0 and not last_good_has_newline
-        if good_end < total or needs_newline:
-            return records, (good_end, needs_newline)
-        return records, None
+        return tailsafe.scan_tolerant(path, noun="journal")
 
     def _ensure_scanned(self, delivery_run_id: str) -> None:
         if delivery_run_id not in self._seq_cache:
             records, repair = self._scan(delivery_run_id)
             self._seq_cache[delivery_run_id] = len(records)
             self._tail_repair[delivery_run_id] = repair
-
-    def _heal_tail(self, delivery_run_id: str, path: Path) -> None:
-        repair = self._tail_repair.pop(delivery_run_id, None)
-        if repair is None:
-            return
-        good_end, needs_newline = repair
-        with path.open("r+b") as fh:
-            fh.truncate(good_end)
-            if needs_newline:
-                fh.seek(good_end)
-                fh.write(b"\n")
 
     def _append(
         self, delivery_run_id: str, build_envelope: Callable[[int], Mapping[str, Any]]
@@ -218,13 +159,10 @@ class JSONLJournal(JournalPort):
                 record_id=str(envelope.get("id")),
             ) from exc
         path = self._path_for(delivery_run_id)
-        self._heal_tail(delivery_run_id, path)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-            fh.flush()
-            # M0 scripted-context durability stance (module docstring):
-            # flush without os.fsync(fh.fileno()) is an explicit choice, not
-            # an oversight.
+        # M0 scripted-context durability stance (module docstring): the
+        # shared `tailsafe.append_line` primitive flushes without
+        # `os.fsync(fh.fileno())` -- an explicit choice, not an oversight.
+        tailsafe.append_line(path, line, repair=self._tail_repair.pop(delivery_run_id, None))
         # only commit the cached seq once the write above has succeeded.
         self._seq_cache[delivery_run_id] = seq
         return json.loads(line)
