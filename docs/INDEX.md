@@ -98,7 +98,8 @@ description: Flat documentation index.
 
 ## M2 task cards
 - [TASK-M2-001](delivery/task-cards/TASK-M2-001-no-mistakes-assurance.md)
-- [TASK-M2-002](delivery/task-cards/TASK-M2-002-second-agent-provider-swap.md)
+- [TASK-M2-002](delivery/task-cards/TASK-M2-002-second-agent-provider-swap.md) (deferred out of M2)
 - [TASK-M2-003](delivery/task-cards/TASK-M2-003-multi-work-real-dags.md)
 - [TASK-M2-004](delivery/task-cards/TASK-M2-004-second-repo-adoption.md)
-- [TASK-M2-005](delivery/task-cards/TASK-M2-005-policy-parameterization.md)
+- [TASK-M2-005](delivery/task-cards/TASK-M2-005-policy-parameterization.md) (deferred out of M2)
+- [TASK-M2-006](delivery/task-cards/TASK-M2-006-beads-mirror.md)

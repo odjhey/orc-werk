@@ -11,6 +11,23 @@ verifies: []
 
 # TASK-M2-005 — Policy parameterization v1
 
+### Deferred — removed from M2 scope
+
+**Operator ruling (M2 reshape, 2026-08-28): this card is deferred, out of
+M2 scope.** Its two-gate design (below) is unchanged and stands as-is for
+whenever either gate fires. Recorded on the milestone's deferred list
+(`docs/delivery/M2-close-the-loop.md`, "Deferred (M2 reshape)").
+
+**Pull trigger (named, unchanged from the card's own Gate section):**
+observed cost data from real `acpx`-adapter runs — (a) DAG-wide
+budget-starvation evidence for per-work `max_attempts`; (b) evidence of
+real spend wasted specifically on statically-doomed
+`ERR-UNSUPPORTED-CAPABILITY` retries, for the narrower no-retry exception.
+`TASK-M2-003`'s reframing as a real-DAG **practice run** (per the M2
+reshape) is now this card's most direct source of that evidence — the
+practice run's explicit purpose includes harvesting per-work cost data,
+which is exactly what this card's gates are waiting on.
+
 ## Outcome
 
 Two independently-gated items — deliberately not a policy framework:
