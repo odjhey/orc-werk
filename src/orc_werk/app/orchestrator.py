@@ -137,6 +137,28 @@ def _is_confirmed_terminal(wp: WorkProjection) -> bool:
     return False
 
 
+def is_pending(wp: WorkProjection) -> bool:
+    """`TASK-M1-002`/`SCN-007`: true when `wp` is resting at
+    `EXECUTING`/`ASSURING` because the current attempt's outcome (an
+    Execution settlement, or an Assurance verdict) has not been observed
+    yet -- `STATE-DELIVERY` mechanical fact sequencing item 7 ("absence of
+    a settlement observation is not a settlement"). Distinct from
+    `BLOCKED` (a confirmed terminal outcome) and from a dispatch-gate
+    failure (item 6: an unsupported capability or unavailable provider
+    settles immediately as a failed attempt, never pending). Mirrors the
+    exact predicates `Orchestrator._poll_execution`/`_poll_assurance` use
+    to decide whether there is anything new to journal."""
+    if wp.state == STATE_EXECUTING:
+        current = next(
+            (item for item in wp.executions if item["execution_id"] == wp.current_execution_id), None
+        )
+        return current is not None and current["outcome"] is None
+    if wp.state == STATE_ASSURING and wp.assurance_started_for_current:
+        current = wp.assurances[-1] if wp.assurances else None
+        return current is not None and current["verdict"] is None
+    return False
+
+
 def _find_effect_record(
     history: Sequence[Mapping[str, Any]], idempotency_key: str
 ) -> Optional[Mapping[str, Any]]:
@@ -709,4 +731,5 @@ __all__ = [
     "Orchestrator",
     "RunConfig",
     "default_single_work_plan",
+    "is_pending",
 ]

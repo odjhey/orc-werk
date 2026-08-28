@@ -1,10 +1,17 @@
-"""`orc` CLI (`TASK-M0-005`): `dispatch`, `status`, `history` over the M0
-orchestrator with the dependency-free memory/scripted/JSONL adapters.
+"""`orc` CLI (`TASK-M0-005`, `TASK-M1-002`): `dispatch`, `status`, `history`
+over the M0 orchestrator with the dependency-free memory/scripted/JSONL
+adapters.
 
-Exit codes: `0` on an ACCEPTED-terminal (all Work accepted), nonzero (`1`)
-when any Work is BLOCKED, nonzero (`2`) on a canonical error. Errors print
-the canonical error value (`CONTRACT-ERRORS`) as JSON to stderr, never a
-Python traceback.
+Exit codes (`docs/playbooks/cli-usage.md`): `0` on an ACCEPTED-terminal
+(all Work accepted); `1` when any Work is BLOCKED (or otherwise reaches a
+non-accepted terminal state); `2` on a canonical error; `3` when the run is
+non-terminal and pending operator input -- a Work is resting at
+`EXECUTING`/`ASSURING` because its current attempt's outcome has not been
+recorded yet (`SCN-007`, `STATE-DELIVERY` mechanical fact sequencing item
+7). `3` is the M1a pending/incremental-mode default's distinct in-progress
+exit code, additive to the `0`/`1`/`2` contract, never a replacement of
+it. Errors print the canonical error value (`CONTRACT-ERRORS`) as JSON to
+stderr, never a Python traceback.
 """
 
 from __future__ import annotations
@@ -19,12 +26,76 @@ from typing import Optional, Sequence
 
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.adapters.memory.work_graph import MemoryWorkGraph
-from orc_werk.app.orchestrator import Orchestrator
+from orc_werk.app.orchestrator import Orchestrator, is_pending
 from orc_werk.cli.config import build_run_config, build_scripted_adapters, load_config
 from orc_werk.core.errors import CoreError
-from orc_werk.core.state import STATE_BLOCKED
+from orc_werk.core.state import STATE_ACCEPTED, STATE_ASSURING, STATE_BLOCKED, STATE_EXECUTING, WorkProjection
 
 DEFAULT_JOURNAL_DIR = ".orc"
+
+# TASK-M1-002/SCN-007: the distinct in-progress exit code -- additive to
+# the existing 0 (all ACCEPTED) / 1 (any BLOCKED) / 2 (canonical error)
+# contract in docs/playbooks/cli-usage.md, never a replacement of it.
+# Reported whenever the run is non-terminal and nothing further can be
+# decided without operator-recorded input (a pending Work resting at
+# EXECUTING/ASSURING with an unobserved outcome, or -- degenerate v0 edge
+# case, not exercised by any golden scenario -- any other non-terminal
+# resting point `_advance_one_phase` cannot progress past).
+EXIT_PENDING = 3
+
+
+def _awaiting_label(wp: WorkProjection) -> str:
+    """CLI-owned, non-normative presentation label for `status`/`dispatch`
+    output naming what a pending Work is waiting on."""
+    if wp.state == STATE_EXECUTING:
+        return "execution-outcome"
+    if wp.state == STATE_ASSURING:
+        return "assurance-verdict"
+    return "unknown"
+
+
+def _work_line(work_id: str, wp: WorkProjection) -> str:
+    fingerprint = wp.current_candidate_fingerprint() or "-"
+    line = (
+        f"work {work_id}: state={wp.state} attempts={wp.attempt_number} "
+        f"candidate_fingerprint={fingerprint}"
+    )
+    if wp.blocked_reason:
+        line += f" blocked_reason={wp.blocked_reason}"
+    if is_pending(wp):
+        # SCN-007: legible per-work pending presentation -- which attempt,
+        # and awaiting an execution settlement or an assurance verdict.
+        line += f" pending=true awaiting={_awaiting_label(wp)} attempt={wp.attempt_number}"
+    return line
+
+
+def _summarize_works(projection) -> tuple[bool, bool]:
+    """Return `(any_blocked, any_non_accepted)` over `projection.works`."""
+    any_blocked = False
+    any_non_accepted = False
+    for wp in projection.works.values():
+        if wp.state == STATE_BLOCKED:
+            any_blocked = True
+        if wp.state != STATE_ACCEPTED:
+            any_non_accepted = True
+    return any_blocked, any_non_accepted
+
+
+def _exit_code_for(any_blocked: bool, any_non_accepted: bool) -> int:
+    if any_blocked:
+        return 1
+    if any_non_accepted:
+        # Non-terminal and not (yet) blocked: SCN-007 pending, or -- the
+        # only other v0 way to reach this branch -- some other resting
+        # point the run loop could not progress past (no golden scenario
+        # exercises that case; see orchestrator.py's `_identify_candidate`
+        # docstring). Either way, "0" would be a lie (not every Work is
+        # ACCEPTED), so this reports the distinct in-progress code rather
+        # than silently reusing "1" (BLOCKED implies a confirmed terminal
+        # outcome, which this is not).
+        return EXIT_PENDING
+    return 0
+
 
 _PATH_SEPARATORS = tuple({os.sep, os.altsep} - {None})
 
@@ -122,18 +193,17 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
     print(f"run: {run_id}")
     print(f"journal: {journal_dir / (run_id + '.jsonl')}")
-    any_blocked = False
     for work_id in sorted(projection.works):
-        wp = projection.works[work_id]
-        if wp.state == STATE_BLOCKED:
-            any_blocked = True
-        fingerprint = wp.current_candidate_fingerprint() or "-"
+        print(_work_line(work_id, projection.works[work_id]))
+    any_blocked, any_non_accepted = _summarize_works(projection)
+    exit_code = _exit_code_for(any_blocked, any_non_accepted)
+    if exit_code == EXIT_PENDING:
+        pending_ids = [wid for wid, wp in projection.works.items() if is_pending(wp)]
         print(
-            f"work {work_id}: state={wp.state} attempts={wp.attempt_number} "
-            f"candidate_fingerprint={fingerprint}"
-            + (f" blocked_reason={wp.blocked_reason}" if wp.blocked_reason else "")
+            "pending: run is non-terminal, awaiting operator-recorded input for: "
+            + ", ".join(sorted(pending_ids) if pending_ids else sorted(projection.works))
         )
-    return 1 if any_blocked else 0
+    return exit_code
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -148,18 +218,17 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("(no work recorded yet)")
         return 0
 
-    any_blocked = False
     for work_id in sorted(projection.works):
-        wp = projection.works[work_id]
-        if wp.state == STATE_BLOCKED:
-            any_blocked = True
-        fingerprint = wp.current_candidate_fingerprint() or "-"
+        print(_work_line(work_id, projection.works[work_id]))
+    any_blocked, any_non_accepted = _summarize_works(projection)
+    exit_code = _exit_code_for(any_blocked, any_non_accepted)
+    if exit_code == EXIT_PENDING:
+        pending_ids = [wid for wid, wp in projection.works.items() if is_pending(wp)]
         print(
-            f"work {work_id}: state={wp.state} attempts={wp.attempt_number} "
-            f"candidate_fingerprint={fingerprint}"
-            + (f" blocked_reason={wp.blocked_reason}" if wp.blocked_reason else "")
+            "pending: run is non-terminal, awaiting operator-recorded input for: "
+            + ", ".join(sorted(pending_ids) if pending_ids else sorted(projection.works))
         )
-    return 1 if any_blocked else 0
+    return exit_code
 
 
 def _compact(data: object) -> str:

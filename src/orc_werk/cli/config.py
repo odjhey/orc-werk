@@ -60,7 +60,7 @@ from typing import Any, Mapping
 from orc_werk.adapters.scripted.assurance import ScriptedAssurance
 from orc_werk.adapters.scripted.candidate import ScriptedCandidate, fingerprint_of
 from orc_werk.adapters.scripted.execution import ScriptedExecution
-from orc_werk.app.orchestrator import DEFAULT_WORK_ID, RunConfig
+from orc_werk.app.orchestrator import RunConfig
 from orc_werk.core.effects import FX_START_EXECUTION
 from orc_werk.core.errors import validation_error
 from orc_werk.core.idempotency import idempotency_key
@@ -124,10 +124,22 @@ def build_scripted_adapters(
     config: Mapping[str, Any], *, delivery_run_id: str
 ) -> tuple[ScriptedExecution, ScriptedCandidate, ScriptedAssurance]:
     """Translate the `attempts` section of a dispatch config into the three
-    scripted adapters' own native script formats."""
-    attempts_by_work: Mapping[str, Any] = config.get("attempts") or {
-        DEFAULT_WORK_ID: [{"outcome": "completed"}]
-    }
+    scripted adapters' own native script formats.
+
+    `TASK-M1-002`/`SCN-007`: pending/incremental mode is the M1a **default**
+    dispatch mode, so this CLI-wired builder always constructs the
+    `ScriptedExecution`/`ScriptedAssurance` adapters with `pending=True`
+    (`docs/delivery/M1-delivery-ledger.md`'s "Pending/incremental mode is
+    the M1a default"). An absent `attempts` key entirely means a fully
+    incremental run: no attempt is scripted for any work, so every work's
+    first dispatch starts and rests unsettled until the operator records
+    real outcomes and re-dispatches. `tests/scenarios/support.py`'s
+    `build_run` (used by `SCN-001`-`SCN-006`) constructs the scripted
+    adapters directly with the M0 strict default (`pending=False`), so
+    those golden scenarios and the conformance suite are unaffected by
+    this default flip.
+    """
+    attempts_by_work: Mapping[str, Any] = config.get("attempts") or {}
     execution_capabilities = validate_capabilities(config.get("execution_capabilities", ()))
 
     execution_script: dict[str, list[dict[str, Any]]] = {}
@@ -160,9 +172,12 @@ def build_scripted_adapters(
                     fingerprint = fingerprint_of(candidate_content)
                     assurance_script[fingerprint] = dict(assurance_entry)
 
-    execution = ScriptedExecution(script=execution_script, capabilities=execution_capabilities)
+    # pending=True: the CLI-wired M1a default (SCN-007) -- a work with no
+    # recorded outcome for its next attempt starts and rests unsettled
+    # rather than failing at dispatch. See this function's docstring.
+    execution = ScriptedExecution(script=execution_script, capabilities=execution_capabilities, pending=True)
     candidate = ScriptedCandidate(subjects=candidate_subjects, current_by_work={})
-    assurance = ScriptedAssurance(script=assurance_script)
+    assurance = ScriptedAssurance(script=assurance_script, pending=True)
     return execution, candidate, assurance
 
 
