@@ -49,7 +49,12 @@ Omit `plan` for a single work (`work-1`). Attempts are consumed in order; verdic
 
 - `status` — per-work terminal state, attempt count, current candidate fingerprint.
 - `history` — the full seq-ordered fact/decision/effect record; this is where root causes live today: look at effect records' `dispatch_result.error` and decisions' `basis`.
-- The raw `.jsonl` is portable JSON (one envelope per line, `schema_version` on each) — `jq`/plain `json.loads` work with no orc-werk imports.
+- `report <run-id> [--journal DIR] [--out PATH]` — a self-contained HTML run report (`TASK-M1-008`); `report --index` — a small local index page over a journal directory's runs; `report --all [--match GLOB] [--journal DIR] [--out-dir DIR]` — render every run whose `run_id` `fnmatch`es `GLOB` (default `'*'`) to its own file plus a scoped index (issue #40). Every path this CLI prints (`journal:`, `report:`) is the resolved absolute path, so it's clickable in a terminal regardless of cwd.
+- The raw `.jsonl` is portable JSON (one envelope per line, `schema_version` on each) — `jq`/plain `json.loads` work with no orc-werk imports. A run may also have `<run_id>.reports.jsonl` (crew reports, `EXT-CREW-REPORT-V1`) and `<run_id>.times.jsonl` (observed-at times, `CONTRACT-DURABILITY`) beside it — both are adapter-owned sidecars, never part of the canonical journal.
+
+### Run-id namespace convention
+
+`delivery_run_id` becomes a filename component (`<run_id>.jsonl`), so it is restricted to a safe charset with no path separators (`/` is filename-unsafe and would try to create subdirectories). To organize related runs into groups a glob can select — e.g. all of one milestone's runs — use a **dot-separated namespace prefix** instead of a path: `m1.task-005`, `m1.task-006`, `m2.task-001`. `report --all --match 'm1.*'` then renders exactly that namespace's runs plus a scoped index, without touching runs outside it. This is a CLI/operator convention, not a canonical constraint — any safe run id works — but adopting it consistently is what makes `--match` useful as a grouping tool.
 
 ## Known issues (live ledger)
 

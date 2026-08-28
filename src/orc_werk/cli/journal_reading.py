@@ -74,6 +74,25 @@ def _intent_text(history: Sequence[Mapping[str, Any]]) -> Optional[str]:
     return None
 
 
+# Non-journal `*.jsonl`-suffixed sidecars this package writes beside a
+# run's canonical `<run_id>.jsonl` in the same directory: the crew-report
+# log (`<run_id>.reports.jsonl`, `EXT-CREW-REPORT-V1`) and the observed-at
+# time sidecar (`<run_id>.times.jsonl`, issue #39,
+# `orc_werk.adapters.jsonl.journal`'s "Observed-at time sidecar" section).
+# Both also match a naive `*.jsonl` glob, so every directory-listing call
+# site that enumerates run journals (`_resolve_journal` below,
+# `orc_werk.cli.report`'s `render_index`/`render_all`) must filter through
+# `_is_run_journal_path` instead of globbing `*.jsonl` alone -- otherwise a
+# run with a crew-report or times sidecar looks like "two journals" to
+# directory-based resolution.
+_SIDECAR_SUFFIXES = (".reports.jsonl", ".times.jsonl")
+
+
+def _is_run_journal_path(path: Path) -> bool:
+    name = path.name
+    return name.endswith(".jsonl") and not name.endswith(_SIDECAR_SUFFIXES)
+
+
 _PATH_SEPARATORS = tuple({os.sep, os.altsep} - {None})
 
 
@@ -94,7 +113,7 @@ def _resolve_journal(target: str) -> tuple[Path, str]:
     if path.is_file() and path.suffix == ".jsonl":
         return path.parent, path.stem
     if path.is_dir():
-        candidates = sorted(path.glob("*.jsonl"))
+        candidates = sorted(p for p in path.glob("*.jsonl") if _is_run_journal_path(p))
         if len(candidates) == 1:
             return path, candidates[0].stem
         if not candidates:
@@ -157,6 +176,7 @@ __all__ = [
     "DEFAULT_JOURNAL_DIR",
     "_awaiting_label",
     "_intent_text",
+    "_is_run_journal_path",
     "_looks_like_journal_path",
     "_require_journal_file",
     "_resolve_journal",
