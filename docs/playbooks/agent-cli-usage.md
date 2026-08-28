@@ -22,6 +22,10 @@ You **never record a decision**. `DEC-*` records (`DEC-DISPATCH`, `DEC-REQUEST-A
 
 If you are unsure which seat you are in, stop and ask rather than guess — recording a verdict on your own candidate defeats the entire point of candidate-bound assurance.
 
+### Executor identity when no adapter journals the seat
+
+When a seat's execution is not adapter-journaled with `execution-session/v1` provenance — for example, a ship agent working outside the ACP adapter — append a `crew-report/v1` record with `orc crew-report append` that identifies who or what filled the seat: model/tool, session reference, and role. Follow `EXT-CREW-REPORT-V1` for the report shape and durable ownership. This gives blind reconstruction the executor identity that an adapter-managed execution would otherwise have journaled.
+
 ## 3. Ship-agent protocol
 
 1. **Claiming is orchestrator-mechanical, not something you invoke.** There is no `orc claim` command. A claim is once per Work lineage (`PORT-WORK-004`, `INV-020`'s reduced-key form) — it is held by its claimant across all retry attempts and is never re-acquired on retry — but the CLI journals `FACT-WORK-CLAIMED` automatically at dispatch, as part of the ordinary `FX-CLAIM-WORK` effect; you do not, and cannot, issue a separate claim step. Your discipline is instead: **do not dispatch/work a run, or a Work within a shared-config run, that another agent is actively working.** If you are unsure whether a run or Work is already in flight, check `orc history <run>` for a recent `FACT-WORK-CLAIMED`/`FACT-EXEC-STARTED` you did not produce yourself, and hold off rather than racing it.
@@ -36,7 +40,8 @@ If you are unsure which seat you are in, stop and ask rather than guess — reco
 2. **Record your verdict against your own self-derived identity**, never against the shipper's reported value. This is the binding rule from the watchtower's record-correctness ruling (`gh pr view 24`, post-merge comment): the assurance-recording agent derives candidate identity independently from the artifact and records its verdict against that self-derived fingerprint. It MUST NOT copy the fingerprint from the ship agent's settlement record. This turns record verification structural — a misreported settlement cannot reach acceptance because the independently derived evidence fingerprint will not match (`INV-006`, `INV-007`, `INV-008` → `ERR-CONFLICT` at the kernel).
 3. **A mismatch is the system working, not a bug to smooth over.** If your independently derived fingerprint disagrees with what was recorded, report the mismatch (`ERR-CONFLICT`) — do not reconcile it away by substituting the shipper's value, and do not silently accept anyway.
 4. **Record `evidence_refs`** pointing at your audit output (the command you ran, the diff you fetched, the log you read) — not a narrative summary. Evidence is candidate-bound (`INV-007`) and non-transferable across candidates (`INV-008`): if the candidate changes, your prior evidence no longer applies and you must re-derive.
-5. As a standing discipline (SHOULD, not just for this one verdict): periodically reconcile the ledger against GitHub — every `ACCEPTED` Work's PR is actually merged, every recorded sha actually exists. This reconciliation-as-checker-duty is a supporting practice, not a one-time step.
+5. **Journal substantive review findings with the verdict.** When your review produces substantive findings, put a `review-findings/v1` payload in the config assurance entry's `extensions` key. That entry accepts extensions and transports them losslessly into `FACT-ASSURE-SETTLED` per `CONF-EXT-003`; `EXT-REVIEW-FINDINGS-V1` is the schema home. A transcript path alone is not a durable record of what the review found.
+6. As a standing discipline (SHOULD, not just for this one verdict): periodically reconcile the ledger against GitHub — every `ACCEPTED` Work's PR is actually merged, every recorded sha actually exists. This reconciliation-as-checker-duty is a supporting practice, not a one-time step.
 
 ## 5. Mechanics
 

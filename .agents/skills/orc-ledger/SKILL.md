@@ -41,7 +41,8 @@ a run's backing config. The non-negotiables:
 - **Verifiers derive the candidate identity themselves** (e.g.
   `git rev-parse HEAD`, `gh pr view N --json headRefOid`) and record the
   verdict against the self-derived value. A mismatch with the recorded value
-  is the system working: report it, do not reconcile it away.
+  is the system working: report it, do not reconcile it away. Substantive
+  findings ride the verdict entry's `extensions` per PLAYBOOK-AGENT-CLI.
 - Exit codes: 0 all accepted · 1 blocked · 2 error · 3 pending (your seat's
   work may be done at exit 3 — read the output, not just the code).
 
@@ -51,7 +52,9 @@ Outcomes are recorded into the run's backing config (the JSON file named in
 the run's `next:` affordance), then advanced by re-running the same dispatch
 command. Merge-only edits: append your own work's attempt entries; never
 touch sibling works' entries or the `plan` key. Concurrent dispatch of the
-same run is forbidden — one party re-dispatches at a time.
+same run is forbidden — one party re-dispatches at a time. If no adapter
+journals your seat, identify your model/tool, session reference, and role via
+`orc crew-report append` per `EXT-CREW-REPORT-V1`.
 
 ## 5. New work
 
