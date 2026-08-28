@@ -16,7 +16,7 @@ verifies:
 
 ## Outcome
 
-Implement a small, file-based reference implementation of the `crew-report/v1` durable log (`EXT-CREW-REPORT-V1`'s "Durable ownership" section): an append-only NDJSON file per `DeliveryRun`, distinct from — and never merged into — the `JournalPort`'s own journal file, living under the CLI's journal directory area with a distinct file suffix (for example `<run_id>.reports.jsonl` beside the existing `<run_id>.jsonl`). Stdlib-only (`json`, `pathlib`, `os`), matching `src/orc_werk/core`'s and the existing `orc_werk.adapters.jsonl` package's zero-integration-dependency stance (`CLAUDE.md` rule 8).
+Implement a small, file-based reference implementation of the `crew-report/v1` durable log (`EXT-CREW-REPORT-V1`'s "Durable ownership" section): an append-only NDJSON file per `DeliveryRun`, distinct from — and never merged into — the `JournalPort`'s own journal file, living under the CLI's journal directory area with a distinct file suffix (`<run_id>+reports.jsonl` beside the existing `<run_id>.jsonl` — the `+` separator is reserved for sidecars and outside the safe run-id charset, per the attempt-2 watchtower ruling on PR #46; this card originally exampled `.reports.jsonl`, which a legal run id like `m1.reports` collides with). Stdlib-only (`json`, `pathlib`, `os`), matching `src/orc_werk/core`'s and the existing `orc_werk.adapters.jsonl` package's zero-integration-dependency stance (`CLAUDE.md` rule 8).
 
 Reuse the jsonl `JournalPort` adapter's (`src/orc_werk/adapters/jsonl/journal.py`) mechanics rather than reinventing them:
 

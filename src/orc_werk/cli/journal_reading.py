@@ -74,6 +74,29 @@ def _intent_text(history: Sequence[Mapping[str, Any]]) -> Optional[str]:
     return None
 
 
+def _is_run_journal_path(path: Path) -> bool:
+    """True when `path` is a run's canonical `<run_id>.jsonl` journal, as
+    opposed to one of this package's adapter-owned sidecar files beside it
+    (the crew-report log `<run_id>+reports.jsonl`, `EXT-CREW-REPORT-V1`;
+    the observed-at time sidecar `<run_id>+times.jsonl`, issue #39).
+
+    The rule is structural, not a suffix list (the attempt-2 watchtower
+    ruling on PR #46): `+` is the reserved sidecar separator, deliberately
+    OUTSIDE the safe run-id charset (`tailsafe.SAFE_DELIVERY_RUN_ID`,
+    `[A-Za-z0-9_.-]`), so a run journal is exactly any `*.jsonl` whose stem
+    contains no `+`. A dot-separated suffix list (the rejected first
+    attempt used `.reports.jsonl`/`.times.jsonl`) collides with legal
+    dot-namespaced run ids -- run id `m1.times` yields `m1.times.jsonl`,
+    which a suffix list misclassifies as a sidecar, making the run
+    invisible to `--all`/`--index` and bare-directory resolution. With `+`
+    the collision is structurally impossible rather than avoided by
+    convention. Every directory-listing call site that enumerates run
+    journals (`_resolve_journal` below, `orc_werk.cli.report`'s
+    `discover_run_ids`) must filter through this predicate instead of
+    globbing `*.jsonl` alone."""
+    return path.name.endswith(".jsonl") and "+" not in path.stem
+
+
 _PATH_SEPARATORS = tuple({os.sep, os.altsep} - {None})
 
 
@@ -94,7 +117,7 @@ def _resolve_journal(target: str) -> tuple[Path, str]:
     if path.is_file() and path.suffix == ".jsonl":
         return path.parent, path.stem
     if path.is_dir():
-        candidates = sorted(path.glob("*.jsonl"))
+        candidates = sorted(p for p in path.glob("*.jsonl") if _is_run_journal_path(p))
         if len(candidates) == 1:
             return path, candidates[0].stem
         if not candidates:
@@ -157,6 +180,7 @@ __all__ = [
     "DEFAULT_JOURNAL_DIR",
     "_awaiting_label",
     "_intent_text",
+    "_is_run_journal_path",
     "_looks_like_journal_path",
     "_require_journal_file",
     "_resolve_journal",

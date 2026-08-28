@@ -71,6 +71,53 @@ once, shared with the crew-report log adapter (`TASK-M1-007`,
 journal-specific (`seq` assignment/caching, fact/decision/effect envelope
 construction).
 
+## Observed-at time sidecar (`<run_id>+times.jsonl`, issue #39,
+## `CONTRACT-DURABILITY`'s "record observation wall-clock times" row)
+
+Canonical `PORT-JOURNAL-ENVELOPE` records carry no timestamp -- clock
+values in the envelope would break the record-identical replay guarantee
+`SCN-007` depends on (two invocations that differ only in *when* the
+operator ran them must still produce byte-identical journals). Wall-clock
+observation time is nonetheless useful for a human reading `orc report`,
+so this adapter stamps it into a sidecar file beside -- never inside --
+the canonical journal: `<directory>/<delivery_run_id>+times.jsonl`, one
+`{"seq": N, "observed_at": "<iso8601Z>"}` line appended immediately after
+each successful canonical append, keyed by that record's own `seq` so a
+reader joins the two files by `seq` alone.
+
+This sidecar is the *only* thing this section adds; every existing
+guarantee above is unchanged by it:
+
+- **Never read on the replay/projection path.** `history`/
+  `load_projection` below do not open, stat, or otherwise touch this file
+  -- `orc_werk.cli.report` (`orc report`'s renderer) is the sidecar's only
+  reader, and it treats it as pure presentation enrichment.
+- **Creation deferred to first write.** `JSONLJournal.__init__` mkdirs the
+  *directory* (unchanged, pre-existing behavior) but never creates a
+  `+times.jsonl` file itself; the file first appears on this run's first
+  successful append.
+- **Best-effort, never fatal.** The stamp is written only after the
+  canonical record above it has already been durably appended, and any
+  failure writing it (permissions, a full disk, whatever) is swallowed,
+  not raised: a canonical journal append that has already durably
+  succeeded must never be reported as failed -- or, worse, retried and
+  duplicated -- because a best-effort enrichment sidecar could not be
+  written. "Absent sidecar means times are simply unknown" (the
+  `CONTRACT-DURABILITY` row) applies just as much to a sidecar that
+  becomes unwritable mid-run as to one that was never created (e.g. any
+  run recorded through `MemoryJournal`, which never writes one at all).
+- **Same flush-without-`fsync` durability stance** as the canonical
+  journal itself (see above), for the same M0 scripted-context reasons --
+  not a stronger or weaker promise than the file it sits beside.
+- **No torn-tail repair machinery on the write side.** Unlike the
+  canonical journal and the crew-report log, this adapter does not scan
+  the sidecar before appending to it (no `tailsafe.scan_tolerant` call)
+  and keeps no repair state across calls: a torn/corrupt line in this
+  file only ever costs one record's *presentation* timestamp, never
+  canonical correctness, so `orc_werk.cli.report`'s reader instead
+  degrades per-line (skip a malformed line, keep the rest) rather than
+  this adapter paying scan-before-every-append cost to prevent it.
+
 ## Reopen / concurrency
 
 Sequence numbers are derived by counting good records already on disk for a
@@ -87,6 +134,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -108,6 +156,13 @@ from orc_werk.ports.journal import JournalPort
 _TailRepair = tailsafe.TailRepair
 
 
+def _observed_at_now() -> str:
+    """ISO-8601 UTC wall-clock timestamp for the observed-at time sidecar
+    (module docstring's "Observed-at time sidecar" section, issue #39).
+    Microsecond precision, explicit `Z` suffix -- never a bare offset."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 class JSONLJournal(JournalPort):
     def __init__(self, directory: str | os.PathLike[str]) -> None:
         self._directory = Path(directory)
@@ -126,6 +181,28 @@ class JSONLJournal(JournalPort):
             message="delivery_run_id is not a safe JSONL journal filename component",
         )
         return self._directory / f"{delivery_run_id}.jsonl"
+
+    def _times_path_for(self, delivery_run_id: str) -> Path:
+        # delivery_run_id is already validated by _path_for/_scan before
+        # this is ever reached from _append -- no redundant re-check.
+        return self._directory / f"{delivery_run_id}+times.jsonl"
+
+    def _stamp_observed_at(self, delivery_run_id: str, seq: int) -> None:
+        """Best-effort observed-at time sidecar stamp (module docstring's
+        "Observed-at time sidecar" section, issue #39). Called only after
+        the canonical record for `seq` has already been durably appended
+        -- any failure here is swallowed, never raised, so a canonical
+        journal append that already succeeded is never reported as failed
+        because this presentation-only enrichment could not be written."""
+        try:
+            line = json.dumps(
+                {"seq": seq, "observed_at": _observed_at_now()}, sort_keys=True, allow_nan=False
+            )
+            with self._times_path_for(delivery_run_id).open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+                fh.flush()
+        except OSError:
+            pass
 
     def _scan(self, delivery_run_id: str) -> Tuple[List[Dict[str, Any]], Optional[_TailRepair]]:
         """Read all good records for one run via the shared torn-tail
@@ -165,6 +242,11 @@ class JSONLJournal(JournalPort):
         tailsafe.append_line(path, line, repair=self._tail_repair.pop(delivery_run_id, None))
         # only commit the cached seq once the write above has succeeded.
         self._seq_cache[delivery_run_id] = seq
+        # Observed-at sidecar stamp, strictly after the canonical append
+        # above has already succeeded (module docstring's "Observed-at
+        # time sidecar" section) -- best-effort, never able to affect the
+        # canonical record just written.
+        self._stamp_observed_at(delivery_run_id, seq)
         return json.loads(line)
 
     # -- PORT-JOURNAL --------------------------------------------------------

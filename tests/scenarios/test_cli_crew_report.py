@@ -100,7 +100,7 @@ class CrewReportCliNoSideEffectsTest(unittest.TestCase):
                     json.dumps({"turn": turn, "claimed_verdict": verdict}),
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue((tmp_dir / ".orc" / "some-run.reports.jsonl").exists())
+            self.assertTrue((tmp_dir / ".orc" / "some-run+reports.jsonl").exists())
             # The journal file itself is never created by this command.
             self.assertFalse((tmp_dir / ".orc" / "some-run.jsonl").exists())
 

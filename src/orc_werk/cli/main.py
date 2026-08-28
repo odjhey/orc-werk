@@ -147,7 +147,12 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     history = journal.history(delivery_run_id=run_id)
 
     print(f"run: {run_id}")
-    print(f"journal: {journal_dir / (run_id + '.jsonl')}")
+    # #40 comment: print the RESOLVED ABSOLUTE path, not a relative one --
+    # a printed relative path (e.g. `.orc/x.jsonl`) is not reliably
+    # clickable in a terminal when the reader's cwd differs from the
+    # process's; `.resolve()` makes it absolute and normalizes it the same
+    # way `orc report`'s printed paths now do (see orc_werk.cli.report).
+    print(f"journal: {(journal_dir / (run_id + '.jsonl')).resolve()}")
     for work_id in sorted(projection.works):
         print(_work_line(work_id, projection.works[work_id], history))
     any_blocked, any_non_accepted = _summarize_works(projection)
@@ -304,11 +309,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--index", action="store_true", help="render an index page over the journal directory's runs instead"
     )
     report_parser.add_argument(
+        "--all", action="store_true",
+        help="render every run whose run_id matches --match (default '*') to its own file plus a scoped index",
+    )
+    report_parser.add_argument(
+        "--match", default=None,
+        help="fnmatch glob over run_id, used with --all (default '*', e.g. 'm1.*' selects a namespace)",
+    )
+    report_parser.add_argument(
         "--journal", help="journal directory (default ./.orc)", default=None
     )
     report_parser.add_argument(
         "--out", help="output HTML path (default: announced <journal-dir>/<run_id>.report.html or .../index.html)",
         default=None,
+    )
+    report_parser.add_argument(
+        "--out-dir", default=None,
+        help="output directory for --all (default: the journal directory)",
     )
     report_parser.set_defaults(func=cmd_report)
 

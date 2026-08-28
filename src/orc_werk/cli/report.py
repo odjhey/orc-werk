@@ -1,8 +1,14 @@
-"""`orc report` (`TASK-M1-008`): read-only, stdlib-only, self-contained HTML
-renderer for one DeliveryRun's journal (`PORT-JOURNAL-ENVELOPE`) plus its
-`crew-report/v1` log (`EXT-CREW-REPORT-V1`), for async human review by a
-reader who did not watch the run happen; and a small local index page over
-a journal directory's runs.
+"""`orc report` (`TASK-M1-008`; round 2 -- issues #39, #40): read-only,
+stdlib-only, self-contained HTML renderer for one DeliveryRun's journal
+(`PORT-JOURNAL-ENVELOPE`) plus its `crew-report/v1` log
+(`EXT-CREW-REPORT-V1`) and observed-at time sidecar
+(`CONTRACT-DURABILITY`'s "record observation wall-clock times" row), for
+async human review by a reader who did not watch the run happen; a small
+local index page over a journal directory's runs (`--index`); and
+wildcard/namespace rendering of every run whose `run_id` `fnmatch`es a glob
+plus a scoped index (`--all [--match GLOB] [--out-dir DIR]`, issue #40).
+Every path this module prints is the resolved absolute path (issue #40
+comment).
 
 This module is CLI-owned composition, not product semantics
 (`docs/delivery/task-cards/TASK-M1-008-run-report-renderer.md`): it
@@ -34,6 +40,7 @@ read-only except the one announced output HTML file.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import html
 import json
 from pathlib import Path
@@ -46,6 +53,7 @@ from orc_werk.cli.journal_reading import (
     DEFAULT_JOURNAL_DIR,
     _awaiting_label,
     _intent_text,
+    _is_run_journal_path,
     _require_journal_file,
     _resolve_journal,
     _root_cause_for_work,
@@ -132,6 +140,61 @@ def _state_chip(work_id: str, wp: WorkProjection) -> str:
 
 def _work_id_of(record: Mapping[str, Any]) -> Optional[str]:
     return record.get("data", {}).get("work_id") or None
+
+
+def _load_times_sidecar(directory: Path, run_id: str) -> tuple[dict[int, str], int]:
+    """Best-effort read of the observed-at time sidecar (issue #39,
+    `CONTRACT-DURABILITY`'s "record observation wall-clock times" row,
+    `orc_werk.adapters.jsonl.journal`'s "Observed-at time sidecar"
+    section), joined into the timeline by `seq`. This is the sidecar's
+    *only* reader -- `JSONLJournal.history`/`load_projection` never touch
+    it, so this function is never called on the replay/projection path,
+    only from this module's rendering.
+
+    Absence is not an error: a missing sidecar (e.g. any run recorded
+    through `MemoryJournal`, which never writes one) returns an empty map
+    -- the report renders cleanly with no per-record/header times at all.
+
+    A corrupt or partially-written sidecar also never blocks rendering:
+    unlike the canonical journal (which fails closed on a malformed
+    non-final line, `PORT-JOURNAL`'s durable-journal recovery clause),
+    this reader degrades per *line* -- a line that isn't valid JSON, or
+    that doesn't carry the two expected fields in the expected shape, is
+    skipped and counted, not raised. That asymmetry is deliberate: a
+    malformed journal line risks silently losing canonical orchestration
+    truth, which must fail loudly; a malformed *times* line only ever
+    costs one record's presentation timestamp, and refusing to render an
+    entire report over one bad enrichment line would be a strictly worse
+    operator experience than rendering with that one time simply omitted.
+
+    Returns `(seq -> observed_at, skipped_line_count)` so the caller can
+    surface a "N corrupt sidecar record(s) skipped" note (skip-with-note,
+    never skip-silently) alongside the times.
+    """
+    path = directory / f"{run_id}+times.jsonl"
+    times: dict[int, str] = {}
+    skipped = 0
+    if not path.exists():
+        return times, skipped
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except OSError:
+        return times, skipped
+    for raw_line in raw_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        try:
+            record = json.loads(stripped)
+            seq = record["seq"]
+            observed_at = record["observed_at"]
+            if isinstance(seq, bool) or not isinstance(seq, int) or not isinstance(observed_at, str):
+                raise ValueError("malformed times sidecar record shape")
+        except (ValueError, KeyError, TypeError):
+            skipped += 1
+            continue
+        times[seq] = observed_at
+    return times, skipped
 
 
 def _fact_seq_index(history: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str], int]:
@@ -238,17 +301,24 @@ def _render_basis_citation(item: Mapping[str, Any], seq_index: Mapping[tuple[str
 
 
 def _render_timeline_record(
-    record: Mapping[str, Any], seq_index: Mapping[tuple[str, str], int]
+    record: Mapping[str, Any],
+    seq_index: Mapping[tuple[str, str], int],
+    times: Mapping[int, str] = {},
 ) -> str:
     seq = record.get("seq", 0)
     kind = record.get("kind", "")
     record_id = record.get("id", "")
     parts = [f'<li id="seq-{seq:04d}" class="record record-{html.escape(kind)}">']
+    observed_at = times.get(seq)
+    time_span = (
+        f' <span class="record-time">{html.escape(observed_at)}</span>' if observed_at else ""
+    )
     parts.append(
         '<div class="record-head">'
         f'<span class="record-seq">[{seq:04d}]</span> '
         f'<span class="record-kind">{html.escape(kind)}</span> '
         f'<span class="record-id">{html.escape(record_id)}</span>'
+        f"{time_span}"
         "</div>"
     )
     if kind == "decision":
@@ -365,6 +435,7 @@ def _render_work_section(
     history: Sequence[Mapping[str, Any]],
     seq_index: Mapping[tuple[str, str], int],
     reports_by_execution: Mapping[str, Sequence[Mapping[str, Any]]],
+    times: Mapping[int, str] = {},
 ) -> str:
     status = _STATE_STATUS.get(wp.state, "neutral")
     parts = [f'<section class="work" id="work-{html.escape(work_id)}">']
@@ -400,7 +471,7 @@ def _render_work_section(
     for record in history:
         if _work_id_of(record) != work_id:
             continue
-        parts.append(_render_timeline_record(record, seq_index))
+        parts.append(_render_timeline_record(record, seq_index, times))
         if record.get("kind") == "fact" and record.get("id") == "FACT-EXEC-STARTED":
             execution_id = record.get("data", {}).get("execution_id")
             if execution_id and execution_id not in emitted_executions:
@@ -413,19 +484,27 @@ def _render_work_section(
     return "\n".join(part for part in parts if part)
 
 
-def _render_run_level_section(history: Sequence[Mapping[str, Any]]) -> str:
+def _render_run_level_section(
+    history: Sequence[Mapping[str, Any]], times: Mapping[int, str] = {}
+) -> str:
     records = [r for r in history if _work_id_of(r) is None]
     if not records:
         return ""
     seq_index = _fact_seq_index(history)
     parts = ['<section class="run-level"><h2>Run-level records</h2><ol class="timeline">']
     for record in records:
-        parts.append(_render_timeline_record(record, seq_index))
+        parts.append(_render_timeline_record(record, seq_index, times))
     parts.append("</ol></section>")
     return "\n".join(parts)
 
 
-def _render_run_header(run_id: str, intent_text: Optional[str], projection: DeliveryProjection) -> str:
+def _render_run_header(
+    run_id: str,
+    intent_text: Optional[str],
+    projection: DeliveryProjection,
+    times: Mapping[int, str] = {},
+    skipped_times: int = 0,
+) -> str:
     parts = ['<header class="run-header">']
     parts.append(f"<h1>orc report — {html.escape(run_id)}</h1>")
     if intent_text is not None:
@@ -433,6 +512,23 @@ def _render_run_header(run_id: str, intent_text: Optional[str], projection: Deli
     else:
         parts.append('<div class="intent-text muted">(no intent text recorded)</div>')
     parts.append(f'<p class="meta-line">run: <code>{html.escape(run_id)}</code></p>')
+
+    if times:
+        # Lexicographic min/max is correct here: _observed_at_now's fixed
+        # "%Y-%m-%dT%H:%M:%S.%fZ" format is zero-padded/fixed-width in
+        # every field, so string ordering matches chronological ordering.
+        started = min(times.values())
+        last_activity = max(times.values())
+        parts.append(
+            '<p class="meta-line">observed: started '
+            f"<code>{html.escape(started)}</code> &middot; last activity "
+            f"<code>{html.escape(last_activity)}</code></p>"
+        )
+    if skipped_times:
+        parts.append(
+            '<p class="meta-line muted">times: '
+            f"{skipped_times} corrupt sidecar record(s) skipped</p>"
+        )
 
     if projection.works:
         any_blocked, any_non_accepted = _summarize_states(projection)
@@ -461,17 +557,23 @@ def render_run_report(directory: Path, run_id: str) -> str:
     history = journal.history(delivery_run_id=run_id)
     projection = journal.load_projection(delivery_run_id=run_id)
     reports = CrewReportLog(directory).list_reports(delivery_run_id=run_id)
+    times, skipped_times = _load_times_sidecar(directory, run_id)
 
     intent_text = _intent_text(history)
     seq_index = _fact_seq_index(history)
     reports_by_execution = _group_reports_by_execution(reports)
 
-    body_parts = [_render_run_header(run_id, intent_text, projection)]
-    body_parts.append(_render_run_level_section(history))
+    body_parts = [_render_run_header(run_id, intent_text, projection, times, skipped_times)]
+    body_parts.append(_render_run_level_section(history, times))
     for work_id in sorted(projection.works):
         body_parts.append(
             _render_work_section(
-                work_id, projection.works[work_id], history, seq_index, reports_by_execution
+                work_id,
+                projection.works[work_id],
+                history,
+                seq_index,
+                reports_by_execution,
+                times,
             )
         )
 
@@ -508,34 +610,59 @@ def _render_index_row(run_id: str, history: Sequence[Mapping[str, Any]], project
     )
 
 
-def render_index(directory: Path) -> str:
-    """Render a small local index page over `directory`'s `*.jsonl` run
-    journals (excluding `*.reports.jsonl` crew-report logs). Strictly
-    read-only over the journal directory: it only ever reads `history`/
-    `load_projection` for each discovered run, never writes anything but
-    its own announced output file."""
+def _render_index_table(rows: Sequence[str], *, empty_message: str) -> str:
+    if not rows:
+        return f'<p class="meta-line">{html.escape(empty_message)}</p>'
+    return (
+        '<div class="scroll"><table class="index-table"><thead><tr>'
+        "<th>run</th><th>intent</th><th>works</th><th>attempts</th><th>report</th>"
+        "</tr></thead><tbody>" + "\n".join(rows) + "</tbody></table></div>"
+    )
+
+
+def discover_run_ids(directory: Path, *, match: str = "*") -> list[str]:
+    """Run ids under `directory` whose id `fnmatch`es `match` (`--all`/
+    `--match`, issue #40), sorted. Strictly read-only: only lists
+    `directory`'s entries, never opens or writes anything. `_is_run_journal_path`
+    filters out this package's own non-journal `*.jsonl` sidecars (crew-report
+    log, observed-at times) so they are never mistaken for a run."""
+    run_ids = []
+    for path in sorted(directory.glob("*.jsonl")):
+        if not _is_run_journal_path(path):
+            continue
+        run_id = path.stem
+        if fnmatch.fnmatch(run_id, match):
+            run_ids.append(run_id)
+    return run_ids
+
+
+def render_index(directory: Path, *, run_ids: Optional[Sequence[str]] = None) -> str:
+    """Render a small local index page over `directory`'s run journals.
+    `run_ids`, when given, scopes the index to exactly that set (in the
+    order given) instead of discovering every run under `directory` --
+    used by `render_all`'s scoped index (issue #40). Strictly read-only
+    over the journal directory: it only ever reads `history`/
+    `load_projection` for each listed run, never writes anything but its
+    own announced output file."""
     if not directory.is_dir():
         raise not_found_error(
             f"journal directory does not exist: {directory}", path=str(directory)
         )
     journal = JSONLJournal(directory)
-    rows = []
-    for path in sorted(directory.glob("*.jsonl")):
-        if path.name.endswith(".reports.jsonl"):
-            continue
-        run_id = path.stem
-        history = journal.history(delivery_run_id=run_id)
-        projection = journal.load_projection(delivery_run_id=run_id)
-        rows.append(_render_index_row(run_id, history, projection))
-
-    if rows:
-        table = (
-            '<div class="scroll"><table class="index-table"><thead><tr>'
-            "<th>run</th><th>intent</th><th>works</th><th>attempts</th><th>report</th>"
-            "</tr></thead><tbody>" + "\n".join(rows) + "</tbody></table></div>"
+    scoped = run_ids is not None
+    ids = list(run_ids) if scoped else discover_run_ids(directory)
+    rows = [
+        _render_index_row(
+            run_id,
+            journal.history(delivery_run_id=run_id),
+            journal.load_projection(delivery_run_id=run_id),
         )
-    else:
-        table = '<p class="meta-line">(no runs found under this journal directory)</p>'
+        for run_id in ids
+    ]
+    empty_message = (
+        "(no runs matched this filter)" if scoped else "(no runs found under this journal directory)"
+    )
+    table = _render_index_table(rows, empty_message=empty_message)
 
     body = (
         '<header class="run-header">'
@@ -543,6 +670,37 @@ def render_index(directory: Path) -> str:
         "</header>" + table
     )
     return _PAGE_TEMPLATE.format(title=html.escape("orc report index"), css=_CSS, body=body)
+
+
+def render_all(directory: Path, *, match: str, out_dir: Path) -> tuple[list[tuple[str, Path]], Path]:
+    """Render every run under `directory` whose run_id `fnmatch`es `match`
+    (`--all`/`--match`, issue #40; `match` default `'*'` renders every
+    run) to its own `<out_dir>/<run_id>.report.html`, plus one scoped
+    `<out_dir>/index.html` over exactly that matched set. Read-only over
+    `directory` except the announced outputs under `out_dir` (created if
+    missing, since it is itself an announced output location -- mirrors
+    `--out`'s existing single-run behavior of writing wherever asked).
+    Missing `directory` -> canonical `ERR-NOT-FOUND`, checked before
+    `out_dir` is ever touched -- an unmatched/bad `--journal` must not
+    leave a stray `--out-dir` behind."""
+    if not directory.is_dir():
+        raise not_found_error(
+            f"journal directory does not exist: {directory}", path=str(directory)
+        )
+    run_ids = discover_run_ids(directory, match=match)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    outputs: list[tuple[str, Path]] = []
+    for run_id in run_ids:
+        html_text = render_run_report(directory, run_id)
+        out_path = out_dir / f"{run_id}.report.html"
+        out_path.write_text(html_text, encoding="utf-8")
+        outputs.append((run_id, out_path))
+
+    index_html = render_index(directory, run_ids=run_ids)
+    index_path = out_dir / "index.html"
+    index_path.write_text(index_html, encoding="utf-8")
+    return outputs, index_path
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +720,29 @@ def _resolve_report_target(run_arg: str, journal_arg: Optional[str]) -> tuple[Pa
 
 
 def cmd_report(args: argparse.Namespace) -> int:
+    if args.all:
+        if args.run:
+            raise validation_error(
+                "orc report --all does not take a positional run argument", run=args.run
+            )
+        if args.index:
+            raise validation_error("orc report --all cannot be combined with --index")
+        if args.out:
+            raise validation_error("orc report --all uses --out-dir, not --out")
+        directory = Path(args.journal) if args.journal else Path(DEFAULT_JOURNAL_DIR)
+        out_dir = Path(args.out_dir) if args.out_dir else directory
+        match = args.match if args.match is not None else "*"
+        outputs, index_path = render_all(directory, match=match, out_dir=out_dir)
+        for _run_id, out_path in outputs:
+            print(f"report: {out_path.resolve()}")
+        print(f"report: {index_path.resolve()}")
+        return 0
+
+    if args.match is not None:
+        raise validation_error("orc report --match requires --all")
+    if args.out_dir is not None:
+        raise validation_error("orc report --out-dir requires --all")
+
     if args.index:
         if args.run:
             raise validation_error(
@@ -571,17 +752,17 @@ def cmd_report(args: argparse.Namespace) -> int:
         html_text = render_index(directory)
         out_path = Path(args.out) if args.out else directory / "index.html"
         out_path.write_text(html_text, encoding="utf-8")
-        print(f"report: {out_path}")
+        print(f"report: {out_path.resolve()}")
         return 0
 
     if not args.run:
-        raise validation_error("orc report requires a run id/path positional argument, or --index")
+        raise validation_error("orc report requires a run id/path positional argument, or --index/--all")
 
     directory, run_id = _resolve_report_target(args.run, args.journal)
     html_text = render_run_report(directory, run_id)
     out_path = Path(args.out) if args.out else directory / f"{run_id}.report.html"
     out_path.write_text(html_text, encoding="utf-8")
-    print(f"report: {out_path}")
+    print(f"report: {out_path.resolve()}")
     return 0
 
 
@@ -693,6 +874,7 @@ pre.record-data, pre.record-extensions {
 .timeline > li.record-effect { border-left-color: var(--ink-secondary); }
 .record-head { font-weight: 600; font-size: 0.88rem; }
 .record-seq { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.record-time { color: var(--ink-muted); font-size: 0.82em; font-variant-numeric: tabular-nums; }
 .basis { margin: 0.3rem 0 0; font-size: 0.85rem; }
 .basis-label { color: var(--ink-muted); text-transform: uppercase; font-size: 0.7em; letter-spacing: 0.06em; }
 .basis ul { margin: 0.15rem 0 0; padding-left: 1.1rem; }
@@ -711,4 +893,4 @@ a.citation { color: var(--ink-primary); text-decoration: underline; text-decorat
 """
 
 
-__all__ = ["cmd_report", "render_index", "render_run_report"]
+__all__ = ["cmd_report", "discover_run_ids", "render_all", "render_index", "render_run_report"]

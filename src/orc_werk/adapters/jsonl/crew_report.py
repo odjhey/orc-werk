@@ -6,11 +6,16 @@ zero-integration-dependency stance (`CLAUDE.md` rule 8).
 
 ## Layout
 
-One NDJSON file per `DeliveryRun`, `<directory>/<delivery_run_id>.reports.jsonl`,
+One NDJSON file per `DeliveryRun`, `<directory>/<delivery_run_id>+reports.jsonl`,
 distinct from -- and never merged into -- the `JournalPort`'s own
 `<delivery_run_id>.jsonl` file (`EXT-CREW-REPORT-V1` README's "Durable
 ownership" section: "a plain NDJSON file per `DeliveryRun`, distinct from
-[...] the `JournalPort`'s own file"). This adapter is intentionally *not*
+[...] the `JournalPort`'s own file"). The `+` sidecar separator is
+deliberately OUTSIDE `tailsafe.SAFE_DELIVERY_RUN_ID`'s charset
+(`[A-Za-z0-9_.-]`) so no legal run id -- including dot-namespaced ids like
+`m1.reports` -- can ever produce a filename that classifies as a sidecar
+(the attempt-2 watchtower ruling on PR #46; the previously shipped
+`.reports.jsonl` suffix collided with exactly such ids). This adapter is intentionally *not*
 a `JournalPort` implementation: it does not assign `PORT-JOURNAL-ENVELOPE`
 `seq` values, does not participate in `PORT-JOURNAL-005`'s canonical
 projection, and core never reads it (`CONF-EXT-006`). Each line is one
@@ -168,7 +173,7 @@ class CrewReportLog:
             delivery_run_id,
             message="delivery_run_id is not a safe crew-report log filename component",
         )
-        return self._directory / f"{delivery_run_id}.reports.jsonl"
+        return self._directory / f"{delivery_run_id}+reports.jsonl"
 
     def append(
         self, *, delivery_run_id: str, execution_id: str, report: Mapping[str, Any]
