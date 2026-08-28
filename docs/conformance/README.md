@@ -1,0 +1,41 @@
+---
+id: CONFORMANCE-INDEX
+type: index
+status: current
+authority: normative
+description: Provider-independent conformance requirements.
+---
+
+# Conformance
+
+Every real adapter must pass the same conformance requirements as its in-memory counterpart for each capability it advertises.
+
+## Initial requirements
+
+### Work graph
+- `CONF-WORK-001`: ready excludes blocked dependencies.
+- `CONF-WORK-002`: completion unlocks dependents only after required completion is committed.
+- `CONF-WORK-003`: duplicate completion is idempotent or deterministically conflicting.
+- `CONF-WORK-004`: atomic claim is tested when `CAP-WORK-ATOMIC-CLAIM` is advertised.
+
+### Execution
+- `CONF-EXEC-001`: start returns a stable logical execution identity.
+- `CONF-EXEC-002`: repeated start with the same effect/idempotency key does not create two logical executions.
+- `CONF-EXEC-003`: inspect distinguishes running from terminal settlement.
+- `CONF-EXEC-004`: unsupported resume strength fails explicitly.
+
+### Candidate
+- `CONF-CAND-001`: same exact subject yields the same fingerprint.
+- `CONF-CAND-002`: changed subject yields a different fingerprint.
+- `CONF-CAND-003`: current() must not silently return a known-stale candidate.
+
+### Assurance
+- `CONF-ASSURE-001`: settled evidence names the candidate fingerprint.
+- `CONF-ASSURE-002`: rejected never normalizes to accepted.
+- `CONF-ASSURE-003`: evidence from a different fingerprint is rejected by the kernel.
+- `CONF-ASSURE-004`: inconclusive remains distinct from rejected/accepted.
+
+### Journal
+- `CONF-JOURNAL-001`: append order is deterministic.
+- `CONF-JOURNAL-002`: history is immutable/append-preserving.
+- `CONF-JOURNAL-003`: replay reconstructs the same canonical projection.
