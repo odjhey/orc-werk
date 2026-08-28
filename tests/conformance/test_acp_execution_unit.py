@@ -1,0 +1,177 @@
+"""Unit tests for `AcpExecution`'s unobservability-determination branches
+and cancel post-verification (`TASK-M1-005` acceptance item: "unit tests
+for the unobservability check branches ... plus cancel post-verification"),
+against the fake `acpx` executable (`tests/conformance/
+support_acpx_stub.py`).
+
+The three branches from the task card's ruling and the spike's
+"Determining unobservability" procedure
+(`docs/reports/2026-08-28-acpx-pi-spike.md`):
+
+1. **daemon dead, no recorded result** -> settle `failed` (an honest
+   observation of a lost outcome, not a fabrication).
+2. **result present** -> settle using it, regardless of daemon liveness
+   (`running` status must never override a recorded `stopReason`).
+3. **daemon alive, no recorded result yet** -> still `running`, never a
+   timeout.
+
+Each is exercised with a *fresh* `AcpExecution` instance for `inspect()`
+(no local `_submitted_turns` cache), simulating the cross-process
+crash-recovery case the card cares about: the process that submitted the
+turn is gone, so `inspect()` must reconnect and reason from `acpx`'s
+durable state alone.
+"""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from orc_werk.adapters.acp.execution import AcpExecution, session_name_for_idempotency_key
+from orc_werk.ports.base import LIFECYCLE_STATE_RUNNING, LIFECYCLE_STATE_SETTLED
+from tests.conformance.support_acpx_stub import AcpxStubWorld
+
+
+class AcpExecutionUnobservabilityTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._world = AcpxStubWorld(Path(self._tmp.name))
+        self._submitter = AcpExecution(env=self._world.env())
+
+    def _start(self, *, work_id: str, idempotency_key: str, states):
+        session_name = session_name_for_idempotency_key(idempotency_key)
+        self._world.seed_script(session_name, [{"states": states, "outcome": "completed"}])
+        ref = self._submitter.start(
+            work_id=work_id,
+            execution_request={"prompt": "hi"},
+            idempotency_key=idempotency_key,
+        )
+        return ref, session_name
+
+    # -- branch 1: daemon dead, no recorded result -> failed -----------------
+
+    def test_daemon_dead_with_no_recorded_result_settles_failed(self) -> None:
+        ref, session_name = self._start(
+            work_id="w1", idempotency_key="dead-1", states=["running"]
+        )
+        # The turn never settles on its own (states never reach "settled");
+        # force the daemon into the confirmed-dead state instead of ever
+        # letting the turn complete.
+        self._world.mark_daemon_dead(session_name, exit_code=137)
+
+        fresh = AcpExecution(env=self._world.env())  # a different process
+        observed = fresh.inspect(execution_id=ref.id)
+
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "failed")
+        provenance = observed.extensions["execution-session/v1"]
+        self.assertTrue(provenance.get("_orcw_unobservable"))
+
+    # -- branch 2: result present -> settle using it, regardless of status --
+
+    def test_result_present_settles_even_though_status_would_read_alive(self) -> None:
+        ref, session_name = self._start(
+            work_id="w1", idempotency_key="settled-1", states=["settled"]
+        )
+        # Materialize the recorded result via the same-instance path first
+        # (mirrors ScriptedExecution's "call inspect enough times").
+        self._submitter.inspect(execution_id=ref.id)
+
+        # Sanity: the stub reports the daemon as ordinarily alive -- this
+        # is the "running can persist after settlement" trap the spike
+        # documented; a fresh inspect() must not be fooled by it.
+        record = self._world.session_record(session_name)
+        self.assertFalse(record["force_daemon_dead"])
+
+        fresh = AcpExecution(env=self._world.env())
+        observed = fresh.inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "completed")
+
+    def test_result_present_maps_cancelled_stop_reason(self) -> None:
+        ref, _session_name = self._start(
+            work_id="w1", idempotency_key="cancelled-1", states=["settled"]
+        )
+        # Rewrite the scripted entry's outcome to "cancelled" before the
+        # first show() materializes it.
+        session_name = session_name_for_idempotency_key("cancelled-1")
+        self._world.set_script_entry(session_name, 0, {"states": ["settled"], "outcome": "cancelled"})
+
+        observed = self._submitter.inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "cancelled")
+
+    def test_result_present_maps_unknown_stop_reason_to_failed(self) -> None:
+        # A refusal/permission-denied-shaped stopReason must NEVER read as
+        # success -- the mapping-doc footgun ("permission-denied runs can
+        # exit looking successful ... MUST map to canonical failure").
+        ref, _session_name = self._start(
+            work_id="w1", idempotency_key="refused-1", states=["settled"]
+        )
+        session_name = session_name_for_idempotency_key("refused-1")
+        self._world.set_script_entry(
+            session_name, 0, {"states": ["settled"], "outcome": "something-else-entirely"}
+        )
+
+        observed = self._submitter.inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "failed")
+
+    # -- branch 3: daemon alive, no recorded result yet -> running, never a
+    # -- timeout. --
+
+    def test_daemon_alive_with_no_recorded_result_stays_running(self) -> None:
+        ref, _session_name = self._start(
+            work_id="w1", idempotency_key="alive-1", states=["running"]
+        )
+        fresh = AcpExecution(env=self._world.env())
+        observed = fresh.inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
+        self.assertIsNone(observed.outcome)
+
+        # Calling inspect() again (simulating a later poll) with the
+        # daemon still alive and still no result must not flip to any
+        # settled outcome -- there is no timeout path.
+        observed_again = fresh.inspect(execution_id=ref.id)
+        self.assertEqual(observed_again.state, LIFECYCLE_STATE_RUNNING)
+
+
+class AcpExecutionCancelPostVerificationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._world = AcpxStubWorld(Path(self._tmp.name))
+        self._adapter = AcpExecution(env=self._world.env())
+
+    def test_cancel_on_in_flight_turn_settles_cancelled(self) -> None:
+        session_name = session_name_for_idempotency_key("cancel-inflight")
+        self._world.seed_script(session_name, [{"states": ["running"], "outcome": "completed"}])
+        ref = self._adapter.start(
+            work_id="w1", execution_request={"prompt": "hi"}, idempotency_key="cancel-inflight"
+        )
+        self._adapter.cancel(execution_id=ref.id)  # cancel() post-verifies internally
+        observed = self._adapter.inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "cancelled")
+
+    def test_cancel_with_nothing_in_flight_does_not_fabricate_a_cancellation(self) -> None:
+        # Footgun: a cancel that exits 0 may mean "nothing to cancel" -- an
+        # already-settled turn's real outcome must survive an idle cancel.
+        session_name = session_name_for_idempotency_key("cancel-idle")
+        self._world.seed_script(session_name, [{"states": ["settled"], "outcome": "completed"}])
+        ref = self._adapter.start(
+            work_id="w1", execution_request={"prompt": "hi"}, idempotency_key="cancel-idle"
+        )
+        self._adapter.inspect(execution_id=ref.id)  # materialize + observe "completed"
+
+        self._adapter.cancel(execution_id=ref.id)  # nothing in flight -> no-op cancel
+
+        observed = self._adapter.inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "completed")  # unchanged, NOT "cancelled"
+
+
+if __name__ == "__main__":
+    unittest.main()
