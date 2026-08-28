@@ -127,7 +127,7 @@ orc config-schema
 ```text
 usage: orc dispatch [-h] [--config CONFIG] [--journal JOURNAL]
                      [--max-attempts MAX_ATTEMPTS] [--run-id RUN_ID]
-                     intent
+                     [intent]
 ```
 
 Dispatch an intent and run the delivery state machine to a resting point
@@ -135,7 +135,7 @@ Dispatch an intent and run the delivery state machine to a resting point
 
 | Flag | Default | Notes |
 |---|---|---|
-| `intent` (positional) | required | the intent text to submit; journaled verbatim and durable |
+| `intent` (positional) | required for new runs | the intent text to submit; optional with `--run-id` naming an existing run whose journal holds its durable intent |
 | `--config` | none (empty scripted config) | path to a portable JSON dispatch config; see "Config schema" below. Omittable on a **later** dispatch of a run that already has a persisted config (see "Config persistence" below) |
 | `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
 | `--max-attempts` | policy default `3` | overrides the run's retry budget |
@@ -170,19 +170,23 @@ next:
   - then re-run: orc dispatch 'pending demo' --config /abs/path/.orc/demo-pending/config.json --journal /abs/path/.orc --run-id demo-pending
 ```
 
-**Config persistence and run-id-only re-dispatch** (issue #55 H2): on a
-run's first `dispatch`, the effective config is durably copied into that
-run's own directory, `<journal-dir>/<run_id>/config.json`. A later
-`dispatch` for the same run may omit `--config` entirely -- `intent` and
-`--run-id` are still required by argparse, but the config resolves from the
-run directory (the intent text is ignored on any resumed dispatch anyway).
-Verified against the run above, config omitted:
+**Config persistence and run-id-only resume**: on a run's first `dispatch`,
+the effective config is durably copied into that run's own directory,
+`<journal-dir>/<run_id>/config.json`. The blessed resume form omits both the
+redundant positional intent and `--config`; the journal supplies the durable
+intent and the run directory supplies the config:
 
 ```bash
-orc dispatch "pending demo" --journal ./.orc --run-id demo-pending
+orc dispatch --run-id demo-pending --journal ./.orc
 ```
 
-produces byte-identical output to the first invocation (still exit `3`,
+The existing `orc dispatch "pending demo" --run-id demo-pending` form still
+works, and replay continues to ignore its fresh intent text. A new dispatch
+whose intent text exactly equals an existing run id is rejected with an
+actionable `ERR-VALIDATION`: use `orc dispatch --run-id <id>` to resume, or
+reword the intent if it is genuinely new work.
+
+The concise resume command produces byte-identical output to the first invocation (still exit `3`,
 still resolving the same persisted `config.json`). Editing that persisted
 `config.json` to add the real outcome and re-running the same command
 advances the run:
@@ -191,7 +195,7 @@ advances the run:
 # edit /abs/path/.orc/demo-pending/config.json:
 #   "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "x"},
 #                             "assurance": {"verdict": "accepted"}}]}
-orc dispatch "pending demo" --journal ./.orc --run-id demo-pending
+orc dispatch --run-id demo-pending --journal ./.orc
 ```
 
 ```text

@@ -164,10 +164,28 @@ def cmd_config_schema(_args: argparse.Namespace) -> int:
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
     journal_dir = resolve_journal_dir(args.journal)
+    existing_run_ids = set(layout.discover_run_ids(journal_dir))
+
+    if args.intent is None:
+        if not args.run_id or args.run_id not in existing_run_ids:
+            raise validation_error(
+                "intent is required when dispatching a new run; to resume an existing run use "
+                "orc dispatch --run-id <id>",
+                run_id=args.run_id,
+            )
+        existing_history = JSONLJournal(journal_dir).history(delivery_run_id=args.run_id)
+        intent_text = _intent_text(existing_history)
+        if intent_text is None:
+            raise validation_error(
+                f"run {args.run_id!r} has no journaled intent; supply the positional intent",
+                run_id=args.run_id,
+            )
+    else:
+        intent_text = args.intent
 
     if args.config:
         config = load_config(args.config)
-        run_id = args.run_id or config.get("run_id") or _derive_run_id(args.intent)
+        run_id = args.run_id or config.get("run_id") or _derive_run_id(intent_text)
     else:
         # issue #55 H2 config persistence: no --config given -- before
         # falling back to the bare-scripted default ({}), check whether
@@ -178,13 +196,21 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         # consult in this branch -- exactly the same derivation `--config`
         # would otherwise fall back to (`--run-id` flag, else the
         # deterministic intent-text hash).
-        run_id = args.run_id or _derive_run_id(args.intent)
+        run_id = args.run_id or _derive_run_id(intent_text)
         persisted_config_path = layout.config_path(journal_dir, run_id)
         if persisted_config_path.exists():
             config = load_config(str(persisted_config_path))
             run_id = args.run_id or config.get("run_id") or run_id
         else:
             config = {}
+
+    if run_id not in existing_run_ids and intent_text in existing_run_ids:
+        raise validation_error(
+            f"intent {intent_text!r} is also existing run id {intent_text!r}: to resume, run "
+            f"orc dispatch --run-id {intent_text}; if this is genuinely new work, reword the intent",
+            intent=intent_text,
+            existing_run_id=intent_text,
+        )
 
     # #17 comment fix: finish every config-derived validation
     # (`build_scripted_adapters`/`build_run_config`, e.g. BUG-2's
@@ -211,7 +237,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     else:
         journal = JSONLJournal(journal_dir)
         execution, candidate, assurance = build_dispatch_ports(
-            config, delivery_run_id=run_id, intent_text=args.intent, journal=journal
+            config, delivery_run_id=run_id, intent_text=intent_text, journal=journal
         )
 
     orchestrator = Orchestrator(
@@ -230,7 +256,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     # (read-only, before bootstrap's own first append) rather than after,
     # since bootstrap/run below will have already written records by then.
     is_first_dispatch = not journal.history(delivery_run_id=run_id)
-    orchestrator.bootstrap(intent_id=run_id, text=args.intent, plan=plan)
+    orchestrator.bootstrap(intent_id=run_id, text=intent_text, plan=plan)
     projection = orchestrator.run()
     history = journal.history(delivery_run_id=run_id)
 
@@ -252,7 +278,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             history=history,
             projection=projection,
             briefs=config.get("briefs"),
-            intent_text=args.intent,
+            intent_text=intent_text,
         )
         if mirror_report.degraded:
             failed = len(mirror_report.errors)
@@ -305,7 +331,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         run_id=run_id,
         journal_dir=journal_dir.resolve(),
         config_path=Path(args.config).resolve() if args.config else None,
-        intent_text=args.intent,
+        intent_text=intent_text,
     ):
         print(line)
     return exit_code
@@ -589,6 +615,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="examples:\n"
         '  orc dispatch "ship the widget" --config cfg.json\n'
         '  orc dispatch "ship the widget" --config cfg.json --journal ./.orc --max-attempts 3\n'
+        "  orc dispatch --run-id demo-run --journal ./.orc  # resume an existing run\n"
         '  orc dispatch "reply with the word ping" --config acp-cfg.json  # real Pi execution:\n'
         '    # acp-cfg.json: {"execution": {"adapter": "acp", "cwd": "/abs/worktree"},\n'
         '    #                "candidate": {"adapter": "git", "repo_path": "/abs/worktree"}}\n'
@@ -600,7 +627,11 @@ def build_parser() -> argparse.ArgumentParser:
         "scripted, candidate.adapter=scripted",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    dispatch_parser.add_argument("intent", help="the intent text to submit")
+    dispatch_parser.add_argument(
+        "intent",
+        nargs="?",
+        help="intent text to submit (optional only with --run-id naming an existing run)",
+    )
     dispatch_parser.add_argument("--config", help="path to a portable JSON dispatch config", default=None)
     dispatch_parser.add_argument("--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None)
     dispatch_parser.add_argument("--max-attempts", type=int, default=None, help="override policy max_attempts")
