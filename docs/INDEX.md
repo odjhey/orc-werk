@@ -93,3 +93,4 @@ description: Flat documentation index.
 - [TASK-M1-005](delivery/task-cards/TASK-M1-005-acp-adapter.md)
 - [TASK-M1-006](delivery/task-cards/TASK-M1-006-agent-cli-playbook.md)
 - [TASK-M1-007](delivery/task-cards/TASK-M1-007-crew-report-log.md)
+- [TASK-M1-008](delivery/task-cards/TASK-M1-008-run-report-renderer.md)
