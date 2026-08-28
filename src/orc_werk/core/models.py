@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from orc_werk.core.portable import to_portable
+
 
 @dataclass(frozen=True)
 class DeliveryRun:
@@ -61,7 +63,10 @@ class Candidate:
             "id": self.id,
             "work_id": self.work_id,
             "execution_id": self.execution_id,
-            "subject_identity": self.subject_identity,
+            # subject_identity must be portable when serialized (ARCH-REPOSITORY-STRUCTURE
+            # portability rules); to_portable raises for non-JSON-compatible values,
+            # matching the guard every other canonical to_dict() already applies.
+            "subject_identity": to_portable(self.subject_identity),
             "fingerprint": self.fingerprint,
         }
 
