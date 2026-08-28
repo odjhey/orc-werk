@@ -16,7 +16,7 @@ M1 is delivered in two phases, with an explicit intermediate stage between them:
 
 - **Phase M1a — CLI-usable ledger (no integrations).** The human/watchtower operator is the execution provider. The CLI becomes durable and usable enough to run a real multi-work delivery by hand, with outcomes recorded by the operator as they become known rather than supplied up front by a script.
 - **Stage M1a+ — agents record via CLI (push mode).** Subagents (ship/verify agents) call the orc CLI themselves to record observations, instead of the operator transcribing on their behalf. Push mode delivers real multi-agent orchestration with zero adapters and de-risks M1b's ExecutionPort design.
-- **Phase M1b — first real adapter.** The execution seat is automated with the first genuine `PORT-EXECUTION` provider: the `acpx` CLI (Agent Client Protocol) driving Claude Code as the first agent behind it.
+- **Phase M1b — first real adapter.** The execution seat is automated with the first genuine `PORT-EXECUTION` provider: the `acpx` CLI (Agent Client Protocol) driving Pi as the first agent behind it.
 
 Both phases exercise value claims that only matter once real, non-scripted work is on the line:
 
@@ -78,16 +78,17 @@ A written guidance playbook for agents using the CLI, under `docs/playbooks/` (e
 
 Sequencing: this playbook is authored **after** SCN-007 fixes the command surface — guidance must not precede the commands it documents. It depends on `TASK-M1-001` and `TASK-M1-002`.
 
-## Phase M1b — first real adapter (acpx ExecutionPort driving Claude Code)
+## Phase M1b — first real adapter (acpx ExecutionPort driving Pi)
 
 ### Retarget note (supersedes the original Claude Code headless framing)
 
-Per a completed watchtower/scout assessment (issue #12 follow-on), M1b's `PORT-EXECUTION` target is retargeted from `claude -p` headless invocation to the `acpx` CLI — an Agent Client Protocol (ACP) client — driving Claude Code as its first agent (`acpx claude`). `docs/adapters/acp/` already carries draft stubs anticipating this shape; this section makes them binding for M1b. M1a and M1a+ are **unaffected** by this retarget — both phases remain operator/agent-CLI-driven with zero execution adapters, exactly as delivered.
+Per a completed watchtower/scout assessment (issue #12 follow-on) and a subsequent operator ruling on the first-agent choice, M1b's `PORT-EXECUTION` target is retargeted from `claude -p` headless invocation to the `acpx` CLI — an Agent Client Protocol (ACP) client — driving **Pi** as its first agent (`acpx pi`, using gpt5.6-family models; model ids are carried as opaque strings per `INV-014` and are never enumerated in contracts). `docs/adapters/acp/` already carries draft stubs anticipating this shape; this section makes them binding for M1b. M1a and M1a+ are **unaffected** by this retarget — both phases remain operator/agent-CLI-driven with zero execution adapters, exactly as delivered.
 
 Rationale, concisely:
 
 - the port shape maps natively onto ACP: idempotent session `ensure` corresponds to `FX-START-EXECUTION`'s idempotent start; ACP's first-class send/cancel messages map directly onto `CAP-EXEC-SEND`/`CAP-EXEC-CANCEL`; raw ACP NDJSON output is exactly `CAP-EXEC-STRUCTURED-LIFECYCLE`;
-- one protocol adapter can serve many agents, making `P-001` (providers as policy) concrete rather than aspirational — the same `acpx`-backed `PORT-EXECUTION` adapter is not Claude-Code-specific at the protocol layer, only its first configured agent is;
+- one protocol adapter can serve many agents, making `P-001` (providers as policy) concrete rather than aspirational — the same `acpx`-backed `PORT-EXECUTION` adapter is not agent-specific at the protocol layer, only its first configured agent is;
+- **Pi-first is a deliberate cross-provider proof.** The operator's workflow already exercises Claude Code and its subagents heavily — the watchtower process itself runs on them. Driving a different agent lineage through the adapter makes the `P-001` providers-as-policy claim a real cross-provider proof rather than Claude-orchestrating-Claude. Claude Code remains available through the **same** adapter at zero additional cost and becomes the natural provider-swap demonstration: it is the second agent, already known-good manually;
 - the operator's surrounding ecosystem (the `zxro` runtime-port contract, `rozoro`, the `no-mistakes` production driver) is converging on ACP as the common runtime/session transport;
 - `docs/adapters/acp/` already carries draft capability/mapping/conformance stubs anticipating exactly this adapter.
 
@@ -101,7 +102,7 @@ Per the issue #12 watchtower assessment, these land before the adapter ships:
 
 ### Adapter
 
-`PORT-EXECUTION` over the `acpx` CLI driving Claude Code as the first agent: `acpx claude`, `--format json --json-strict` for structured NDJSON output, and explicit named sessions created via `sessions ensure` (never `sessions new`) — the session name is derived deterministically from the `INV-020` idempotency tuple so that `ensure` is itself the idempotent start. Provider/protocol vocabulary (acpx flags, scope keys, ACP method names, session id fields, exit codes) stays in the adapter and its mapping doc, never in core contracts (`INV-014`, `docs/adapters/README.md`).
+`PORT-EXECUTION` over the `acpx` CLI driving Pi as the first agent: `acpx pi`, `--format json --json-strict` for structured NDJSON output, and explicit named sessions created via `sessions ensure` (never `sessions new`) — the session name is derived deterministically from the `INV-020` idempotency tuple so that `ensure` is itself the idempotent start. Provider/protocol vocabulary (acpx flags, scope keys, ACP method names, session id fields, exit codes, agent binary names, model ids) stays in the adapter and its mapping doc, never in core contracts (`INV-014`, `docs/adapters/README.md`).
 
 **Advertised capability set at M1b:**
 
@@ -110,7 +111,7 @@ Per the issue #12 watchtower assessment, these land before the adapter ships:
 - `CAP-EXEC-RESUME-BEST-EFFORT`
 - `CAP-EXEC-STRUCTURED-LIFECYCLE`
 
-**`CAP-EXEC-RESUME-EXACT` is explicitly withheld at M1b.** `acpx`'s documented crash-recovery behavior transparently falls back to `session/new` when exact resume cannot be honored, and `INV-013` forbids presenting that silent fallback as resume. The proving condition for advertising exact resume in a future milestone is: (1) a native `agentSessionId` is present in the ACP session AND the `acpx` session id is verified unchanged across a resume, plus (2) durable `execution-session/v1` provenance per the capability-durability rule above. Until that condition is proven, `claude --resume` is demoted to documented break-glass recovery (an operator/watchtower escape hatch) — it is not part of the adapter's `PORT-EXECUTION` path.
+**`CAP-EXEC-RESUME-EXACT` is explicitly withheld at M1b.** `acpx`'s documented crash-recovery behavior transparently falls back to `session/new` when exact resume cannot be honored, and `INV-013` forbids presenting that silent fallback as resume. The proving condition for advertising exact resume in a future milestone is: (1) a native `agentSessionId` is present in the ACP session (`_meta`) AND the `acpx` session id is verified unchanged across a resume, plus (2) durable `execution-session/v1` provenance per the capability-durability rule above. Note that this proving condition depends on the Pi ACP adapter's session-id fidelity, which is less established than the version-pinned Claude adapter's — verifying Pi adapter maturity is part of the M1b spike (see the task card). Until the condition is proven, agent-native resume commands (e.g. `claude --resume` when driving the Claude Code agent) are demoted to documented break-glass recovery (an operator/watchtower escape hatch) — they are not part of the adapter's `PORT-EXECUTION` path.
 
 `PORT-CANDIDATE` fingerprints real artifacts (e.g. `git diff`) instead of scripted subjects — unchanged from the original M1b scope. Assurance may remain operator-recorded in M1b — a real assurance adapter is explicitly deferred to a later milestone (M2), not implied by this one. The adapter must pass the existing `CONF-EXEC-001` through `CONF-EXEC-004` suite (and applicable `CONF-CAND-*`) for every capability it advertises, and capability advertisement must be honest under the durability rule above.
 
@@ -122,12 +123,12 @@ Durable ownership of `crew-report/v1` (the adapter's append-only execution repor
 
 ### M1b acceptance
 
-`orc dispatch "<real task>"` produces a real candidate authored by a Claude Code run driven over ACP (via `acpx`), journaled with `execution-session/v1` provenance (a native `agentSessionId` when present — optional by schema — with the resume ref carrying the `acpx` scope tuple), and is resumable after an orchestrator restart.
+`orc dispatch "<real task>"` produces a real candidate authored by a Pi run driven over ACP (`acpx pi`), journaled with `execution-session/v1` provenance (a native `agentSessionId` when present — optional by schema — with the resume ref carrying the `acpx` scope tuple), and is resumable after an orchestrator restart.
 
 Two additional acceptance items beyond the original scope:
 
 1. a stub-`acpx` conformance harness (subprocess stub pattern, matching the existing scripted-adapter test style) that proves `CONF-EXEC-001` through `CONF-EXEC-004` without requiring a live agent;
-2. a resolved live-spike answer to a crash-mid-turn observability question — whether a turn's final `stopReason` can be recovered after the process that submitted it dies, or whether that turn is instead pending-until-reprompted. This is recorded as an open spike question on the task card until the operator answers it; it is not blocking for this docs retarget but blocks the adapter's crash-boring claims.
+2. a resolved live-spike answer to a crash-mid-turn observability question — whether a turn's final `stopReason` can be recovered after the process that submitted it dies, or whether that turn is instead pending-until-reprompted. Verifying Pi ACP adapter maturity (session-id fidelity, resume behavior, structured-lifecycle completeness) is part of this same M1b spike. These are recorded as open spike questions on the task card until the operator answers them; they are not blocking for this docs retarget but block the adapter's crash-boring claims.
 
 ## Required contracts
 
@@ -143,7 +144,7 @@ Two additional acceptance items beyond the original scope:
 
 - SCN-007 (pending execution / operator-recorded settlement) — new, authored before implementation
 - `SCN-001` through `SCN-006` continue to pass unmodified (regression bar)
-- Existing `CONF-EXEC-*`/`CONF-CAND-*` conformance suite, re-run against the `acpx`-driving-Claude-Code adapter, including a stub-`acpx` subprocess harness proving `CONF-EXEC-001` through `CONF-EXEC-004` without a live agent
+- Existing `CONF-EXEC-*`/`CONF-CAND-*` conformance suite, re-run against the `acpx`-driving-Pi adapter, including a stub-`acpx` subprocess harness proving `CONF-EXEC-001` through `CONF-EXEC-004` without a live agent
 
 ## Required implementation
 
@@ -152,7 +153,7 @@ Two additional acceptance items beyond the original scope:
 - agent CLI guidance playbook under `docs/playbooks/` (M1a+, authored after SCN-007 fixes the command surface);
 - `docs/contracts/durability-responsibilities.md` and the `execution-session/v1` extension schema;
 - `CONTRACT-CAPABILITIES` durability-honesty amendment;
-- `acpx`-driving-Claude-Code `PORT-EXECUTION` adapter under `src/orc_werk/` (adapters layer only — `src/orc_werk/core` remains integration-free per `CLAUDE.md`; the `acpx`/Node dependency is confined to this adapter layer as an accepted M1b-only dependency);
+- `acpx`-driving-Pi `PORT-EXECUTION` adapter under `src/orc_werk/` (adapters layer only — `src/orc_werk/core` remains integration-free per `CLAUDE.md`; the `acpx`/Node dependency is confined to this adapter layer as an accepted M1b-only dependency);
 - real-artifact `PORT-CANDIDATE` adapter (git diff fingerprinting);
 - stub-`acpx` conformance harness (subprocess stub pattern) for `CONF-EXEC-001` through `CONF-EXEC-004`.
 
@@ -160,7 +161,7 @@ Two additional acceptance items beyond the original scope:
 
 - **M1a:** an operator can run a real multi-work delivery (e.g. this repo's own PRs as works) purely through `orc dispatch`/`status`/`history` with hand-recorded outcomes, surviving process exits between every step.
 - **M1a+:** ship/verify agents record their own observations (settlement + candidate by the ship agent; assurance verdict with `evidence_refs` by a separate verification agent) through the orc CLI per the agent guidance playbook, with no agent recording decisions and no self-assurance.
-- **M1b:** `orc dispatch "<real task>"` produces a real candidate authored by a Claude Code run driven over ACP (via `acpx`), journaled with `execution-session/v1` provenance (native `agentSessionId` when present, resume ref = the `acpx` scope tuple), resumable after orchestrator restart. `CAP-EXEC-RESUME-EXACT` is withheld at M1b (see the Phase M1b adapter section); `claude --resume` is documented break-glass recovery only.
+- **M1b:** `orc dispatch "<real task>"` produces a real candidate authored by a Pi run driven over ACP (`acpx pi`), journaled with `execution-session/v1` provenance (native `agentSessionId` when present, resume ref = the `acpx` scope tuple), resumable after orchestrator restart. `CAP-EXEC-RESUME-EXACT` is withheld at M1b (see the Phase M1b adapter section); agent-native resume commands are documented break-glass recovery only.
 
 ## Out of scope
 
