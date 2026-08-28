@@ -45,6 +45,7 @@ from orc_werk.cli.journal_reading import (
     BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED,
     _available_run_ids,
     _awaiting_label,
+    _diagnose_replay_conflict,
     _intent_text,
     _require_journal_file,
     _resolve_journal,
@@ -172,6 +173,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 "intent is required when dispatching a new run; to resume an existing run use "
                 "orc dispatch --run-id <id>",
                 run_id=args.run_id,
+                next_steps=[
+                    f"ORC_JOURNAL_DIR={journal_dir.resolve()} orc to list existing run ids",
+                    'orc dispatch "<intent text>" --config <path-to-dispatch-config.json> to start new work',
+                ],
             )
         existing_history = JSONLJournal(journal_dir).history(delivery_run_id=args.run_id)
         intent_text = _intent_text(existing_history)
@@ -179,6 +184,10 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             raise validation_error(
                 f"run {args.run_id!r} has no journaled intent; supply the positional intent",
                 run_id=args.run_id,
+                next_steps=[
+                    f'orc dispatch "<intent text>" --config <path-to-dispatch-config.json> '
+                    f"--run-id {args.run_id} --journal {journal_dir.resolve()}",
+                ],
             )
     else:
         intent_text = args.intent
@@ -210,6 +219,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             f"orc dispatch --run-id {intent_text}; if this is genuinely new work, reword the intent",
             intent=intent_text,
             existing_run_id=intent_text,
+            next_steps=[f"orc dispatch --run-id {intent_text} --journal {journal_dir.resolve()}"],
         )
 
     # #17 comment fix: finish every config-derived validation
@@ -341,8 +351,11 @@ def cmd_status(args: argparse.Namespace) -> int:
     directory, run_id = _resolve_journal(args.target, args.journal)
     _require_journal_file(directory, run_id, target=args.target)
     journal = JSONLJournal(directory)
-    history = journal.history(delivery_run_id=run_id)
-    projection = journal.load_projection(delivery_run_id=run_id)
+    try:
+        history = journal.history(delivery_run_id=run_id)
+        projection = journal.load_projection(delivery_run_id=run_id)
+    except CoreError as exc:
+        raise _diagnose_replay_conflict(exc, run_id=run_id, self_is_status=True) from exc
 
     print(f"run: {run_id}")
     intent_text = _intent_text(history)
@@ -386,6 +399,10 @@ def cmd_history(args: argparse.Namespace) -> int:
     directory, run_id = _resolve_journal(args.target, args.journal)
     _require_journal_file(directory, run_id, target=args.target)
     journal = JSONLJournal(directory)
+    # `history()` reads raw envelopes only -- it never replays through
+    # `core/reducer.py`, so it cannot raise `ERR-CONFLICT` (only
+    # `load_projection`, wrapped with `_diagnose_replay_conflict`
+    # elsewhere, can); nothing to enrich here.
     records = list(journal.history(delivery_run_id=run_id))
     # issue #43 pagination addendum: --since-seq filters first (an explicit
     # "what's new since I last looked" query), then the default/--limit
@@ -724,7 +741,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         _print_error(exc.to_canonical())
         return 2
     except FileNotFoundError as exc:
-        _print_error({"error": "ERR-NOT-FOUND", "message": str(exc), "details": {}})
+        _print_error(
+            {
+                "error": "ERR-NOT-FOUND",
+                "message": str(exc),
+                "details": {},
+                # issue #94: genuinely generic here (this branch has no run
+                # id/journal-dir context of its own -- e.g. a --config path
+                # that does not exist) -- still worth two honest, non-
+                # fabricated navigational pointers rather than nothing.
+                "next": [
+                    "double check the path was typed correctly",
+                    "orc (bare) lists every run id under the default journal dir",
+                ],
+            }
+        )
         return 2
     except Exception as exc:  # noqa: BLE001 -- last-resort per module docstring contract
         # BUG-1 audit: this module's docstring promises errors print the
@@ -747,6 +778,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "error": "ERR-PERMANENT",
                 "message": f"unexpected internal error ({type(exc).__name__}): {exc}",
                 "details": {},
+                # issue #94: this catch-all has no reliable run/command
+                # context of its own (it fires for a bug in this CLI, an
+                # adapter, or a core state its own contract did not
+                # anticipate) -- the honest, non-fabricated guidance is to
+                # look at what WAS journaled so far, not a guessed fix.
+                "next": [
+                    "orc history <run-id> for what was journaled before this failure, if a run id is involved",
+                    "this may be a defect in orc itself -- consider filing an issue",
+                ],
             }
         )
         return 2

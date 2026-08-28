@@ -56,13 +56,15 @@ only when present -- absence is never fabricated (`CLAUDE.md` #3):
    `head_sha` is present (resolve: `git -C <repo_path> show <head_sha>
    --stat`, only constructible when both fields are present -- `head_sha`
    alone renders with resolve `-`), and a `candidate-pr` row for `pr` when
-   present (resolve: `gh pr view <pr>`, only when some other string-valued
-   field in the same `subject_identity` names a repo/URL context --
-   informative, not authoritative: no adapter constructs a repo slug from
-   a local path here, since that would be exactly the invented semantics
-   `CLAUDE.md` #3 forbids). `subject_identity` is adapter-owned and opaque
-   (`PORT-CANDIDATE`); these three field names are the ones this command
-   was asked to surface, not a claim that every candidate carries them.
+   present (resolve: `gh pr view <pr>`, unconditionally -- PR #104's
+   verifier recommendation, folded into issue #94: this now matches
+   `orc_werk.cli.affordances`'s own unconditional `gh pr view <pr>`
+   precedent for the `ACCEPTED` state's `next:` block, rather than gating
+   on a same-`subject_identity` repo/URL-shaped sibling field that a real
+   candidate need not carry). `subject_identity` is adapter-owned and
+   opaque (`PORT-CANDIDATE`); these three field names are the ones this
+   command was asked to surface, not a claim that every candidate carries
+   them.
 4. The Beads mirror block, read from the run's own persisted dispatch
    config (`<journal-dir>/<run_id>/config.json`, issue #55 H2's
    `_persist_effective_config`) when both the file and its `mirror` key
@@ -243,18 +245,6 @@ def _evidence_ref_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
 # Source 3: candidate subject_identity (FX-IDENTIFY-CANDIDATE effect data)
 # ---------------------------------------------------------------------------
 
-_REPO_CONTEXT_KEY_HINTS = ("repo", "url")
-
-
-def _has_repo_context(subject_identity: Mapping[str, Any]) -> bool:
-    for key, value in subject_identity.items():
-        if key == "pr" or not isinstance(value, str) or not value:
-            continue
-        lowered = key.lower()
-        if any(hint in lowered for hint in _REPO_CONTEXT_KEY_HINTS):
-            return True
-    return False
-
 
 def _candidate_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
     rows: list[RefRow] = []
@@ -281,8 +271,11 @@ def _candidate_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
 
         pr = subject_identity.get("pr")
         if pr is not None:
-            resolve = f"gh pr view {pr}" if _has_repo_context(subject_identity) else "-"
-            rows.append(RefRow(kind="candidate-pr", provider="-", value=_display(pr), resolve=resolve))
+            # issue #94 folded item / PR #104 verifier recommendation:
+            # unconditional, matching orc_werk.cli.affordances._candidate_pr's
+            # own unconditional `gh pr view <pr>` precedent for the
+            # ACCEPTED-state next: block -- no repo-context gate.
+            rows.append(RefRow(kind="candidate-pr", provider="-", value=_display(pr), resolve=f"gh pr view {pr}"))
     return rows
 
 
@@ -357,6 +350,10 @@ def cmd_refs(args: argparse.Namespace) -> int:
     directory, run_id = _resolve_journal(args.target, args.journal)
     _require_journal_file(directory, run_id, target=args.target)
     journal = JSONLJournal(directory)
+    # `history()` reads raw envelopes only -- never replays through
+    # `core/reducer.py`, so it cannot raise `ERR-CONFLICT` (only
+    # `load_projection` can); nothing to enrich here (main.py's
+    # `cmd_status`, report.py's `render_run_report`).
     history = journal.history(delivery_run_id=run_id)
 
     rows = collect_refs(directory, run_id, history)

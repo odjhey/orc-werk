@@ -35,7 +35,11 @@ normative contract.
   `orc_werk.adapters.scripted.candidate.fingerprint_of`, exported
   precisely so callers like this one never have to guess it); `assurance`,
   when present, supplies that candidate's scripted verdict
-  (`ScriptedAssurance`).
+  (`ScriptedAssurance`); `extensions` (#105/#106), when present, is passed
+  through verbatim into the scripted execution outcome's own `extensions`
+  field (e.g. an `execution-session/v1` payload) -- the same passthrough
+  envelope field every journaled fact already carries
+  (`CONTRACT-EXTENSIONS`).
 - `plan` is an optional `PORT-WORK-001` multi-work plan (needed to exercise
   a fan-in run like `SCN-005` from the CLI); defaults to
   `orc_werk.app.default_single_work_plan()`.
@@ -158,7 +162,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from orc_werk.adapters.acp.execution import AcpExecution
 from orc_werk.adapters.beads.mirror import BeadsMirror
@@ -169,7 +173,8 @@ from orc_werk.adapters.scripted.candidate import ScriptedCandidate, fingerprint_
 from orc_werk.adapters.scripted.execution import ScriptedExecution
 from orc_werk.app.orchestrator import RunConfig
 from orc_werk.core.effects import FX_START_EXECUTION
-from orc_werk.core.errors import validation_error
+from orc_werk.core.errors import CoreError
+from orc_werk.core.errors import validation_error as _core_validation_error
 from orc_werk.core.facts import ASSURANCE_VERDICTS, EXEC_OUTCOMES, FACT_CANDIDATE_OBSERVED
 from orc_werk.core.idempotency import idempotency_key
 from orc_werk.core.portable import is_portable
@@ -226,6 +231,22 @@ _ASSURANCE_ADAPTERS = frozenset({"scripted", "no-mistakes"})
 # constructor parameter" restraint (`CLAUDE.md` #3).
 _MIRROR_CONFIG_KEYS = frozenset({"adapter", "workspace", "bd_bin"})
 _MIRROR_ADAPTERS = frozenset({"beads"})
+
+# issue #94: every validation error this module raises is, by construction,
+# about the dispatch config document -- `orc config-schema` (this module's
+# own docstring, printed verbatim) is the one guide every one of them
+# shares. Shadowing the imported `orc_werk.core.errors.validation_error`
+# name with this module-local wrapper means every existing `raise
+# validation_error(...)` call site below picks up that default `next`
+# automatically -- an explicit `next_steps=` at a call site still wins,
+# but none currently need to be more specific than "go read the schema".
+# This is the single-touch alternative to hand-editing this module's ~40
+# call sites with an identical `next_steps=["orc config-schema"]` each.
+_CONFIG_SCHEMA_NEXT = ("orc config-schema",)
+
+
+def validation_error(message: str, *, next_steps: Optional[Sequence[str]] = None, **details: Any) -> CoreError:
+    return _core_validation_error(message, next_steps=next_steps or _CONFIG_SCHEMA_NEXT, **details)
 
 
 def _require_portable(value: Any, *, path: str) -> None:
