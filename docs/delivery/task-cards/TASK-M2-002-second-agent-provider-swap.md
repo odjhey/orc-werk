@@ -11,6 +11,21 @@ verifies: []
 
 # TASK-M2-002 — Second agent, same adapter (P-001 proof)
 
+### Deferred — removed from M2 scope
+
+**Operator ruling (M2 reshape, 2026-08-28): this card is deferred, out of
+M2 scope.** The card's design below stands as-is for whenever it is
+picked up — no rework needed at pull time — but M2 does not schedule it.
+Recorded on the milestone's deferred list
+(`docs/delivery/M2-close-the-loop.md`, "Deferred (M2 reshape)").
+
+**Pull trigger (named, per `PLAYBOOK-WATCHTOWER`'s dormant-feature
+lifecycle):** provider-diversity proof wanted, or the first Pi-capability
+gap encountered. Either concretely motivates re-proving `P-001` with a
+second provider; absent one of those, `acpx pi` alone continues to prove
+the adapter is being dogfooded, and a same-adapter second-provider swap
+adds no scope M2 currently needs.
+
 ## Outcome
 
 Configure `acpx claude` as a second agent driven through the **same**

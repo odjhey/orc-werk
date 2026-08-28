@@ -33,12 +33,13 @@ M1 cards, in dependency order:
 
 `TASK-M1-008` (human run report) is a presentation add-on with no M1-internal dependency beyond merged M1a surfaces; it runs in parallel with `TASK-M1-005` and touches only the CLI layer.
 
-M2 cards, drafted lightly (details firm up at dispatch), in dependency order:
+M2 cards, reshaped per operator review (2026-08-28; see `docs/delivery/M2-close-the-loop.md`'s "Deferred (M2 reshape)" section), in dependency order:
 
 1. `TASK-M2-001` no-mistakes `PORT-ASSURANCE` adapter + `CONF-ASSURE-*` (no M2-internal dependency; depends on the merged M1b acp adapter for the delivery it assures)
-2. `TASK-M2-002` `acpx claude` as a second agent through the same acp adapter — the `P-001` provider-swap proof (no M2-internal dependency; depends on the merged M1b acp adapter)
-3. `TASK-M2-003` multi-work real DAGs through the acp adapter + dependency-tree view (issue #41) (depends on the merged M1b acp adapter; may run alongside `TASK-M2-001`/`TASK-M2-002`)
-4. `TASK-M2-004` orc as ledger for another repo — first true adoption test (no M2-internal dependency; benefits from, but does not strictly require, `TASK-M2-001`/`TASK-M2-003` landing first)
-5. `TASK-M2-005` policy parameterization v1 — per-work `max_attempts` (gated on observed cost data) + an optional, separately and more strictly gated no-retry exception scoped to the single kernel-checkable `ERR-UNSUPPORTED-CAPABILITY` cause only (adapter-classified `ERR-PERMANENT` retry-skipping is explicitly out); default policy stays cause-blind-but-bounded otherwise
+2. `TASK-M2-006` Beads mirror — write-only projection of run/work state and briefs into a shared, label-scoped `bd` database, per the ratified issue #47 posture; authority graduation dormant (no M2-internal dependency; depends on the merged M1b acp adapter for the run data it mirrors)
+3. `TASK-M2-003` multi-work real DAGs through the acp adapter — reframed as a practice run: exercises and populates the `TASK-M2-006` mirror and the issue #41 dependency-tree view, and harvests per-work cost/config findings (benefits from, and is intended to sequence after, `TASK-M2-006` landing first; not a hard blocker)
+4. `TASK-M2-004` orc as ledger for another repo — first true adoption test, **gated**: sequenced last among the cards that remain in M2 scope, explicitly depending on `TASK-M2-001` and `TASK-M2-006` landing first (operator ruling — the demo is only compelling with the automatic verdict seat and the portfolio view already in place)
 
-`TASK-M2-001` and `TASK-M2-002` are independent of each other and may ship in parallel worktrees; `TASK-M2-003` is independent of both but shares the acp adapter surface, so sequencing to avoid worktree collisions is a watchtower call at dispatch. `TASK-M2-004` is the most self-contained card — it exercises the ledger from outside this repo entirely. `TASK-M2-005` is gate-blocked (see its card) and is expected to be the last M2 card to start, regardless of numbering.
+**Deferred out of M2** (recorded on the milestone's deferred list with a named pull trigger each): `TASK-M2-002` (`acpx claude` second-agent provider-swap proof) and `TASK-M2-005` (policy parameterization v1). Both card files remain in place with their design intact; neither is scheduled by this milestone.
+
+`TASK-M2-001` and `TASK-M2-006` are independent of each other and may ship in parallel worktrees. `TASK-M2-003` shares the acp adapter surface with `TASK-M2-001`, so sequencing to avoid worktree collisions is a watchtower call at dispatch; it is also sequenced after `TASK-M2-006` for its mirror/report-harvesting purpose. `TASK-M2-004` is gate-blocked on `TASK-M2-001` + `TASK-M2-006` and is the last M2 card to start, regardless of numbering.
