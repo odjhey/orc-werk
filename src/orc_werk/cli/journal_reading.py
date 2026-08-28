@@ -143,15 +143,14 @@ def _looks_like_journal_path(target: str) -> bool:
     return target.endswith(".jsonl") or any(sep in target for sep in _PATH_SEPARATORS)
 
 
-def _resolve_journal(target: str) -> tuple[Path, str]:
+def _resolve_journal(target: str, explicit_journal_dir: Optional[str] = None) -> tuple[Path, str]:
     """Resolve a `status`/`history`/`report` positional argument to
     `(journal_directory, delivery_run_id)`. Accepts: a path to a
     `<run_id>.jsonl` file (legacy layout); a path to a run's own new-layout
     directory (`.orc/<run_id>/`, issue #55 H1); a directory containing
     exactly one legacy `*.jsonl` file; or a bare run id (resolved against
-    `ORC_JOURNAL_DIR`/`./.orc` per `resolve_journal_dir`'s precedence,
-    issue #55 H2 -- these commands have no `--journal` flag of their own,
-    so the env var is the only way to override the default here)."""
+    `--journal`/`ORC_JOURNAL_DIR`/`./.orc` per `resolve_journal_dir`'s
+    precedence, issue #55 H2)."""
     path = Path(target)
     if path.is_file() and path.suffix == ".jsonl":
         return path.parent, path.stem
@@ -204,7 +203,7 @@ def _resolve_journal(target: str) -> tuple[Path, str]:
                 "details": {"path": target},
             }
         )
-    return resolve_journal_dir(None), target
+    return resolve_journal_dir(explicit_journal_dir), target
 
 
 def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:

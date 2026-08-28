@@ -264,7 +264,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    directory, run_id = _resolve_journal(args.target)
+    directory, run_id = _resolve_journal(args.target, args.journal)
     _require_journal_file(directory, run_id, target=args.target)
     journal = JSONLJournal(directory)
     history = journal.history(delivery_run_id=run_id)
@@ -309,7 +309,7 @@ def _compact(data: object) -> str:
 
 
 def cmd_history(args: argparse.Namespace) -> int:
-    directory, run_id = _resolve_journal(args.target)
+    directory, run_id = _resolve_journal(args.target, args.journal)
     _require_journal_file(directory, run_id, target=args.target)
     journal = JSONLJournal(directory)
     records = list(journal.history(delivery_run_id=run_id))
@@ -540,10 +540,13 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="examples:\n"
         "  orc status my-run-id\n"
         "  orc status ./.orc/my-run-id.jsonl\n\n"
-        "defaults: a bare run id resolves against $ORC_JOURNAL_DIR or ./.orc",
+        "defaults: a bare run id resolves against --journal, $ORC_JOURNAL_DIR, or ./.orc",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     status_parser.add_argument("target", help="journal path (dir or <run>.jsonl) or bare run id")
+    status_parser.add_argument(
+        "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
     status_parser.set_defaults(func=cmd_status)
 
     history_parser = subparsers.add_parser(
@@ -556,10 +559,13 @@ def build_parser() -> argparse.ArgumentParser:
         "  orc history my-run-id --limit 0\n"
         "  orc history my-run-id --since-seq 12\n\n"
         f"defaults: --limit {DEFAULT_LIMIT} (last {DEFAULT_LIMIT} records; 0 shows all); "
-        "a bare run id resolves against $ORC_JOURNAL_DIR or ./.orc",
+        "a bare run id resolves against --journal, $ORC_JOURNAL_DIR, or ./.orc",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     history_parser.add_argument("target", help="journal path (dir or <run>.jsonl) or bare run id")
+    history_parser.add_argument(
+        "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
     history_parser.add_argument(
         "--limit",
         type=int,
