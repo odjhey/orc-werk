@@ -6,3 +6,6 @@ build/
 *.egg-info/
 .pytest_cache/
 .worktrees/
+
+# CLI durable run artifacts (journals) — never version-controlled
+.orc/

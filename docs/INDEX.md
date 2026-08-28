@@ -66,6 +66,7 @@ description: Flat documentation index.
 - [M0 pure core](delivery/M0-pure-core.md)
 - [Watchtower operations playbook](delivery/watchtower-operations.md)
 - [Delivery stance](delivery/delivery-stance.md)
+- [CLI usage guide](playbooks/cli-usage.md)
 
 ## M0 task cards
 - [TASK-M0-001](delivery/task-cards/TASK-M0-001-core.md)
