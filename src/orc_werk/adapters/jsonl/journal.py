@@ -3,18 +3,26 @@ implementation. Stdlib only (`json`, `pathlib`, `os`).
 
 ## Layout
 
-One JSON-Lines file per DeliveryRun, `<directory>/<delivery_run_id>.jsonl`,
-under a configured directory. Each line is exactly one canonical
-`PORT-JOURNAL-ENVELOPE` JSON object, appended in `seq` order (one line ==
-one record; no multi-line records, no trailing commentary). Placement is
-per-run rather than one shared file for the whole journal so that: (a)
-`history`/`load_projection` for one DeliveryRun never has to filter a
-mixed-run file, and (b) crash-recovery replay of one run's file cannot be
-corrupted by a concurrent append to an unrelated run. See the PR body for
-why this lives in its own `orc_werk.adapters.jsonl` package rather than
-`orc_werk.adapters.memory` (that package is documented as the dependency-free
-*in-memory* family; this adapter's whole reason to exist is durable
-file-backed storage).
+One JSON-Lines file per DeliveryRun, under a configured directory. Each
+line is exactly one canonical `PORT-JOURNAL-ENVELOPE` JSON object, appended
+in `seq` order (one line == one record; no multi-line records, no trailing
+commentary). Placement is per-run rather than one shared file for the whole
+journal so that: (a) `history`/`load_projection` for one DeliveryRun never
+has to filter a mixed-run file, and (b) crash-recovery replay of one run's
+file cannot be corrupted by a concurrent append to an unrelated run. See
+the PR body for why this lives in its own `orc_werk.adapters.jsonl` package
+rather than `orc_werk.adapters.memory` (that package is documented as the
+dependency-free *in-memory* family; this adapter's whole reason to exist is
+durable file-backed storage).
+
+Exact per-run file placement -- `<directory>/<run_id>/journal.jsonl` (new
+layout, every run created under this code) vs. `<directory>/<run_id>.jsonl`
+(legacy flat layout, read/write-fallback only for runs that already existed
+before issue #55) -- is resolved once, centrally, by
+`orc_werk.adapters.jsonl.layout`; see that module's docstring for the full
+per-run-directory layout and its one legacy/new-layout discriminator. This
+module's own path-construction helpers below (`_path_for`,
+`_times_path_for`) delegate to it rather than building filenames locally.
 
 Persisted lines are strict JSON: `json.dumps(..., allow_nan=False)`, so a
 record that would need Python's non-standard `NaN`/`Infinity` literals is
@@ -139,7 +147,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from orc_werk.adapters.journal_support import build_effect_envelope
-from orc_werk.adapters.jsonl import tailsafe
+from orc_werk.adapters.jsonl import layout, tailsafe
 from orc_werk.core.decisions import Decision
 from orc_werk.core.effects import Effect
 from orc_werk.core.errors import validation_error
@@ -180,12 +188,15 @@ class JSONLJournal(JournalPort):
             delivery_run_id,
             message="delivery_run_id is not a safe JSONL journal filename component",
         )
-        return self._directory / f"{delivery_run_id}.jsonl"
+        # issue #55 H1: new-layout-with-legacy-fallback path resolution --
+        # see orc_werk.adapters.jsonl.layout's module docstring for the
+        # one discriminator every artifact path in this package now shares.
+        return layout.journal_path(self._directory, delivery_run_id)
 
     def _times_path_for(self, delivery_run_id: str) -> Path:
         # delivery_run_id is already validated by _path_for/_scan before
         # this is ever reached from _append -- no redundant re-check.
-        return self._directory / f"{delivery_run_id}+times.jsonl"
+        return layout.times_path(self._directory, delivery_run_id)
 
     def _stamp_observed_at(self, delivery_run_id: str, seq: int) -> None:
         """Best-effort observed-at time sidecar stamp (module docstring's
@@ -236,6 +247,15 @@ class JSONLJournal(JournalPort):
                 record_id=str(envelope.get("id")),
             ) from exc
         path = self._path_for(delivery_run_id)
+        # issue #55 H1: a brand-new run_id resolves to a path under its own
+        # per-run directory (orc_werk.adapters.jsonl.layout), which does
+        # not exist on disk yet -- create it now, immediately before the
+        # first actual write, mirroring CrewReportLog's deferred-mkdir
+        # discipline (never before validation/`_path_for`'s safety check
+        # above has already passed). A no-op for every other case: a
+        # legacy-layout run's parent is `self._directory`, already created
+        # by `__init__`.
+        path.parent.mkdir(parents=True, exist_ok=True)
         # M0 scripted-context durability stance (module docstring): the
         # shared `tailsafe.append_line` primitive flushes without
         # `os.fsync(fh.fileno())` -- an explicit choice, not an oversight.

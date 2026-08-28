@@ -25,6 +25,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orc_werk.adapters.jsonl import layout
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 
@@ -239,7 +241,11 @@ class AffordanceTest(unittest.TestCase):
             self.assertEqual(dispatch.returncode, 3, msg=dispatch.stdout + dispatch.stderr)
             self.assertIn("next:", dispatch.stdout)
             self.assertIn("record the execution outcome for work(s): work-1", dispatch.stdout)
-            abs_config = str(config_path.resolve())
+            # issue #55 H2: config persistence -- the affordance now names
+            # the durable in-run-dir config (refreshed by this very
+            # dispatch, since --config was given), not the caller's own
+            # ephemeral --config path.
+            abs_config = str(layout.config_path(tmp_dir / ".orc", "pending-exec").resolve())
             abs_journal = str((tmp_dir / ".orc").resolve())
             expected_command = (
                 f"orc dispatch 'wait on me' --config {abs_config} "

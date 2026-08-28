@@ -24,6 +24,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orc_werk.adapters.jsonl import layout
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 
@@ -100,9 +102,9 @@ class CrewReportCliNoSideEffectsTest(unittest.TestCase):
                     json.dumps({"turn": turn, "claimed_verdict": verdict}),
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue((tmp_dir / ".orc" / "some-run+reports.jsonl").exists())
+            self.assertTrue(layout.reports_path(tmp_dir / ".orc", "some-run").exists())
             # The journal file itself is never created by this command.
-            self.assertFalse((tmp_dir / ".orc" / "some-run.jsonl").exists())
+            self.assertFalse(layout.journal_path(tmp_dir / ".orc", "some-run").exists())
 
             listed = _run_cli(tmp_dir, "crew-report", "list", "some-run")
             self.assertEqual(listed.returncode, 0, listed.stderr)

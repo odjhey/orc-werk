@@ -18,6 +18,8 @@ import os
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from orc_werk.adapters.jsonl import layout
+from orc_werk.cli.hyperlink import hyperlink_path
 from orc_werk.core.effects import FX_START_EXECUTION
 from orc_werk.core.errors import CoreError, not_found_error
 from orc_werk.core.facts import FACT_INTENT_SUBMITTED
@@ -31,6 +33,28 @@ from orc_werk.core.state import STATE_ASSURING, STATE_EXECUTING, WorkProjection
 BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED = "retry-budget-exhausted"
 
 DEFAULT_JOURNAL_DIR = ".orc"
+
+# issue #55 H2: journal dir precedence is `--journal` flag > `ORC_JOURNAL_DIR`
+# env > `./.orc`. Env var only -- deliberately no new CLI config-file
+# surface (the no-framework/no-new-dependency posture, PLAYBOOK-CLI-USAGE's
+# "No CLI framework, by design" section).
+ORC_JOURNAL_DIR_ENV = "ORC_JOURNAL_DIR"
+
+
+def resolve_journal_dir(explicit: Optional[str] = None) -> Path:
+    """The one place journal-dir precedence (issue #55 H2) is decided:
+    `explicit` (a command's own `--journal` flag value, when it has one and
+    the caller passed it) wins; otherwise `ORC_JOURNAL_DIR` when set;
+    otherwise the existing `./.orc` default. Every CLI entry point that
+    previously wrote `Path(args.journal) if args.journal else
+    Path(DEFAULT_JOURNAL_DIR)` inline now calls this instead, so the
+    precedence order can never drift between commands."""
+    if explicit:
+        return Path(explicit)
+    env_value = os.environ.get(ORC_JOURNAL_DIR_ENV)
+    if env_value:
+        return Path(env_value)
+    return Path(DEFAULT_JOURNAL_DIR)
 
 
 def _awaiting_label(wp: WorkProjection) -> str:
@@ -98,17 +122,15 @@ def _is_run_journal_path(path: Path) -> bool:
 
 
 def _available_run_ids(directory: Path) -> list[str]:
-    """Run ids under `directory` (sorted), filtered through
-    `_is_run_journal_path` so this package's own adapter sidecars
-    (crew-report log, observed-at times) are never listed as runs.
+    """Run ids under `directory` (sorted), covering BOTH the new per-run
+    directory layout and the legacy flat-file layout (issue #55 H1
+    read-fallback) via `orc_werk.adapters.jsonl.layout.discover_run_ids`.
     Read-only: a missing directory returns `[]` rather than raising or
     creating anything. Shared by the `ERR-NOT-FOUND(run)` affordance below,
     `orc_werk.cli.report.discover_run_ids`, and the bare-`orc` index
-    (issue #43) so the three call sites can never drift on what counts as
-    "a run"."""
-    if not directory.is_dir():
-        return []
-    return sorted(p.stem for p in directory.glob("*.jsonl") if _is_run_journal_path(p))
+    (issue #43) so all call sites can never drift on what counts as "a
+    run"."""
+    return layout.discover_run_ids(directory)
 
 
 _PATH_SEPARATORS = tuple({os.sep, os.altsep} - {None})
@@ -124,21 +146,36 @@ def _looks_like_journal_path(target: str) -> bool:
 def _resolve_journal(target: str) -> tuple[Path, str]:
     """Resolve a `status`/`history`/`report` positional argument to
     `(journal_directory, delivery_run_id)`. Accepts: a path to a
-    `<run_id>.jsonl` file; a directory containing exactly one `*.jsonl`
-    file; or a bare run id (resolved against `./.orc`, the `dispatch`
-    default journal directory)."""
+    `<run_id>.jsonl` file (legacy layout); a path to a run's own new-layout
+    directory (`.orc/<run_id>/`, issue #55 H1); a directory containing
+    exactly one legacy `*.jsonl` file; or a bare run id (resolved against
+    `ORC_JOURNAL_DIR`/`./.orc` per `resolve_journal_dir`'s precedence,
+    issue #55 H2 -- these commands have no `--journal` flag of their own,
+    so the env var is the only way to override the default here)."""
     path = Path(target)
     if path.is_file() and path.suffix == ".jsonl":
         return path.parent, path.stem
     if path.is_dir():
-        candidates = sorted(p for p in path.glob("*.jsonl") if _is_run_journal_path(p))
-        if len(candidates) == 1:
-            return path, candidates[0].stem
-        if not candidates:
+        # issue #55 H1: `target` may itself be one run's own new-layout
+        # directory -- resolve directly to that run rather than falling
+        # into the "directory containing exactly one run" branch below,
+        # which would otherwise miscount this run's own times.jsonl/
+        # reports.jsonl sidecars (also `*.jsonl`) as competing candidates.
+        if (path / layout.JOURNAL_FILENAME).exists():
+            return path.parent, path.name
+        # `layout.discover_run_ids` already covers both layouts (new-layout
+        # subdirectories containing journal.jsonl, and legacy flat *.jsonl
+        # files minus sidecars) -- the same single source of truth the
+        # bare-`orc` index and --all/--match use, so "a directory containing
+        # exactly one run" resolves identically for both layouts here too.
+        run_ids = layout.discover_run_ids(path)
+        if len(run_ids) == 1:
+            return path, run_ids[0]
+        if not run_ids:
             raise CoreError(
                 {
                     "error": "ERR-NOT-FOUND",
-                    "message": f"no *.jsonl journal files found under directory: {target}",
+                    "message": f"no run journals found under directory: {target}",
                     "details": {"path": target},
                 }
             )
@@ -147,9 +184,9 @@ def _resolve_journal(target: str) -> tuple[Path, str]:
                 "error": "ERR-VALIDATION",
                 "message": (
                     f"directory {target!r} contains multiple journals; pass the exact "
-                    "<run_id>.jsonl path or a bare run id instead"
+                    "run path or a bare run id instead"
                 ),
-                "details": {"path": target, "candidates": [c.name for c in candidates]},
+                "details": {"path": target, "candidates": run_ids},
             }
         )
     # FRICTION-5: a target that looks like a path (contains a path
@@ -167,7 +204,7 @@ def _resolve_journal(target: str) -> tuple[Path, str]:
                 "details": {"path": target},
             }
         )
-    return Path(DEFAULT_JOURNAL_DIR), target
+    return resolve_journal_dir(None), target
 
 
 def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
@@ -177,8 +214,11 @@ def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
     recorded yet)" exit 0. Checked *before* `JSONLJournal` is constructed
     (its `__init__` unconditionally `mkdir`s the journal directory) so a
     read-only command against an unknown run id never creates a stray
-    `.orc/` directory as a side effect."""
-    path = directory / f"{run_id}.jsonl"
+    `.orc/` directory as a side effect. `layout.journal_path` resolves new
+    vs. legacy layout the same way `JSONLJournal` itself does (issue #55
+    H1), so this check agrees with what a subsequent `JSONLJournal.history`
+    call would actually read."""
+    path = layout.journal_path(directory, run_id)
     if not path.exists():
         # ERR-NOT-FOUND(run) affordance (issue #43's HATEOAS reframe): print
         # a definitive list of what *does* exist under this journal dir --
@@ -188,11 +228,16 @@ def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
         # `status`/`history`/`report` ultimately raise is identical to
         # before this round.
         abs_dir = directory.resolve()
+        # issue #55 OSC-8 scope addition: this is a standalone "index"
+        # line (a directory-path listing), so it gets the clickable-path
+        # treatment -- see orc_werk.cli.hyperlink's module docstring for
+        # what does and does not qualify.
+        abs_dir_display = hyperlink_path(abs_dir)
         available = _available_run_ids(directory)
         if available:
-            print(f"available runs in {abs_dir}: {', '.join(available)}")
+            print(f"available runs in {abs_dir_display}: {', '.join(available)}")
         else:
-            print(f"0 runs in {abs_dir}")
+            print(f"0 runs in {abs_dir_display}")
         print("next:")
         print(
             f'  - orc dispatch "<intent text>" --config <path-to-dispatch-config.json> '
@@ -210,6 +255,7 @@ def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
 __all__ = [
     "BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED",
     "DEFAULT_JOURNAL_DIR",
+    "ORC_JOURNAL_DIR_ENV",
     "_available_run_ids",
     "_awaiting_label",
     "_intent_text",
@@ -218,4 +264,5 @@ __all__ = [
     "_require_journal_file",
     "_resolve_journal",
     "_root_cause_for_work",
+    "resolve_journal_dir",
 ]

@@ -42,6 +42,7 @@ import shlex
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from orc_werk.adapters.jsonl import layout
 from orc_werk.app.orchestrator import is_pending
 from orc_werk.cli.journal_reading import BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED, _awaiting_label
 from orc_werk.core.decisions import DEC_BLOCK
@@ -69,12 +70,30 @@ def redispatch_command(
     (`docs/playbooks/agent-cli-usage.md` protocol step 4: "Re-dispatch...
     This is always safe"). Absolute journal dir and an explicit `--run-id`
     (never relies on the intent-text hash re-deriving the same id) are
-    always concrete; `intent_text`/`config_path` render as a bracketed
-    placeholder only when the caller genuinely does not know them (e.g.
-    `orc status` was never given a `--config`) rather than fabricating a
-    value -- CLAUDE.md #3, "do not invent missing semantics in code"."""
+    always concrete; `intent_text` renders as a bracketed placeholder only
+    when the caller genuinely does not know it (e.g. `orc status` was never
+    given a `--config`) rather than fabricating a value -- CLAUDE.md #3,
+    "do not invent missing semantics in code".
+
+    `config_path` -- the caller's own, possibly ephemeral `--config`
+    argument -- is used only as a last-resort fallback. Issue #55 H2's
+    config persistence means any run dispatched at least once already has
+    its effective config durably copied to
+    `<journal_dir>/<run_id>/config.json`; when that file exists, the
+    affordance names IT instead, per the operator ruling that a
+    re-dispatch `next:` command "must reference the durable in-run-dir
+    config path, not the caller's ephemeral path" -- a path only the
+    invoking session may have had (a scratchpad file, a path on someone
+    else's machine) is not something a *different*, later reader of this
+    affordance can rely on."""
     intent_token = shlex.quote(intent_text) if intent_text is not None else _PLACEHOLDER_INTENT
-    config_token = str(config_path) if config_path is not None else _PLACEHOLDER_CONFIG
+    persisted_config = layout.config_path(journal_dir, run_id)
+    if persisted_config.exists():
+        config_token = str(persisted_config)
+    elif config_path is not None:
+        config_token = str(config_path)
+    else:
+        config_token = _PLACEHOLDER_CONFIG
     return (
         f"orc dispatch {intent_token} --config {config_token} "
         f"--journal {journal_dir} --run-id {run_id}"

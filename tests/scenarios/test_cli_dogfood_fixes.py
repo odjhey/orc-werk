@@ -264,7 +264,10 @@ class Friction5MissingJournalPathTest(unittest.TestCase):
             self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
             error = json.loads(result.stderr)
             self.assertEqual(error["error"], "ERR-NOT-FOUND")
-            self.assertIn("no *.jsonl journal files found", error["message"])
+            # issue #55 H1: the message now covers both layouts (it no
+            # longer says "*.jsonl" specifically, since a new-layout run
+            # is a subdirectory, not a flat *.jsonl file).
+            self.assertIn("no run journals found", error["message"])
 
 
 if __name__ == "__main__":

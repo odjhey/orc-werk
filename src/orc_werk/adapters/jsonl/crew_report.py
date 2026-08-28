@@ -6,16 +6,24 @@ zero-integration-dependency stance (`CLAUDE.md` rule 8).
 
 ## Layout
 
-One NDJSON file per `DeliveryRun`, `<directory>/<delivery_run_id>+reports.jsonl`,
-distinct from -- and never merged into -- the `JournalPort`'s own
-`<delivery_run_id>.jsonl` file (`EXT-CREW-REPORT-V1` README's "Durable
-ownership" section: "a plain NDJSON file per `DeliveryRun`, distinct from
-[...] the `JournalPort`'s own file"). The `+` sidecar separator is
-deliberately OUTSIDE `tailsafe.SAFE_DELIVERY_RUN_ID`'s charset
+One NDJSON file per `DeliveryRun`, distinct from -- and never merged into --
+the `JournalPort`'s own journal file (`EXT-CREW-REPORT-V1` README's
+"Durable ownership" section: "a plain NDJSON file per `DeliveryRun`,
+distinct from [...] the `JournalPort`'s own file"). Every run created under
+this code gets `<directory>/<delivery_run_id>/reports.jsonl` (issue #55 H1,
+per-run directory layout); a run that already existed before issue #55 keeps
+its legacy `<directory>/<delivery_run_id>+reports.jsonl` flat file for its
+whole lifetime instead (read/write-fallback, never a mid-run switch) --
+`orc_werk.adapters.jsonl.layout` resolves which applies per run id, shared
+with `JSONLJournal`'s own path resolution. The legacy `+` sidecar separator
+is deliberately OUTSIDE `tailsafe.SAFE_DELIVERY_RUN_ID`'s charset
 (`[A-Za-z0-9_.-]`) so no legal run id -- including dot-namespaced ids like
 `m1.reports` -- can ever produce a filename that classifies as a sidecar
 (the attempt-2 watchtower ruling on PR #46; the previously shipped
-`.reports.jsonl` suffix collided with exactly such ids). This adapter is intentionally *not*
+`.reports.jsonl` suffix collided with exactly such ids); inside a new-layout
+run directory this separator is moot, since every artifact is disambiguated
+by directory scope plus a fixed filename rather than a run-id-derived
+suffix. This adapter is intentionally *not*
 a `JournalPort` implementation: it does not assign `PORT-JOURNAL-ENVELOPE`
 `seq` values, does not participate in `PORT-JOURNAL-005`'s canonical
 projection, and core never reads it (`CONF-EXT-006`). Each line is one
@@ -78,7 +86,7 @@ import os
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
-from orc_werk.adapters.jsonl import tailsafe
+from orc_werk.adapters.jsonl import layout, tailsafe
 from orc_werk.core.errors import validation_error
 from orc_werk.core.portable import is_portable, to_portable
 
@@ -173,7 +181,9 @@ class CrewReportLog:
             delivery_run_id,
             message="delivery_run_id is not a safe crew-report log filename component",
         )
-        return self._directory / f"{delivery_run_id}+reports.jsonl"
+        # issue #55 H1: new-layout-with-legacy-fallback path resolution,
+        # shared with JSONLJournal via orc_werk.adapters.jsonl.layout.
+        return layout.reports_path(self._directory, delivery_run_id)
 
     def append(
         self, *, delivery_run_id: str, execution_id: str, report: Mapping[str, Any]
@@ -208,8 +218,11 @@ class CrewReportLog:
         # fully serialized -- touch the filesystem at all: the deferred
         # directory creation (see `__init__`) happens here, immediately
         # before the first actual write, so a rejected append never
-        # creates a stray directory as a side effect.
-        self._directory.mkdir(parents=True, exist_ok=True)
+        # creates a stray directory as a side effect. `path.parent` is
+        # either `self._directory` (legacy-layout run) or that run's own
+        # per-run subdirectory (new layout, issue #55 H1) -- `parents=True`
+        # creates both levels in one call when neither exists yet.
+        path.parent.mkdir(parents=True, exist_ok=True)
         # Torn-tail rule reused by reference (module docstring): rescan for
         # a pending repair before every append rather than caching it
         # across calls (see module docstring's "Mechanics reused" section).

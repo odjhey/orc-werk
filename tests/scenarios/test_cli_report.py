@@ -31,6 +31,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orc_werk.adapters.jsonl import layout
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 
@@ -98,7 +100,7 @@ class RejectRetryAcceptTest(unittest.TestCase):
         self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
 
     def _journal_data(self, tmp_dir: Path) -> list[dict]:
-        path = tmp_dir / ".orc" / f"{self.RUN_ID}.jsonl"
+        path = layout.journal_path(tmp_dir / ".orc", self.RUN_ID)
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
     def test_report_contains_full_story_and_escapes_intent(self) -> None:
@@ -108,7 +110,7 @@ class RejectRetryAcceptTest(unittest.TestCase):
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            out_path = tmp_dir / ".orc" / f"{self.RUN_ID}.report.html"
+            out_path = layout.report_html_path(tmp_dir / ".orc", self.RUN_ID)
             # #40 comment: the printed `report:` line is the RESOLVED
             # ABSOLUTE path, not a relative one.
             self.assertIn(f"report: {out_path.resolve()}", report.stdout)
@@ -157,7 +159,10 @@ class RejectRetryAcceptTest(unittest.TestCase):
 
             after = _dir_snapshot(tmp_dir / ".orc")
             created = after - before
-            self.assertEqual(created, {f"{self.RUN_ID}.report.html"})
+            # issue #55 H1: this run's directory already exists (created by
+            # dispatch, per _build_run above) -- the only NEW entry `orc
+            # report` creates is the report.html file inside it.
+            self.assertEqual(created, {f"{self.RUN_ID}/report.html"})
 
 
 class ClaimsQuarantineTest(unittest.TestCase):
@@ -182,7 +187,7 @@ class ClaimsQuarantineTest(unittest.TestCase):
             dispatch = _run_cli(tmp_dir, "dispatch", "claims quarantine fixture", "--config", str(config_path))
             self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
 
-            journal_path = tmp_dir / ".orc" / f"{self.RUN_ID}.jsonl"
+            journal_path = layout.journal_path(tmp_dir / ".orc", self.RUN_ID)
             records = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()]
             (execution_id,) = {
                 r["data"]["execution_id"]
@@ -210,7 +215,7 @@ class ClaimsQuarantineTest(unittest.TestCase):
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / f"{self.RUN_ID}.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", self.RUN_ID).read_text(encoding="utf-8")
 
             # The claim renders, labeled, and its free-text field is escaped.
             self.assertIn('<li class="claim">', html_text)
@@ -244,7 +249,7 @@ class PendingCalloutTest(unittest.TestCase):
 
             report = _run_cli(tmp_dir, "report", "report-pending")
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / "report-pending.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", "report-pending").read_text(encoding="utf-8")
 
             self.assertIn('class="callout callout-warning"', html_text)
             self.assertIn("awaiting execution-outcome, attempt 1", html_text)
@@ -270,7 +275,7 @@ class BlockedRootCauseTest(unittest.TestCase):
 
             report = _run_cli(tmp_dir, "report", "report-blocked")
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / "report-blocked.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", "report-blocked").read_text(encoding="utf-8")
 
             self.assertIn('class="callout callout-critical"', html_text)
             self.assertIn("blocked_reason=retry-budget-exhausted", html_text)
@@ -302,8 +307,10 @@ class IndexReadOnlyTest(unittest.TestCase):
             index_html = (tmp_dir / ".orc" / "index.html").read_text(encoding="utf-8")
             self.assertIn("idx-run-a", index_html)
             self.assertIn("idx-run-b", index_html)
-            self.assertIn("idx-run-a.report.html", index_html)
-            self.assertIn("idx-run-b.report.html", index_html)
+            # issue #55 H1: plain `--index`'s hrefs are layout-aware -- a
+            # new-layout run's link is relative into its own subdirectory.
+            self.assertIn("idx-run-a/report.html", index_html)
+            self.assertIn("idx-run-b/report.html", index_html)
 
     def test_index_with_positional_run_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -358,12 +365,12 @@ class TimesSidecarRenderingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             self._build_run(tmp_dir)
-            times_path = tmp_dir / ".orc" / f"{self.RUN_ID}+times.jsonl"
+            times_path = layout.times_path(tmp_dir / ".orc", self.RUN_ID)
             self.assertTrue(times_path.exists())
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / f"{self.RUN_ID}.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", self.RUN_ID).read_text(encoding="utf-8")
 
             self.assertIn('class="record-time"', html_text)
             self.assertIn("observed: started", html_text)
@@ -373,12 +380,12 @@ class TimesSidecarRenderingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             self._build_run(tmp_dir)
-            times_path = tmp_dir / ".orc" / f"{self.RUN_ID}+times.jsonl"
+            times_path = layout.times_path(tmp_dir / ".orc", self.RUN_ID)
             times_path.unlink()
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / f"{self.RUN_ID}.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", self.RUN_ID).read_text(encoding="utf-8")
 
             self.assertNotIn('class="record-time"', html_text)
             self.assertNotIn("observed: started", html_text)
@@ -387,7 +394,7 @@ class TimesSidecarRenderingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             self._build_run(tmp_dir)
-            times_path = tmp_dir / ".orc" / f"{self.RUN_ID}+times.jsonl"
+            times_path = layout.times_path(tmp_dir / ".orc", self.RUN_ID)
             good_lines = times_path.read_text(encoding="utf-8").splitlines()
             # Corrupt one line, keep the rest valid.
             good_lines[0] = "not valid json at all"
@@ -395,7 +402,7 @@ class TimesSidecarRenderingTest(unittest.TestCase):
 
             report = _run_cli(tmp_dir, "report", self.RUN_ID)
             self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
-            html_text = (tmp_dir / ".orc" / f"{self.RUN_ID}.report.html").read_text(encoding="utf-8")
+            html_text = layout.report_html_path(tmp_dir / ".orc", self.RUN_ID).read_text(encoding="utf-8")
 
             self.assertIn("1 corrupt sidecar record(s) skipped", html_text)
             # The remaining (valid) times still render.
@@ -409,7 +416,7 @@ class TimesSidecarRenderingTest(unittest.TestCase):
             history_before = _run_cli(tmp_dir, "history", self.RUN_ID)
             status_before = _run_cli(tmp_dir, "status", self.RUN_ID)
 
-            (tmp_dir / ".orc" / f"{self.RUN_ID}+times.jsonl").unlink()
+            layout.times_path(tmp_dir / ".orc", self.RUN_ID).unlink()
 
             history_after = _run_cli(tmp_dir, "history", self.RUN_ID)
             status_after = _run_cli(tmp_dir, "status", self.RUN_ID)
@@ -534,11 +541,12 @@ class SidecarSeparatorCollisionRegressionTest(unittest.TestCase):
             tmp_dir = Path(tmp)
             for run_id in ("m1.times", "foo.reports"):
                 self._build_run(tmp_dir, run_id)
-                # The run's own sidecar uses the reserved separator...
-                self.assertTrue((tmp_dir / ".orc" / f"{run_id}+times.jsonl").exists())
-                # ...so the run journal's name, despite ending in
-                # `.times`/`.reports`, never collides with a sidecar name.
-                self.assertTrue((tmp_dir / ".orc" / f"{run_id}.jsonl").exists())
+                # issue #55 H1: fresh runs use the new per-run-dir layout,
+                # where this collision is structurally impossible for a
+                # different reason (directory scope, not a `+` separator) --
+                # both artifacts resolve inside this run's own directory.
+                self.assertTrue(layout.times_path(tmp_dir / ".orc", run_id).exists())
+                self.assertTrue(layout.journal_path(tmp_dir / ".orc", run_id).exists())
 
             # --all sees both runs.
             result = _run_cli(tmp_dir, "report", "--all")
@@ -568,7 +576,7 @@ class SidecarSeparatorCollisionRegressionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             self._build_run(tmp_dir, "m1.times")
-            self.assertTrue((tmp_dir / ".orc" / "m1.times+times.jsonl").exists())
+            self.assertTrue(layout.times_path(tmp_dir / ".orc", "m1.times").exists())
 
             status = _run_cli(tmp_dir, "status", ".orc")
             self.assertEqual(status.returncode, 0, msg=status.stdout + status.stderr)
@@ -578,7 +586,7 @@ class SidecarSeparatorCollisionRegressionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             self._build_run(tmp_dir, "foo.reports")
-            journal_path = tmp_dir / ".orc" / "foo.reports.jsonl"
+            journal_path = layout.journal_path(tmp_dir / ".orc", "foo.reports")
             records = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()]
             (execution_id,) = {
                 r["data"]["execution_id"]
@@ -591,7 +599,7 @@ class SidecarSeparatorCollisionRegressionTest(unittest.TestCase):
                 "--payload", json.dumps({"turn": 1, "claimed_verdict": "done"}),
             )
             self.assertEqual(append.returncode, 0, msg=append.stdout + append.stderr)
-            self.assertTrue((tmp_dir / ".orc" / "foo.reports+reports.jsonl").exists())
+            self.assertTrue(layout.reports_path(tmp_dir / ".orc", "foo.reports").exists())
 
             listed = _run_cli(tmp_dir, "crew-report", "list", "foo.reports")
             self.assertEqual(listed.returncode, 0, msg=listed.stdout + listed.stderr)
@@ -624,7 +632,7 @@ class AbsolutePathSweepTest(unittest.TestCase):
             journal_line = next(l for l in dispatch.stdout.splitlines() if l.startswith("journal: "))
             printed_path = Path(journal_line[len("journal: ") :])
             self.assertTrue(printed_path.is_absolute())
-            self.assertEqual(printed_path, (tmp_dir / ".orc" / "abs-journal.jsonl").resolve())
+            self.assertEqual(printed_path, layout.journal_path(tmp_dir / ".orc", "abs-journal").resolve())
 
     def test_report_line_is_absolute(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -645,7 +653,7 @@ class AbsolutePathSweepTest(unittest.TestCase):
             report_line = next(l for l in report.stdout.splitlines() if l.startswith("report: "))
             printed_path = Path(report_line[len("report: ") :])
             self.assertTrue(printed_path.is_absolute())
-            self.assertEqual(printed_path, (tmp_dir / ".orc" / "abs-report.report.html").resolve())
+            self.assertEqual(printed_path, layout.report_html_path(tmp_dir / ".orc", "abs-report").resolve())
 
 
 if __name__ == "__main__":

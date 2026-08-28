@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orc_werk.adapters.jsonl import layout
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.core.errors import CoreError
 from orc_werk.core.facts import FACT_WORK_CLAIMED, FACT_WORK_CREATED, FACT_WORK_READY, make_fact
@@ -49,7 +50,10 @@ class JSONLJournalFileShapeTest(unittest.TestCase):
         self.journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"))
         self.journal.append_fact(make_fact(FACT_WORK_READY, delivery_run_id=drid, work_id="w1"))
 
-        path = self.directory / f"{drid}.jsonl"
+        # issue #55 H1: a fresh run_id (never legacy-seeded) writes the new
+        # per-run-dir layout -- layout.journal_path resolves it the same
+        # way JSONLJournal itself does.
+        path = layout.journal_path(self.directory, drid)
         self.assertTrue(path.exists())
         lines = path.read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 2)
@@ -100,7 +104,7 @@ class JSONLJournalFileShapeTest(unittest.TestCase):
                 extensions={"some-ext/v1": {"a": [1, 2.5, None, True, "s"]}},
             )
         )
-        path = self.directory / f"{drid}.jsonl"
+        path = layout.journal_path(self.directory, drid)
         for line in path.read_text(encoding="utf-8").splitlines():
             json.loads(line)
 
@@ -123,7 +127,7 @@ class JSONLJournalFileShapeTest(unittest.TestCase):
         ]
         for fact in facts:
             self.journal.append_fact(fact)
-        path = self.directory / f"{drid}.jsonl"
+        path = layout.journal_path(self.directory, drid)
         # Simulate a torn write: a flush interrupted mid-record leaves a
         # partial (non-JSON, newline-less) final line.
         with path.open("a", encoding="utf-8") as fh:
@@ -188,7 +192,7 @@ class JSONLJournalFileShapeTest(unittest.TestCase):
         drid = "dr-jsonl-corrupt-middle"
         self.journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"))
         self.journal.append_fact(make_fact(FACT_WORK_READY, delivery_run_id=drid, work_id="w1"))
-        path = self.directory / f"{drid}.jsonl"
+        path = layout.journal_path(self.directory, drid)
         # Corrupt the FIRST line (non-final): real corruption, not a torn
         # write -- must fail closed.
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -220,7 +224,7 @@ class ObservedAtTimeSidecarTest(unittest.TestCase):
         self.journal = JSONLJournal(self.directory)
 
     def _times_path(self, drid: str) -> Path:
-        return self.directory / f"{drid}+times.jsonl"
+        return layout.times_path(self.directory, drid)
 
     def test_creation_deferred_to_first_append(self) -> None:
         drid = "dr-times-deferred"
@@ -236,7 +240,7 @@ class ObservedAtTimeSidecarTest(unittest.TestCase):
             make_fact(FACT_WORK_CLAIMED, delivery_run_id=drid, work_id="w1", claim_ref="c1")
         )
 
-        journal_path = self.directory / f"{drid}.jsonl"
+        journal_path = layout.journal_path(self.directory, drid)
         journal_seqs = [json.loads(line)["seq"] for line in journal_path.read_text(encoding="utf-8").splitlines()]
 
         times_lines = self._times_path(drid).read_text(encoding="utf-8").splitlines()

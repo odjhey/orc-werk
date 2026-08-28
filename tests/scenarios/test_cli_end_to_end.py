@@ -12,6 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orc_werk.adapters.jsonl import layout
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 
@@ -52,7 +54,7 @@ class CliEndToEndTest(unittest.TestCase):
             self.assertIn("run: cli-e2e-run", dispatch.stdout)
             self.assertIn("work work-1: state=ACCEPTED attempts=2", dispatch.stdout)
 
-            journal_file = tmp_dir / ".orc" / "cli-e2e-run.jsonl"
+            journal_file = layout.journal_path(tmp_dir / ".orc", "cli-e2e-run")
             self.assertTrue(journal_file.exists())
 
             status = self._run_cli(tmp_dir, "status", "cli-e2e-run")
