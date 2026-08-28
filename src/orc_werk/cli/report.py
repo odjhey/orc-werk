@@ -557,18 +557,15 @@ def _render_claim(execution_id: str, record: Mapping[str, Any]) -> str:
         f'&middot; claimed_verdict: <span class="claim-verdict">{html.escape(str(claimed_verdict))}</span>'
         "</div>"
     )
-    for field in ("reason", "did", "pending"):
-        if report.get(field) is not None:
-            parts.append(
-                f'<div class="claim-field"><span class="claim-field-label">{field}</span> '
-                f"{html.escape(str(report[field]))}</div>"
-            )
-    for field in ("inputs_needed", "artifact_refs"):
-        if report.get(field):
-            parts.append(
-                f'<div class="claim-field"><span class="claim-field-label">{field}</span> '
-                f"{_esc_json(report[field])}</div>"
-            )
+    for field, value in report.items():
+        if field in {"turn", "claimed_verdict"}:
+            continue
+        rendered_value = _esc_json(value) if isinstance(value, (list, dict)) else _esc(value)
+        parts.append(
+            '<div class="claim-field">'
+            f'<span class="claim-field-label">{html.escape(str(field))}:</span> '
+            f"{rendered_value}</div>"
+        )
     parts.append("</li>")
     return "\n".join(parts)
 

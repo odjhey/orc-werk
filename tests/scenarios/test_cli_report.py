@@ -273,6 +273,9 @@ class ClaimsQuarantineTest(unittest.TestCase):
                         "turn": 1,
                         "claimed_verdict": "done",
                         "reason": "looked <b>done</b> to me",
+                        "pr": 65,
+                        "pr_url": "https://example.test/pull/65?x=<unsafe>",
+                        "note": "landing link recorded",
                     }
                 ),
             )
@@ -287,6 +290,9 @@ class ClaimsQuarantineTest(unittest.TestCase):
             self.assertIn("claim, not a canonical verdict", html_text)
             self.assertIn("claimed_verdict:", html_text)
             self.assertIn("&lt;b&gt;done&lt;/b&gt;", html_text)
+            self.assertIn('<span class="claim-field-label">pr:</span> 65', html_text)
+            self.assertIn("https://example.test/pull/65?x=&lt;unsafe&gt;", html_text)
+            self.assertIn("landing link recorded", html_text)
 
             # No chip (canonical state/verdict/outcome marker) ever carries
             # the claim class, and the claim block never carries the chip
@@ -300,6 +306,19 @@ class ClaimsQuarantineTest(unittest.TestCase):
             self.assertTrue(claim_only)
             for item in claim_only:
                 self.assertNotIn("chip", item)
+
+    def test_claim_with_only_required_fields_renders_without_extra_fields(self) -> None:
+        from orc_werk.cli.report import _render_claim
+
+        rendered = _render_claim(
+            "execution-required-only",
+            {"report": {"turn": 2, "claimed_verdict": "working"}},
+        )
+
+        self.assertIn("turn 2", rendered)
+        self.assertIn("claimed_verdict:", rendered)
+        self.assertIn("claim, not a canonical verdict", rendered)
+        self.assertNotIn('class="claim-field"', rendered)
 
 
 class PendingCalloutTest(unittest.TestCase):
