@@ -85,5 +85,5 @@ description: Flat documentation index.
 - [TASK-M1-002](delivery/task-cards/TASK-M1-002-pending-mode.md)
 - [TASK-M1-003](delivery/task-cards/TASK-M1-003-cli-ux.md)
 - [TASK-M1-004](delivery/task-cards/TASK-M1-004-durability-contract.md)
-- [TASK-M1-005](delivery/task-cards/TASK-M1-005-claude-code-adapter.md)
+- [TASK-M1-005](delivery/task-cards/TASK-M1-005-acp-adapter.md)
 - [TASK-M1-006](delivery/task-cards/TASK-M1-006-agent-cli-playbook.md)
