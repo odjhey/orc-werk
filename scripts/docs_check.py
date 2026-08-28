@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 ID_LINE_RE = re.compile(r"^id:\s*([^\s#]+)\s*$", re.M)
-REF_RE = re.compile(r"`((?:P|INV|ENT|PORT|FACT|DEC|FX|CAP|ERR|SCN|CONF|ADR|M|TASK)-[A-Z0-9-]+)`")
+STABLE_PREFIXES = "P|INV|ENT|PORT|FACT|DEC|FX|CAP|ERR|SCN|CONF|ADR|M|TASK|ARCH"
+REF_RE = re.compile(rf"`((?:{STABLE_PREFIXES})-[A-Z0-9-]+)`")
 
 
 def main() -> int:
@@ -40,8 +41,8 @@ def main() -> int:
 
     # Stable sub-IDs may intentionally live inside registry docs rather than frontmatter.
     declared_inline: set[str] = set()
-    declaration_re = re.compile(r"^##+\s+((?:P|INV|ENT|PORT|FACT|DEC|FX|CAP|ERR|SCN|CONF|ADR|M|TASK)-[A-Z0-9-]+)\b", re.M)
-    table_id_re = re.compile(r"`((?:P|INV|ENT|PORT|FACT|DEC|FX|CAP|ERR|SCN|CONF|ADR|M|TASK)-[A-Z0-9-]+)`")
+    declaration_re = re.compile(rf"^##+\s+((?:{STABLE_PREFIXES})-[A-Z0-9-]+)\b", re.M)
+    table_id_re = re.compile(rf"`((?:{STABLE_PREFIXES})-[A-Z0-9-]+)`")
     for path in files:
         text = path.read_text(encoding="utf-8")
         declared_inline.update(declaration_re.findall(text))
