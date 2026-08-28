@@ -15,10 +15,10 @@ The documentation is part of the Orc Werk product contract.
 1. Product thesis and boundaries
 2. Ubiquitous language and invariants
 3. State machines and port contracts
-4. Facts, decisions, effects, errors, and capabilities
+4. Facts, decisions, effects, errors, capabilities, and the generic extension contract
 5. Golden scenarios and conformance requirements
 6. Architecture/dependency guidance for the current reference implementation
-7. Adapter mappings
+7. Adapter mappings and registered extension schemas when relevant
 8. Milestones and task cards
 9. Research lineage when deeper design context is needed
 
@@ -31,9 +31,12 @@ When documents appear to conflict, treat the conflict as a defect and surface it
 3. `docs/domain/` definitions and state machines
 4. current milestone/task specifications
 5. current normative architecture constraints
-6. adapter mapping documents
-7. playbooks/reports/research references
-8. historical or superseded documents
+6. normative registered extension contracts within their extension scope
+7. adapter mapping documents
+8. playbooks/reports/research references
+9. historical or superseded documents
+
+An extension contract is authoritative only for consumers that opt into or require that extension. It never overrides generic core contracts.
 
 Research sources explain where ideas came from; they never override current Orc Werk contracts.
 
@@ -68,11 +71,13 @@ Research sources explain where ideas came from; they never override current Orc 
 | `M-` | Milestone |
 | `TASK-` | Delivery task card |
 | `ARCH-` | Reference-implementation architecture constraint |
+| `EXT-` | Registered extension contract or extension-specific stable semantic |
 
 ## Authoring rules
 
 - Do not duplicate normative MUST/ONLY/REJECT/REQUIRED prose. Reference its stable ID.
 - Provider vocabulary belongs under `docs/adapters/`, not in core contracts.
+- Specialized workflow/provider semantics that are not required by the generic state machine belong under `docs/extensions/` and MUST satisfy `CONTRACT-EXTENSIONS`.
 - ADRs explain why; current contracts define what.
 - Architecture docs constrain implementation structure but must not redefine product semantics.
 - Delivery plans may reference contracts but must not invent semantics.
