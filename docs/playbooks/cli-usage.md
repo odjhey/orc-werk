@@ -18,11 +18,11 @@ alias orc='PYTHONPATH=src python3 -m orc_werk.cli'
 
 orc                                                             # live text index of ./.orc (issue #43)
 orc dispatch "<intent text>" --config cfg.json [--journal DIR] [--max-attempts N]
-orc status  <journal.jsonl | run-id | dir>
-orc history <journal.jsonl | run-id | dir> [--limit N] [--since-seq SEQ]
+orc status  <journal.jsonl | run-id | dir> [--journal DIR]
+orc history <journal.jsonl | run-id | dir> [--journal DIR] [--limit N] [--since-seq SEQ]
 ```
 
-- Journals default to `./.orc/<run_id>/journal.jsonl` (gitignored — durable run artifacts never belong in version control; issue #55 H1 per-run directory layout — see "Journal layout" below). A bare run id passed to `status`/`history` resolves against the same default. **Journal dir precedence (issue #55 H2):** `--journal` flag (where a command has one) > `ORC_JOURNAL_DIR` env var > `./.orc`. `status`/`history` have no `--journal` flag of their own, so `ORC_JOURNAL_DIR` is the only way to override their default without passing an explicit path/dir positional argument.
+- Journals default to `./.orc/<run_id>/journal.jsonl` (gitignored — durable run artifacts never belong in version control; issue #55 H1 per-run directory layout — see "Journal layout" below). A bare run id passed to `status`/`history` resolves against the same default. **Journal dir precedence (issue #55 H2):** `--journal` flag > `ORC_JOURNAL_DIR` env var > `./.orc`.
 - **Bare `orc` (no arguments)** prints a live text index of the default journal dir instead of an argparse usage error (`orc --help` remains the unchanged command reference): run id, per-work state, attempts, and pending flags, one line per run, most-recently-active first, truncated to the last 30 with a definitive `... showing last N of M runs` hint (`orc report --index` renders the full, unpaginated set as HTML). An empty/missing journal dir prints a definitive `0 runs in <abs dir>` plus a dispatch affordance.
 - Exit codes: `0` all work ACCEPTED · `1` any work BLOCKED (or other non-accepted terminal) · `2` usage/config error (canonical error JSON on stderr) · `3` run non-terminal, pending operator input (`TASK-M1-002`, `SCN-007`) — a work is resting at `EXECUTING`/`ASSURING` because its current attempt's outcome has not been recorded yet; `dispatch`/`status` output names which work(s) and what they're awaiting (`execution-outcome` or `assurance-verdict`), followed by a `next:` block naming the exact runnable next command(s) (issue #43 — see "Design principles" below).
 - **`history`/`crew-report list` are paginated**: last 30 records/reports by default (`--limit 0` for all; `history` also takes `--since-seq SEQ`), with a definitive `... showing last N of M` hint whenever the output was truncated — never an ambiguous "...more".

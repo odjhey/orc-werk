@@ -247,6 +247,31 @@ class JournalDirPrecedenceTest(unittest.TestCase):
             self.assertTrue((flag_dir / "flag-run" / "journal.jsonl").exists())
             self.assertFalse(env_dir.exists())
 
+            status = _run_cli(
+                tmp_dir, "status", "flag-run", "--journal", str(flag_dir),
+                env_extra={"ORC_JOURNAL_DIR": str(env_dir)},
+            )
+            self.assertEqual(status.returncode, 0, msg=status.stdout + status.stderr)
+            self.assertIn("run: flag-run", status.stdout)
+
+    def test_history_resolves_bare_run_id_against_explicit_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            flag_dir = tmp_dir / "flag-journal-dir"
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(_accepted_config("history-flag-run")), encoding="utf-8")
+            dispatch = _run_cli(
+                tmp_dir, "dispatch", "history flag fixture", "--config", str(config_path),
+                "--journal", str(flag_dir),
+            )
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            history = _run_cli(
+                tmp_dir, "history", "history-flag-run", "--journal", str(flag_dir)
+            )
+            self.assertEqual(history.returncode, 0, msg=history.stdout + history.stderr)
+            self.assertIn("FACT-INTENT-SUBMITTED", history.stdout)
+
 
 class ConfigPersistenceTest(unittest.TestCase):
     """H2 config persistence: dispatch persists the effective config into
