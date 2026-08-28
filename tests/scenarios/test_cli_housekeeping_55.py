@@ -226,37 +226,6 @@ class LegacyLayoutReadFallbackTest(unittest.TestCase):
             self.assertIn("mix-legacy", index_html)
             self.assertIn("mix-new", index_html)
 
-    def test_crew_report_log_independently_uses_new_layout_for_a_legacy_journal_run(self) -> None:
-        """Per-artifact discrimination (`orc_werk.adapters.jsonl.layout`'s
-        module docstring): a legacy-journal run with no pre-existing legacy
-        `+reports.jsonl` gets the NEW layout for crew reports specifically
-        -- the journal and the crew-report log are allowed to sit on
-        different layouts for the same run, since the crew-report CLI
-        surface never requires a journal to exist at all."""
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            journal_dir = tmp_dir / ".orc"
-            self._seed_legacy_run(tmp_dir, journal_dir, "legacy-crew")
-
-            append = _run_cli(
-                tmp_dir, "crew-report", "append", "legacy-crew",
-                "--execution-id", "exec-1", "--payload",
-                json.dumps({"turn": 1, "claimed_verdict": "done"}),
-                "--journal", str(journal_dir),
-            )
-            self.assertEqual(append.returncode, 0, msg=append.stdout + append.stderr)
-
-            self.assertTrue((journal_dir / "legacy-crew.jsonl").exists())  # journal: still flat
-            self.assertFalse((journal_dir / "legacy-crew+reports.jsonl").exists())
-            self.assertTrue(
-                (layout.run_dir(journal_dir, "legacy-crew") / layout.REPORTS_FILENAME).exists()
-            )  # reports: new layout, independently
-
-            listed = _run_cli(tmp_dir, "crew-report", "list", "legacy-crew", "--journal", str(journal_dir))
-            self.assertEqual(listed.returncode, 0, msg=listed.stdout + listed.stderr)
-            self.assertIn("claimed_verdict", listed.stdout)
-
-
 class JournalDirPrecedenceTest(unittest.TestCase):
     """H2: `--journal` flag > `ORC_JOURNAL_DIR` env > `./.orc` default."""
 

@@ -1,12 +1,11 @@
-"""Per-run directory layout resolution, shared by `JSONLJournal`, the
-observed-at time sidecar, and `CrewReportLog` (issue #55, H1).
+"""Per-run directory layout resolution, shared by `JSONLJournal` and the
+observed-at time sidecar (issue #55, H1).
 
 ## New layout (the only layout any run created under this code ever writes)
 
 ```
 <directory>/<run_id>/journal.jsonl   -- canonical JournalPort file (was <run_id>.jsonl)
 <directory>/<run_id>/times.jsonl     -- observed-at sidecar (was <run_id>+times.jsonl)
-<directory>/<run_id>/reports.jsonl   -- crew-report/v1 log (was <run_id>+reports.jsonl)
 <directory>/<run_id>/report.html     -- orc report's default output for this run
 <directory>/<run_id>/config.json     -- persisted effective dispatch config (issue #55 H2)
 ```
@@ -14,17 +13,15 @@ observed-at time sidecar, and `CrewReportLog` (issue #55, H1).
 Run lifecycle = directory lifecycle for the new layout: the run's own
 directory holds every artifact that belongs to it, disambiguated by a fixed
 filename rather than a filename suffix, so the `+` sidecar-separator rule
-(`CONTRACT-DURABILITY`, `EXT-CREW-REPORT-V1`) is moot inside a run
-directory -- there is no run-id-derived filename collision to guard
-against when every artifact already lives under a directory scoped to
-exactly one run.
+(`CONTRACT-DURABILITY`) is moot inside a run directory -- there is no
+run-id-derived filename collision to guard against when every artifact
+already lives under a directory scoped to exactly one run.
 
 ## Legacy flat layout (read-fallback only, never written by new code)
 
 ```
 <directory>/<run_id>.jsonl           -- canonical journal
 <directory>/<run_id>+times.jsonl     -- observed-at sidecar
-<directory>/<run_id>+reports.jsonl   -- crew-report/v1 log
 <directory>/<run_id>.report.html     -- orc report's default output
 ```
 
@@ -33,26 +30,28 @@ adapter package and `orc_werk.cli` resolves through the helpers below,
 which fall back to the legacy flat file whenever it is the one that
 actually exists on disk.
 
+A legacy `<run_id>+reports.jsonl` `crew-report/v1` sidecar (the removed
+`EXT-CREW-REPORT-V1` fallback log, `docs/extensions/crew-report/README.md`,
+superseded) may still exist on disk from before the removal (issue #100
+part 2). This module deliberately no longer resolves a path for it -- no
+code in this package or `orc_werk.cli` reads or writes it any more, so any
+such file is simply inert. Its `+` name still keeps it correctly excluded
+from `discover_run_ids`'s run-id sweep below (the sidecar-separator rule
+still applies structurally even though this specific sidecar kind is no
+longer produced or consumed).
+
 ## The discriminator is per-artifact, not per-run
 
 Each artifact's own legacy filename is the ONLY thing that decides whether
 THAT artifact reads/writes legacy or new layout -- `journal_path` checks
 whether `<run_id>.jsonl` already exists, `times_path` checks
-`<run_id>+times.jsonl`, `reports_path` checks `<run_id>+reports.jsonl`,
-independently of one another. This is deliberate, not an oversight: the
-crew-report log is written by a wholly separate CLI surface
-(`orc crew-report append`) that never requires a journal to exist at all,
-so a run_id can legitimately have a legacy `<run_id>+reports.jsonl` (or
-none at all) regardless of whether its journal is legacy or new -- coupling
-the reports/times decision to the journal's own legacy status would
-misfire for exactly that case (a crew report appended for a run whose
-journal was never legacy, or vice versa). What every one of these
-functions guarantees on its own is the thing that actually matters: ONE
-artifact never splits ITS OWN history across both layouts mid-run -- once
-`<run_id>.jsonl` (or `+times.jsonl`, or `+reports.jsonl`) exists on disk,
-that specific artifact keeps being read from and appended to at that exact
-path for the rest of its life. A brand-new artifact (no legacy file yet)
-always gets the new layout.
+`<run_id>+times.jsonl`, independently of one another. What every one of
+these functions guarantees on its own is the thing that actually matters:
+ONE artifact never splits ITS OWN history across both layouts mid-run --
+once `<run_id>.jsonl` (or `+times.jsonl`) exists on disk, that specific
+artifact keeps being read from and appended to at that exact path for the
+rest of its life. A brand-new artifact (no legacy file yet) always gets the
+new layout.
 """
 
 from __future__ import annotations
@@ -61,7 +60,6 @@ from pathlib import Path
 
 JOURNAL_FILENAME = "journal.jsonl"
 TIMES_FILENAME = "times.jsonl"
-REPORTS_FILENAME = "reports.jsonl"
 REPORT_HTML_FILENAME = "report.html"
 CONFIG_FILENAME = "config.json"
 
@@ -94,12 +92,6 @@ def journal_path(directory: Path, run_id: str) -> Path:
 def times_path(directory: Path, run_id: str) -> Path:
     return _resolve_artifact(
         directory, run_id, legacy_name=f"{run_id}+times.jsonl", new_filename=TIMES_FILENAME
-    )
-
-
-def reports_path(directory: Path, run_id: str) -> Path:
-    return _resolve_artifact(
-        directory, run_id, legacy_name=f"{run_id}+reports.jsonl", new_filename=REPORTS_FILENAME
     )
 
 
@@ -153,14 +145,12 @@ def discover_run_ids(directory: Path) -> list[str]:
 __all__ = [
     "CONFIG_FILENAME",
     "JOURNAL_FILENAME",
-    "REPORTS_FILENAME",
     "REPORT_HTML_FILENAME",
     "TIMES_FILENAME",
     "config_path",
     "discover_run_ids",
     "journal_path",
     "report_html_path",
-    "reports_path",
     "run_dir",
     "times_path",
 ]

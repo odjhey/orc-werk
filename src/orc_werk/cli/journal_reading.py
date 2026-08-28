@@ -101,8 +101,10 @@ def _intent_text(history: Sequence[Mapping[str, Any]]) -> Optional[str]:
 def _is_run_journal_path(path: Path) -> bool:
     """True when `path` is a run's canonical `<run_id>.jsonl` journal, as
     opposed to one of this package's adapter-owned sidecar files beside it
-    (the crew-report log `<run_id>+reports.jsonl`, `EXT-CREW-REPORT-V1`;
-    the observed-at time sidecar `<run_id>+times.jsonl`, issue #39).
+    (the observed-at time sidecar `<run_id>+times.jsonl`, issue #39; a
+    legacy `<run_id>+reports.jsonl` `crew-report/v1` sidecar may also still
+    exist on disk from before that extension's removal, issue #100 part 2
+    -- inert now, but still structurally excluded here the same way).
 
     The rule is structural, not a suffix list (the attempt-2 watchtower
     ruling on PR #46): `+` is the reserved sidecar separator, deliberately

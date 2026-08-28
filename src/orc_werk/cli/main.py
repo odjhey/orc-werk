@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from orc_werk.adapters.jsonl import layout
-from orc_werk.adapters.jsonl.crew_report import CrewReportLog
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.adapters.memory.work_graph import MemoryWorkGraph
 from orc_werk.app.orchestrator import Orchestrator, is_pending
@@ -410,48 +409,6 @@ def cmd_history(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_crew_report_append(args: argparse.Namespace) -> int:
-    """`TASK-M1-007` CLI surface: append one `crew-report/v1` record
-    (`EXT-CREW-REPORT-V1-SCHEMA`) to the run's adapter-owned log
-    (`orc_werk.adapters.jsonl.crew_report.CrewReportLog`), distinct from
-    -- and never merged into -- the run's `JournalPort` journal file. This
-    is narrative self-report, never a canonical settlement/candidate/
-    verdict recording (`docs/playbooks/agent-cli-usage.md` section 7)."""
-    journal_dir = resolve_journal_dir(args.journal)
-    try:
-        payload = json.loads(args.payload)
-    except json.JSONDecodeError as exc:
-        raise validation_error(f"--payload is not valid JSON: {exc}", payload=args.payload) from exc
-    log = CrewReportLog(journal_dir)
-    record = log.append(delivery_run_id=args.run_id, execution_id=args.execution_id, report=payload)
-    print(_compact(record))
-    return 0
-
-
-def cmd_crew_report_list(args: argparse.Namespace) -> int:
-    """`TASK-M1-007` CLI surface: list `crew-report/v1` records for a run
-    in append order (the log's own ordering key, distinct from
-    `PORT-JOURNAL-ENVELOPE`'s `seq`), optionally filtered to one
-    `execution_id`."""
-    journal_dir = resolve_journal_dir(args.journal)
-    log = CrewReportLog(journal_dir)
-    records = list(log.list_reports(delivery_run_id=args.run_id, execution_id=args.execution_id))
-    # issue #43 pagination addendum: same last-N-with-a-definitive-hint
-    # shape as `orc history`. Indices in the printed `[NNNN]` prefix keep
-    # naming each report's real 1-based position in the full (unfiltered
-    # by --limit) list, not a 1..len(window) renumbering, so a truncated
-    # listing's indices stay meaningful against the untruncated list.
-    window, total, truncated = paginate(records, limit=args.limit)
-    start_index = total - len(window) + 1
-    for idx, record in enumerate(window, start=start_index):
-        print(
-            f"[{idx:04d}] execution_id={record['execution_id']} report={_compact(record['report'])}"
-        )
-    if truncated:
-        print(size_hint(len(window), total, noun="reports"))
-    return 0
-
-
 def _index_work_summary(work_id: str, wp: WorkProjection) -> str:
     """One Work's compact index-line fragment: state, attempts, and a
     pending/blocked flag when relevant (issue #43 item 1: "run id, per-work
@@ -481,7 +438,7 @@ def cmd_index(journal_dir: Optional[Path] = None) -> int:
     the directory already exists and already has at least one run journal
     in it, so a bare `orc` in a fresh checkout creates nothing.
 
-    Paginated the same way as `orc history`/`orc crew-report list` (issue
+    Paginated the same way as `orc history` (issue
     #43 pagination addendum), most-recently-active runs first (by journal
     file mtime); bare `orc` has no flag surface of its own to carry a
     `--limit`, so its escape hatch to the full set is the already-shipped
@@ -703,59 +660,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--since-seq", type=int, default=None, help="only show records with seq greater than SEQ"
     )
     history_parser.set_defaults(func=cmd_history)
-
-    crew_report_parser = subparsers.add_parser(
-        "crew-report",
-        help="append/list crew-report/v1 narrative records for a run",
-        description="Append or list crew-report/v1 narrative records for a run/execution -- claims "
-        "about progress, never a canonical settlement/candidate/verdict.",
-    )
-    crew_report_subparsers = crew_report_parser.add_subparsers(dest="crew_report_command", required=True)
-
-    crew_report_append_parser = crew_report_subparsers.add_parser(
-        "append",
-        help="append one crew-report/v1 record for a run/execution",
-        description="Append one crew-report/v1 narrative record for a run/execution.",
-        epilog="example:\n"
-        "  orc crew-report append my-run-id --execution-id exec-1 "
-        "--payload '{\"turn\": 1, \"claimed_verdict\": \"waiting\"}'\n\n"
-        "defaults: --journal $ORC_JOURNAL_DIR or ./.orc",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    crew_report_append_parser.add_argument("run_id", help="delivery_run_id")
-    crew_report_append_parser.add_argument("--execution-id", required=True, help="execution_id this report describes")
-    crew_report_append_parser.add_argument(
-        "--payload", required=True, help="crew-report/v1 payload as a portable JSON object"
-    )
-    crew_report_append_parser.add_argument(
-        "--journal", help="journal directory the report log sits beside (default $ORC_JOURNAL_DIR or ./.orc)", default=None
-    )
-    crew_report_append_parser.set_defaults(func=cmd_crew_report_append)
-
-    crew_report_list_parser = crew_report_subparsers.add_parser(
-        "list",
-        help="list crew-report/v1 records for a run, in append order",
-        description="List crew-report/v1 narrative records for a run, in append order.",
-        epilog="examples:\n"
-        "  orc crew-report list my-run-id\n"
-        "  orc crew-report list my-run-id --execution-id exec-1 --limit 0\n\n"
-        f"defaults: --journal $ORC_JOURNAL_DIR or ./.orc, --limit {DEFAULT_LIMIT} (last {DEFAULT_LIMIT} reports; 0 shows all)",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    crew_report_list_parser.add_argument("run_id", help="delivery_run_id")
-    crew_report_list_parser.add_argument(
-        "--execution-id", default=None, help="restrict to reports for one execution_id"
-    )
-    crew_report_list_parser.add_argument(
-        "--journal", help="journal directory the report log sits beside (default $ORC_JOURNAL_DIR or ./.orc)", default=None
-    )
-    crew_report_list_parser.add_argument(
-        "--limit",
-        type=int,
-        default=DEFAULT_LIMIT,
-        help=f"show at most N most-recent reports, 0 for all (default {DEFAULT_LIMIT})",
-    )
-    crew_report_list_parser.set_defaults(func=cmd_crew_report_list)
 
     report_parser = subparsers.add_parser(
         "report",

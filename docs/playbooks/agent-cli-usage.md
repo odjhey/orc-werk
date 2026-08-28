@@ -24,7 +24,7 @@ If you are unsure which seat you are in, stop and ask rather than guess — reco
 
 ### Executor identity when no adapter journals the seat
 
-When a seat's execution is not adapter-journaled with `execution-session/v1` provenance — for example, a ship agent working outside the ACP adapter — append a `crew-report/v1` record with `orc crew-report append` that identifies who or what filled the seat: model/tool, session reference, and role. Follow `EXT-CREW-REPORT-V1` for the report shape and durable ownership. This gives blind reconstruction the executor identity that an adapter-managed execution would otherwise have journaled.
+When a seat's execution is not adapter-journaled with `execution-session/v1` provenance — for example, a ship agent working outside the ACP adapter — put a small identity payload (model/tool, session reference, role) under the `extensions` key of that Work's execution attempt entry in the dispatch config (`attempts.<work_id>[n].extensions`; `orc config-schema` prints the full, current attempt-entry key set). Config-entry `extensions` transport losslessly into the settled `FACT-EXEC-SETTLED` record per `CONF-EXT-003` (issues #105/#106), so the identity payload becomes part of the durable journal and is visible via `orc history`/`orc refs` — read-only, no new recording mechanism. Extensions are open-ended (`CONTRACT-EXTENSIONS`, `EXT-005`): use any namespaced key that will not collide with a registered extension (e.g. `"executor-identity/v1": {"model": "...", "session_ref": "...", "role": "ship"}`); an unregistered key is still transported unchanged, it simply has no normative schema of its own. This gives blind reconstruction the executor identity that an adapter-managed execution would otherwise have journaled — the `crew-report/v1` sidecar this section used to point at is removed (`EXT-CREW-REPORT-V1`, superseded, issue #100 part 2).
 
 ## 3. Ship-agent protocol
 
@@ -92,23 +92,37 @@ This is the real record sequence from a completed run in this repository's own d
 
 Notice what the two agent seats did and did not do: the ship agent recorded a settlement and a resolvable candidate, never a verdict on its own work; the verification agent recorded a verdict derived from its own independent fetch, never copied from the settlement record; neither agent recorded any `DEC-*`. That is the whole loop.
 
-## 8. The crew-report log — a separate, already-live channel
+## 8. Narrative content is reference-first, not a separate recording channel
 
-Everything above is canonical observation: settlements, candidates,
-verdicts. Your own turn-by-turn narration — what you believe you did,
-what's still pending, what you think the outcome is — is a different,
-non-canonical channel: `crew-report/v1` (`EXT-CREW-REPORT-V1`). This log
-**exists and is live** (`TASK-M1-007`, shipped): `orc crew-report append`
-and `orc crew-report list` are real CLI subcommands today, not a forward
-pointer to future work. Agents MAY append narrative turn reports there —
-`claimed_verdict`, not `verdict`, deliberately, so it can never be mistaken
-for an assurance verdict — beside, not inside, the settlement/candidate/
-verdict observations this playbook governs. A crew report is a claim about
-your own progress; it MUST NOT affect canonical state, decisions, or
-transitions, and it never substitutes for the settlement, candidate, or
-verdict recording described above. `claimed_verdict` is always a claim,
-never a verdict recording — recording one is not, and never becomes,
-assurance.
+Everything in this playbook is canonical observation: settlements,
+candidates, verdicts. Your own turn-by-turn narration — what you believe
+you did, what's still pending, what you think the outcome is — is
+deliberately **not** given its own recording channel. The `crew-report/v1`
+sidecar log (`orc crew-report append`/`orc crew-report list`) that used to
+live here is **removed** (`EXT-CREW-REPORT-V1`, superseded; operator
+ruling, issue #100 part 2, "reference-first narrative doctrine," amending
+issue #65). The doctrine: narrative/report *content* stays provider-owned
+— your own session/transcript, wherever your tooling already keeps it —
+and the ledger journals a durable, resolvable *reference* to it instead of
+a copy. Use the existing reference-carrying surfaces:
+
+- **`execution-session/v1`** (`EXT-EXECUTION-SESSION-V1`), when your
+  provider is adapter-managed (e.g. the ACP adapter) — session/resume/
+  transcript references are already journaled onto `FACT-EXEC-SETTLED`'s
+  `extensions` automatically.
+- **`evidence_refs`** on the assurance verdict (`FACT-ASSURE-SETTLED`),
+  for a verification agent's audit trail (§4 item 4 above).
+- **A config-entry `extensions` payload** on the execution attempt, for
+  anything else you need to record about your own turn/identity that has
+  no better home — §2's "Executor identity when no adapter journals the
+  seat" above shows the mechanics.
+- **`orc refs <run>`** surfaces every resolvable reference a run carries,
+  across all of the above, each with a runnable resolve command.
+
+There is no longer a place to journal free-form claimed-verdict narration
+per turn; a claim about your own progress belongs in your own session/
+transcript (referenced, not duplicated) or, if it must be canonical, in
+the settlement/candidate/verdict recording this playbook already governs.
 
 ## 9. Fresh-session protocol — resuming from the record alone
 
@@ -121,7 +135,8 @@ This loop — plus the seat discipline and recording mechanics this playbook gov
 - `docs/playbooks/cli-usage.md` (`PLAYBOOK-CLI-USAGE`) — command surface, config shape, full exit-code contract
 - `docs/delivery/watchtower-operations.md` (`PLAYBOOK-WATCHTOWER`) — ship/verification-scout roles in the surrounding human-driven process
 - `docs/scenarios/SCN-007-pending-settlement.md` — the pending/idempotent-resume flow this playbook's exit-`3` handling follows
-- `docs/extensions/crew-report/README.md` (`EXT-CREW-REPORT-V1`) — the narrative-report channel, `TASK-M1-007`
+- `docs/extensions/execution-session/README.md` (`EXT-EXECUTION-SESSION-V1`) — durable provider session/resume/transcript references
+- `docs/extensions/crew-report/README.md` (`EXT-CREW-REPORT-V1`, superseded) — the removed narrative-report sidecar; historical reference only
 - `.claude/skills/orc-ledger` (source `.agents/skills/orc-ledger/SKILL.md`) — the fresh-session onboarding artifact, section 9 above
 - `INV-003`, `INV-006`, `INV-007`, `INV-008`, `INV-011`, `INV-020`
 - `PORT-WORK-004`, `ERR-CONFLICT`

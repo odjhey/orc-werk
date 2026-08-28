@@ -72,12 +72,11 @@ partial final line. On read/reopen:
   records", it is no file at all, and continues to mean "no journal yet"
   (a fresh run's first dispatch).
 
-The line-scan/torn-tail-recovery/append mechanics below are implemented
-once, shared with the crew-report log adapter (`TASK-M1-007`,
-`orc_werk.adapters.jsonl.crew_report`), in
-`orc_werk.adapters.jsonl.tailsafe`; this module keeps only what is
-journal-specific (`seq` assignment/caching, fact/decision/effect envelope
-construction).
+The line-scan/torn-tail-recovery/append mechanics below are factored out
+into `orc_werk.adapters.jsonl.tailsafe` so a future same-shape adapter can
+reuse them instead of reimplementing (and risking drifting from) this
+rule; this module keeps only what is journal-specific (`seq`
+assignment/caching, fact/decision/effect envelope construction).
 
 ## Observed-at time sidecar (`<run_id>+times.jsonl`, issue #39,
 ## `CONTRACT-DURABILITY`'s "record observation wall-clock times" row)
@@ -118,9 +117,9 @@ guarantee above is unchanged by it:
   journal itself (see above), for the same M0 scripted-context reasons --
   not a stronger or weaker promise than the file it sits beside.
 - **No torn-tail repair machinery on the write side.** Unlike the
-  canonical journal and the crew-report log, this adapter does not scan
-  the sidecar before appending to it (no `tailsafe.scan_tolerant` call)
-  and keeps no repair state across calls: a torn/corrupt line in this
+  canonical journal, this adapter does not scan the sidecar before
+  appending to it (no `tailsafe.scan_tolerant` call) and keeps no repair
+  state across calls: a torn/corrupt line in this
   file only ever costs one record's *presentation* timestamp, never
   canonical correctness, so `orc_werk.cli.report`'s reader instead
   degrades per-line (skip a malformed line, keep the rest) rather than

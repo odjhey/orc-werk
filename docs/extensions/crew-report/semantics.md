@@ -1,11 +1,13 @@
 ---
 id: EXT-CREW-REPORT-V1-SEMANTICS
 type: contract
-status: current
+status: superseded
 authority: normative
 version: 1
 description: Behavioral semantics for crew-report/v1.
 ---
+
+> **Superseded** — see [`docs/extensions/crew-report/README.md`](README.md) (`EXT-CREW-REPORT-V1`) for the removal ruling and replacement (reference-first via `execution-session/v1`/`evidence_refs`, `orc refs`). Retained so a reader with an existing `crew-report/v1` sidecar record on disk can still interpret its shape.
 
 # `crew-report/v1` semantics
 

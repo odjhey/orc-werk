@@ -1,7 +1,6 @@
 """`orc report` (`TASK-M1-008`; round 2 -- issues #39, #40): read-only,
 stdlib-only, self-contained HTML renderer for one DeliveryRun's journal
-(`PORT-JOURNAL-ENVELOPE`) plus its `crew-report/v1` log
-(`EXT-CREW-REPORT-V1`) and observed-at time sidecar
+(`PORT-JOURNAL-ENVELOPE`) and observed-at time sidecar
 (`CONTRACT-DURABILITY`'s "record observation wall-clock times" row), for
 async human review by a reader who did not watch the run happen; a small
 local index page over a journal directory's runs (`--index`); and
@@ -24,13 +23,11 @@ no derived judgments the kernel did not make. It reuses:
 - the same target-resolution/presentation helpers `status`/`history`
   already use (`orc_werk.cli.journal_reading`), so a missing run fails
   closed with canonical `ERR-NOT-FOUND` the same way;
-- the public `JournalPort`/`CrewReportLog` adapter APIs for all reads --
-  never raw file parsing.
+- the public `JournalPort` adapter API for all reads -- never raw file
+  parsing.
 
 Presentation rules (normative for this surface, from the task card):
-claims (`crew-report/v1`) are visually quarantined from canonical
-facts/decisions/verdicts (muted/outlined, labeled "claim", never colored by
-status); status colors are reserved for canonical delivery
+status colors are reserved for canonical delivery
 state/verdict/outcome and always paired with a text label (icon + word,
 never color alone -- `dataviz` skill's status-palette/marks-and-anatomy
 guidance); output is self-contained (inline CSS only, no external
@@ -50,7 +47,6 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from orc_werk.adapters.jsonl import layout
-from orc_werk.adapters.jsonl.crew_report import CrewReportLog
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.app.orchestrator import is_pending
 from orc_werk.cli.hyperlink import hyperlink_path
@@ -77,8 +73,7 @@ from orc_werk.core.state import (
 # ---------------------------------------------------------------------------
 # Status-color mapping (dataviz skill's status palette: good/warning/
 # serious/critical, "fixed -- never themed"; reserved for canonical
-# delivery state/verdict/outcome only -- never used for crew-report claims,
-# per the task card's quarantine rule).
+# delivery state/verdict/outcome only).
 # ---------------------------------------------------------------------------
 
 _STATE_STATUS: Mapping[str, str] = {
@@ -108,10 +103,6 @@ _STATUS_ICON: Mapping[str, str] = {
 
 def _compact_json(data: Any) -> str:
     return json.dumps(data, sort_keys=True, separators=(",", ":"))
-
-
-def _esc(value: Any) -> str:
-    return html.escape(str(value))
 
 
 def _esc_json(data: Any) -> str:
@@ -254,20 +245,6 @@ def _verdict_evidence_refs(
         if data.get("work_id") == work_id and data.get("assurance_id") == assurance_id:
             return data.get("evidence_refs")
     return None
-
-
-def _group_reports_by_execution(
-    reports: Sequence[Mapping[str, Any]]
-) -> dict[str, list[Mapping[str, Any]]]:
-    grouped: dict[str, list[Mapping[str, Any]]] = {}
-    for record in reports:
-        execution_id = record.get("execution_id")
-        if not execution_id:
-            continue
-        grouped.setdefault(execution_id, []).append(record)
-    for execution_id, records in grouped.items():
-        records.sort(key=lambda r: r.get("report", {}).get("turn", 0))
-    return grouped
 
 
 def _find_create_work_plan(history: Sequence[Mapping[str, Any]]) -> Optional[Mapping[str, Any]]:
@@ -538,38 +515,6 @@ def _render_timeline_record(
     return "\n".join(parts)
 
 
-def _render_claim(execution_id: str, record: Mapping[str, Any]) -> str:
-    """A `crew-report/v1` entry, visually quarantined (task card /
-    `EXT-CREW-REPORT-V1`'s claim-vs-fact distinction, applied visually):
-    outlined/muted, explicitly labeled "claim", and -- unlike the chips
-    above -- never painted with a reserved status color, regardless of
-    `claimed_verdict`. This is the one place status color is deliberately
-    withheld."""
-    report = record.get("report", {})
-    turn = report.get("turn")
-    claimed_verdict = report.get("claimed_verdict")
-    parts = ['<li class="claim">']
-    parts.append('<div class="claim-label">crew report -- claim, not a canonical verdict</div>')
-    parts.append(
-        '<div class="claim-head">execution '
-        f"<code>{html.escape(execution_id)}</code> "
-        f"&middot; turn {html.escape(str(turn))} "
-        f'&middot; claimed_verdict: <span class="claim-verdict">{html.escape(str(claimed_verdict))}</span>'
-        "</div>"
-    )
-    for field, value in report.items():
-        if field in {"turn", "claimed_verdict"}:
-            continue
-        rendered_value = _esc_json(value) if isinstance(value, (list, dict)) else _esc(value)
-        parts.append(
-            '<div class="claim-field">'
-            f'<span class="claim-field-label">{html.escape(str(field))}:</span> '
-            f"{rendered_value}</div>"
-        )
-    parts.append("</li>")
-    return "\n".join(parts)
-
-
 def _render_candidates_table(history: Sequence[Mapping[str, Any]], work_id: str, wp: WorkProjection) -> str:
     if not wp.candidates:
         return ""
@@ -627,7 +572,6 @@ def _render_work_section(
     wp: WorkProjection,
     history: Sequence[Mapping[str, Any]],
     seq_index: Mapping[tuple[str, str], int],
-    reports_by_execution: Mapping[str, Sequence[Mapping[str, Any]]],
     times: Mapping[int, str] = {},
 ) -> str:
     status = _STATE_STATUS.get(wp.state, "neutral")
@@ -660,17 +604,10 @@ def _render_work_section(
 
     parts.append("<h3>Timeline</h3>")
     parts.append('<ol class="timeline">')
-    emitted_executions: set[str] = set()
     for record in history:
         if _work_id_of(record) != work_id:
             continue
         parts.append(_render_timeline_record(record, seq_index, times))
-        if record.get("kind") == "fact" and record.get("id") == "FACT-EXEC-STARTED":
-            execution_id = record.get("data", {}).get("execution_id")
-            if execution_id and execution_id not in emitted_executions:
-                emitted_executions.add(execution_id)
-                for report in reports_by_execution.get(execution_id, ()):
-                    parts.append(_render_claim(execution_id, report))
     parts.append("</ol>")
 
     parts.append("</section>")
@@ -741,20 +678,18 @@ def _render_run_header(
 
 
 def render_run_report(directory: Path, run_id: str) -> str:
-    """Render one DeliveryRun's journal (+ crew-report log, when present)
-    into a self-contained HTML document. Raises canonical `ERR-NOT-FOUND`
-    (via `_require_journal_file`) for a missing run, checked before any
-    adapter is constructed -- no side effect on a failed lookup."""
+    """Render one DeliveryRun's journal into a self-contained HTML
+    document. Raises canonical `ERR-NOT-FOUND` (via `_require_journal_file`)
+    for a missing run, checked before any adapter is constructed -- no side
+    effect on a failed lookup."""
     _require_journal_file(directory, run_id, target=run_id)
     journal = JSONLJournal(directory)
     history = journal.history(delivery_run_id=run_id)
     projection = journal.load_projection(delivery_run_id=run_id)
-    reports = CrewReportLog(directory).list_reports(delivery_run_id=run_id)
     times, skipped_times = _load_times_sidecar(directory, run_id)
 
     intent_text = _intent_text(history)
     seq_index = _fact_seq_index(history)
-    reports_by_execution = _group_reports_by_execution(reports)
 
     body_parts = [_render_run_header(run_id, intent_text, projection, times, skipped_times)]
     body_parts.append(_render_run_level_section(history, times))
@@ -766,7 +701,6 @@ def render_run_report(directory: Path, run_id: str) -> str:
                 projection.works[work_id],
                 history,
                 seq_index,
-                reports_by_execution,
                 times,
             )
         )
@@ -1114,15 +1048,6 @@ pre.record-data, pre.record-extensions {
 .basis ul { margin: 0.15rem 0 0; padding-left: 1.1rem; }
 .citation { color: var(--ink-secondary); }
 a.citation { color: var(--ink-primary); text-decoration: underline; text-decoration-color: var(--ink-muted); }
-.timeline > li.claim {
-  list-style: none; border: 1px dashed var(--ink-muted); border-radius: 8px;
-  padding: 0.55rem 0.9rem; margin: 0.15rem 0 0.35rem 1.25rem; background: transparent; color: var(--ink-secondary);
-}
-.claim-label { text-transform: uppercase; font-size: 0.66em; letter-spacing: 0.08em; color: var(--ink-muted); font-weight: 700; margin-bottom: 0.25em; }
-.claim-head { font-size: 0.88rem; }
-.claim-verdict { font-weight: 600; color: var(--ink-primary); }
-.claim-field { font-size: 0.85rem; margin-top: 0.2rem; }
-.claim-field-label { color: var(--ink-muted); margin-right: 0.3em; }
 .report-footer { max-width: 960px; margin: 2rem auto 0; color: var(--ink-muted); font-size: 0.8rem; text-align: center; }
 ul.dep-tree { list-style: none; margin: 0.35rem 0 0; padding-left: 1.4rem; }
 ul.dep-tree.dep-tree-root { padding-left: 0; }
