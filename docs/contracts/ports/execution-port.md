@@ -40,6 +40,8 @@ Optional/required according to adapter profile; capability `CAP-EXEC-CANCEL`.
 ### PORT-EXEC-005 `resume`
 Optional. Adapter MUST distinguish best-effort from exact resume. See `INV-013`.
 
+The caller expresses the required resume strength via a `capability` field on the resume request, valued `CAP-EXEC-RESUME-BEST-EFFORT` or `CAP-EXEC-RESUME-EXACT`. A resume request with a missing or unknown `capability` value MUST be rejected with `ERR-VALIDATION`. An adapter MUST NOT silently substitute a weaker resume strength than the one requested — an adapter that cannot meet the requested strength MUST fail per `INV-013` rather than default down.
+
 ## Explicit non-semantics
 
 The port does not promise:
