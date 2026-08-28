@@ -36,19 +36,33 @@ milestone that needs stronger durability guarantees should revisit this
 (and should do so as a capability the adapter advertises, per
 `INV-013`/`CONTRACT-CAPABILITIES`, not a silent behavior change).
 
-## Torn-tail recovery rule (watchtower ruling on PR review)
+## Torn-tail recovery rule (watchtower ruling on PR review; refined for
+## issue #18, `docs/contracts/ports/journal-port.md`'s amended
+## durable-journal-recovery clause)
 
 Because appends are flush-no-fsync, a crash can leave a *torn write*: a
 partial final line. On read/reopen:
 
-- If the FINAL line of the file is unparseable, it is treated as a torn
-  write and ignored -- the journal continues from the last good record
+- If the FINAL line of the file is unparseable AND at least one valid
+  record precedes it in the same file, it is treated as a torn write and
+  ignored -- the journal continues from the last good record
   (heal-while-use; the torn bytes are truncated away on the next append so
   the file returns to one-valid-JSON-object-per-line form).
 - Any malformed NON-final line is real corruption, not a torn write (a torn
   write can only ever be the last thing written), and raises canonical
   `ERR-VALIDATION` -- fail closed rather than replaying a journal with a
   hole in the middle.
+- A file that exists but contains **zero valid records at all** (a
+  one-line garbage file whose single line is indistinguishable from a
+  "torn" final line with no preceding good records, or any other content
+  that never parses as a single valid envelope) is not a journal: reading
+  it raises canonical `ERR-VALIDATION` rather than presenting an empty
+  history. This closes the silent-success-on-wrong-file hole (issue #18) --
+  a stray or misdirected path resolving to garbage content used to be
+  indistinguishable from a legitimate torn write with an empty prefix. A
+  *nonexistent* path is unaffected: it is not "a file with no valid
+  records", it is no file at all, and continues to mean "no journal yet"
+  (a fresh run's first dispatch).
 
 ## Reopen / concurrency
 
@@ -112,13 +126,19 @@ class JSONLJournal(JournalPort):
         return self._directory / f"{delivery_run_id}.jsonl"
 
     def _scan(self, delivery_run_id: str) -> Tuple[List[Dict[str, Any]], Optional[_TailRepair]]:
-        """Read all good records for one run, applying the torn-tail rule
-        (module docstring): an unparseable FINAL line is ignored as a torn
-        write; an unparseable NON-final line raises canonical
-        `ERR-VALIDATION`. Returns the good records plus any pending tail
-        repair the next append must apply."""
+        """Read all good records for one run, applying the amended
+        torn-tail rule (module docstring / `PORT-JOURNAL`'s durable-journal
+        recovery clause, issue #18): an unparseable FINAL line is ignored
+        as a torn write only when at least one valid record precedes it;
+        an unparseable NON-final line raises canonical `ERR-VALIDATION`;
+        and a file with zero valid records at all (garbage content, no
+        tolerable prefix) also raises canonical `ERR-VALIDATION` rather
+        than presenting an empty history. Returns the good records plus
+        any pending tail repair the next append must apply."""
         path = self._path_for(delivery_run_id)
         if not path.exists():
+            # No file at all is not "a file with no valid records" -- it is
+            # simply no journal yet (a fresh run's first dispatch).
             return [], None
         raw = path.read_bytes()
         total = len(raw)
@@ -137,7 +157,13 @@ class JSONLJournal(JournalPort):
             except (ValueError, UnicodeDecodeError):
                 if offset >= total:
                     # Torn write: partial final line -- ignore it; the next
-                    # append truncates it away (heal-while-use).
+                    # append truncates it away (heal-while-use). #18: this
+                    # tolerance is only meaningful when `records` already
+                    # has a good prefix -- when it does not, the
+                    # zero-valid-records check below (after the loop) fails
+                    # this closed instead, since a torn-looking final line
+                    # with nothing preceding it is indistinguishable from a
+                    # plain garbage file.
                     break
                 raise validation_error(
                     "malformed non-final JSONL journal line (corrupt journal file)",
@@ -147,6 +173,12 @@ class JSONLJournal(JournalPort):
             records.append(record)
             good_end = offset
             last_good_has_newline = chunk.endswith((b"\n", b"\r"))
+        if not records:
+            raise validation_error(
+                "journal file contains no valid records (not a journal)",
+                delivery_run_id=delivery_run_id,
+                path=str(path),
+            )
         needs_newline = good_end == total and total > 0 and not last_good_has_newline
         if good_end < total or needs_newline:
             return records, (good_end, needs_newline)

@@ -63,9 +63,22 @@ from orc_werk.adapters.scripted.execution import ScriptedExecution
 from orc_werk.app.orchestrator import RunConfig
 from orc_werk.core.effects import FX_START_EXECUTION
 from orc_werk.core.errors import validation_error
+from orc_werk.core.facts import ASSURANCE_VERDICTS, EXEC_OUTCOMES
 from orc_werk.core.idempotency import idempotency_key
 from orc_werk.core.portable import is_portable
 from orc_werk.ports.capabilities import validate_capabilities
+
+# #17 (re-scoped, docs/delivery/M1-delivery-ledger.md): the CLI-owned,
+# non-normative config schema this module's own docstring documents.
+# Load-time strict validation rejects unknown top-level keys and
+# structurally malformed `attempts` shapes -- it never rejects an *absent*
+# `attempts` key or a planned Work with no entry (the valid
+# fully-incremental/SCN-007-pending case).
+_TOP_LEVEL_KEYS = frozenset(
+    {"run_id", "max_attempts", "resume_capability", "execution_capabilities", "plan", "attempts"}
+)
+_ATTEMPT_ENTRY_KEYS = frozenset({"outcome", "candidate", "assurance", "states", "artifact_refs", "extensions"})
+_ASSURANCE_ENTRY_KEYS = frozenset({"verdict", "states", "evidence_refs", "extensions"})
 
 
 def _require_portable(value: Any, *, path: str) -> None:
@@ -98,6 +111,84 @@ def _require_portable(value: Any, *, path: str) -> None:
     )
 
 
+def _validate_top_level_keys(data: Mapping[str, Any]) -> None:
+    unknown = sorted(set(data) - _TOP_LEVEL_KEYS)
+    if unknown:
+        raise validation_error(
+            f"config contains unknown top-level key(s): {', '.join(unknown)}",
+            unknown_keys=unknown,
+            known_keys=sorted(_TOP_LEVEL_KEYS),
+        )
+
+
+def _validate_assurance_entry(assurance: Any, *, path: str) -> None:
+    if not isinstance(assurance, Mapping):
+        raise validation_error(
+            f"config value at {path} must be a JSON object, got {type(assurance).__name__}", path=path
+        )
+    unknown = sorted(set(assurance) - _ASSURANCE_ENTRY_KEYS)
+    if unknown:
+        raise validation_error(
+            f"config value at {path} has unknown key(s): {', '.join(unknown)}",
+            path=path,
+            unknown_keys=unknown,
+        )
+    if "verdict" in assurance and assurance["verdict"] not in ASSURANCE_VERDICTS:
+        raise validation_error(
+            f"config value at {path}.verdict is not a valid assurance verdict: {assurance['verdict']!r}",
+            path=f"{path}.verdict",
+            verdict=assurance["verdict"],
+        )
+
+
+def _validate_attempts(attempts: Any) -> None:
+    """#17 (re-scoped): reject structurally malformed `attempts` shapes at
+    config load time -- a non-mapping `attempts` value, a non-list
+    per-work attempts value, a non-mapping attempt entry, an unknown key
+    inside an entry, or an invalid `outcome`/`assurance.verdict` value. An
+    *absent* `attempts` key, or a planned Work with no entry at all, is the
+    valid fully-incremental case (`SCN-007`'s pending default) and MUST NOT
+    be rejected -- see the M1-delivery-ledger #17 re-scope annotation."""
+    if attempts is None:
+        return
+    if not isinstance(attempts, Mapping):
+        raise validation_error(
+            f"config 'attempts' must be a JSON object keyed by work_id, got {type(attempts).__name__}",
+            path="<config>.attempts",
+        )
+    for work_id, work_attempts in attempts.items():
+        path = f"<config>.attempts.{work_id}"
+        if not isinstance(work_attempts, list):
+            raise validation_error(
+                f"config value at {path} must be a JSON array of attempt entries, "
+                f"got {type(work_attempts).__name__}",
+                path=path,
+            )
+        for index, entry in enumerate(work_attempts):
+            entry_path = f"{path}[{index}]"
+            if not isinstance(entry, Mapping):
+                raise validation_error(
+                    f"config value at {entry_path} must be a JSON object, got {type(entry).__name__}",
+                    path=entry_path,
+                )
+            unknown = sorted(set(entry) - _ATTEMPT_ENTRY_KEYS)
+            if unknown:
+                raise validation_error(
+                    f"config value at {entry_path} has unknown key(s): {', '.join(unknown)}",
+                    path=entry_path,
+                    unknown_keys=unknown,
+                )
+            if "outcome" in entry and entry["outcome"] not in EXEC_OUTCOMES:
+                raise validation_error(
+                    f"config value at {entry_path}.outcome is not a valid execution outcome: "
+                    f"{entry['outcome']!r}",
+                    path=f"{entry_path}.outcome",
+                    outcome=entry["outcome"],
+                )
+            if entry.get("assurance") is not None:
+                _validate_assurance_entry(entry["assurance"], path=f"{entry_path}.assurance")
+
+
 def load_config(path: str) -> Mapping[str, Any]:
     text = Path(path).read_text(encoding="utf-8")
     try:
@@ -107,6 +198,8 @@ def load_config(path: str) -> Mapping[str, Any]:
     if not isinstance(data, Mapping):
         raise validation_error(f"config file must contain a JSON object: {path}", path=path)
     _require_portable(data, path="<config>")
+    _validate_top_level_keys(data)
+    _validate_attempts(data.get("attempts"))
     return data
 
 
