@@ -147,6 +147,43 @@ class JSONLJournalFileShapeTest(unittest.TestCase):
         self.assertEqual(len(lines), 3)
         self.assertEqual([json.loads(line)["seq"] for line in lines], [1, 2, 3])
 
+    # ------------------------------------------------------------------
+    # #18 / amended PORT-JOURNAL durable-journal-recovery clause
+    # (docs/contracts/ports/journal-port.md "Durable-journal recovery"):
+    # torn-tail tolerance requires >=1 valid record preceding the
+    # unparseable final line; a file with zero valid records at all is not
+    # a journal.
+    # ------------------------------------------------------------------
+
+    def test_zero_valid_records_file_raises_err_validation(self) -> None:
+        drid = "dr-jsonl-garbage"
+        path = self.directory / f"{drid}.jsonl"
+        path.write_text("hello this is not json at all, just plain text\n", encoding="utf-8")
+
+        reopened = JSONLJournal(self.directory)
+        with self.assertRaises(CoreError) as ctx:
+            reopened.history(delivery_run_id=drid)
+        self.assertEqual(ctx.exception.error["error"], "ERR-VALIDATION")
+
+    def test_torn_final_line_with_no_preceding_valid_record_raises_err_validation(self) -> None:
+        # A torn-looking final line with *zero* preceding good records is
+        # indistinguishable from plain garbage -- the amended clause
+        # requires a valid prefix before tolerating it as heal-while-use.
+        drid = "dr-jsonl-torn-no-prefix"
+        path = self.directory / f"{drid}.jsonl"
+        path.write_text('{"seq":1,"kind":"fact","id":"FACT-BOGUS","data":{"trunca', encoding="utf-8")
+
+        reopened = JSONLJournal(self.directory)
+        with self.assertRaises(CoreError) as ctx:
+            reopened.history(delivery_run_id=drid)
+        self.assertEqual(ctx.exception.error["error"], "ERR-VALIDATION")
+
+    def test_nonexistent_journal_file_is_not_the_zero_records_case(self) -> None:
+        # A path that simply doesn't exist yet (a fresh run's first
+        # dispatch) must still mean "no journal yet", not ERR-VALIDATION.
+        drid = "dr-jsonl-brand-new"
+        self.assertEqual(self.journal.history(delivery_run_id=drid), ())
+
     def test_malformed_non_final_line_raises_err_validation(self) -> None:
         drid = "dr-jsonl-corrupt-middle"
         self.journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"))

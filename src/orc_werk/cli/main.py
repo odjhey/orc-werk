@@ -22,14 +22,23 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.adapters.memory.work_graph import MemoryWorkGraph
 from orc_werk.app.orchestrator import Orchestrator, is_pending
 from orc_werk.cli.config import build_run_config, build_scripted_adapters, load_config
-from orc_werk.core.errors import CoreError
+from orc_werk.core.effects import FX_START_EXECUTION
+from orc_werk.core.errors import CoreError, not_found_error
+from orc_werk.core.facts import FACT_INTENT_SUBMITTED
 from orc_werk.core.state import STATE_ACCEPTED, STATE_ASSURING, STATE_BLOCKED, STATE_EXECUTING, WorkProjection
+
+# core/policy.py's `_block_reason` returns this literal with no exported
+# constant (CLAUDE.md #7/#8: core stays minimal, this string is not part of
+# any canonical registry) -- duplicated here, CLI-presentation-only, to key
+# the #16 root-cause suffix off the same block reason `status`/`dispatch`
+# already print verbatim.
+BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED = "retry-budget-exhausted"
 
 DEFAULT_JOURNAL_DIR = ".orc"
 
@@ -54,7 +63,38 @@ def _awaiting_label(wp: WorkProjection) -> str:
     return "unknown"
 
 
-def _work_line(work_id: str, wp: WorkProjection) -> str:
+def _root_cause_for_work(history: Sequence[Mapping[str, Any]], work_id: str) -> Optional[str]:
+    """#16: read this Work's journaled `FX-START-EXECUTION` effect records
+    for a dispatch-time canonical error (`dispatch_result.error`) and
+    return the most recent one, or `None` if every attempt started
+    cleanly. `history` is `seq`-ordered ascending, so the last matching
+    record encountered is the most recent -- CLI presentation only, reads
+    the same journaled effect records `history` already exposes
+    (`docs/delivery/M1-delivery-ledger.md` #16, no contract change)."""
+    latest_error: Optional[str] = None
+    for record in history:
+        if record.get("kind") != "effect" or record.get("id") != FX_START_EXECUTION:
+            continue
+        data = record.get("data", {})
+        if data.get("work_id") != work_id:
+            continue
+        dispatch_result = data.get("dispatch_result")
+        if isinstance(dispatch_result, Mapping) and "error" in dispatch_result:
+            latest_error = dispatch_result["error"]
+    return latest_error
+
+
+def _intent_text(history: Sequence[Mapping[str, Any]]) -> Optional[str]:
+    """#23: the submitted intent text (`FACT-INTENT-SUBMITTED.data.text`),
+    not the run/intent id -- the run id is already shown separately under
+    `run:`."""
+    for record in history:
+        if record.get("kind") == "fact" and record.get("id") == FACT_INTENT_SUBMITTED:
+            return record.get("data", {}).get("text")
+    return None
+
+
+def _work_line(work_id: str, wp: WorkProjection, history: Sequence[Mapping[str, Any]]) -> str:
     fingerprint = wp.current_candidate_fingerprint() or "-"
     line = (
         f"work {work_id}: state={wp.state} attempts={wp.attempt_number} "
@@ -62,6 +102,15 @@ def _work_line(work_id: str, wp: WorkProjection) -> str:
     )
     if wp.blocked_reason:
         line += f" blocked_reason={wp.blocked_reason}"
+        if wp.blocked_reason == BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED:
+            # #16: a statically-doomed run burns the whole retry budget and
+            # reports this same generic reason as an organically flaky one
+            # -- surface the underlying cause from the journaled effect
+            # records alongside it. Mixed causes across attempts: show the
+            # most recent (`_root_cause_for_work`).
+            root_cause = _root_cause_for_work(history, work_id)
+            if root_cause:
+                line += f" (root_cause={root_cause})"
     if is_pending(wp):
         # SCN-007: legible per-work pending presentation -- which attempt,
         # and awaiting an execution settlement or an assurance verdict.
@@ -164,6 +213,25 @@ def _resolve_journal(target: str) -> tuple[Path, str]:
     return Path(DEFAULT_JOURNAL_DIR), target
 
 
+def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
+    """#18 CLI fix: `status`/`history` must fail closed with canonical
+    `ERR-NOT-FOUND` naming the run id when the resolved journal file does
+    not exist on disk, instead of the old fail-open "(no work recorded
+    yet)" exit 0. Checked *before* `JSONLJournal` is constructed (its
+    `__init__` unconditionally `mkdir`s the journal directory) so a
+    read-only command against an unknown run id never creates a stray
+    `.orc/` directory as a side effect."""
+    path = directory / f"{run_id}.jsonl"
+    if not path.exists():
+        raise not_found_error(
+            f"no journal found for run id: {run_id}",
+            delivery_run_id=run_id,
+            path=str(path),
+            target=target,
+        )
+    return path
+
+
 def _print_error(error: dict) -> None:
     print(json.dumps(error, sort_keys=True), file=sys.stderr)
 
@@ -173,10 +241,16 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     run_id = args.run_id or config.get("run_id") or _derive_run_id(args.intent)
     journal_dir = Path(args.journal) if args.journal else Path(DEFAULT_JOURNAL_DIR)
 
-    journal = JSONLJournal(journal_dir)
+    # #17 comment fix: finish every config-derived validation
+    # (`build_scripted_adapters`/`build_run_config`, e.g. BUG-2's
+    # max_attempts check) *before* constructing `JSONLJournal`, whose
+    # `__init__` `mkdir`s the journal directory as a side effect -- a
+    # rejected config must never leave a stray empty `.orc/` behind.
     work_graph = MemoryWorkGraph()
     execution, candidate, assurance = build_scripted_adapters(config, delivery_run_id=run_id)
     run_config = build_run_config(config, max_attempts_override=args.max_attempts)
+
+    journal = JSONLJournal(journal_dir)
 
     orchestrator = Orchestrator(
         delivery_run_id=run_id,
@@ -190,11 +264,12 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     plan = config.get("plan")
     orchestrator.bootstrap(intent_id=run_id, text=args.intent, plan=plan)
     projection = orchestrator.run()
+    history = journal.history(delivery_run_id=run_id)
 
     print(f"run: {run_id}")
     print(f"journal: {journal_dir / (run_id + '.jsonl')}")
     for work_id in sorted(projection.works):
-        print(_work_line(work_id, projection.works[work_id]))
+        print(_work_line(work_id, projection.works[work_id], history))
     any_blocked, any_non_accepted = _summarize_works(projection)
     exit_code = _exit_code_for(any_blocked, any_non_accepted)
     if exit_code == EXIT_PENDING:
@@ -208,18 +283,21 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     directory, run_id = _resolve_journal(args.target)
+    _require_journal_file(directory, run_id, target=args.target)
     journal = JSONLJournal(directory)
+    history = journal.history(delivery_run_id=run_id)
     projection = journal.load_projection(delivery_run_id=run_id)
 
     print(f"run: {run_id}")
-    if projection.intent_id:
-        print(f"intent: {projection.intent_id}")
+    intent_text = _intent_text(history)
+    if intent_text is not None:
+        print(f"intent: {intent_text}")
     if not projection.works:
         print("(no work recorded yet)")
         return 0
 
     for work_id in sorted(projection.works):
-        print(_work_line(work_id, projection.works[work_id]))
+        print(_work_line(work_id, projection.works[work_id], history))
     any_blocked, any_non_accepted = _summarize_works(projection)
     exit_code = _exit_code_for(any_blocked, any_non_accepted)
     if exit_code == EXIT_PENDING:
@@ -237,6 +315,7 @@ def _compact(data: object) -> str:
 
 def cmd_history(args: argparse.Namespace) -> int:
     directory, run_id = _resolve_journal(args.target)
+    _require_journal_file(directory, run_id, target=args.target)
     journal = JSONLJournal(directory)
     for record in journal.history(delivery_run_id=run_id):
         line = f"[{record['seq']:04d}] {record['kind']:8s} {record['id']:28s} {_compact(record['data'])}"
