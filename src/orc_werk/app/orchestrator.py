@@ -657,8 +657,18 @@ class Orchestrator:
                 # normal retry-budget/BLOCK machinery takes over next pass
                 # (see the PR body's "Ambiguities encountered").
                 attempt_number = effect.data["attempt_number"]
+                # #16 item 3: this prefix used to say "capability-failure"
+                # for every dispatch-gate failure regardless of actual
+                # cause (misleading when grepping history for a genuine
+                # capability mismatch) -- renamed cause-neutral.
+                # STATE-DELIVERY item 6 only requires "a unique synthetic
+                # execution reference", pinning no literal text (grepped
+                # docs/ to confirm before renaming); the reference is
+                # opaque and nothing parses its contents, so old journals
+                # carrying the previous "exec-capability-failure-..." form
+                # still replay identically.
                 synthetic_execution_id = (
-                    f"exec-capability-failure-{delivery_run_id}-{work_id}-{attempt_number}"
+                    f"exec-dispatch-failure-{delivery_run_id}-{work_id}-{attempt_number}"
                 )
                 self.journal.append_fact(
                     make_fact(

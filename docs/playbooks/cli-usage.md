@@ -56,10 +56,8 @@ Update this table when found; remove rows when the fix merges. "Workaround" is w
 
 | Issue | Symptom | Workaround | Status |
 |---|---|---|---|
-| [#16](https://github.com/odjhey/orc-werk/issues/16) | Statically-doomed runs (capability mismatch, missing `attempts` entry) report generic `blocked_reason=retry-budget-exhausted`; synthetic exec ids always say `capability-failure` | Read `history` → effect `dispatch_result.error` for the real cause | Open (M1a) |
-| [#17](https://github.com/odjhey/orc-werk/issues/17) | Unknown/typo'd config keys silently ignored; planned work with no `attempts` entry fails opaquely at dispatch | Double-check config keys by hand; ensure every planned `work_id` has attempts | Open (M1a) |
-| [#18](https://github.com/odjhey/orc-werk/issues/18) | Pointing `status` at a non-journal file prints "(no work recorded yet)", exit 0 | Verify the path you pass is the intended `.jsonl` | Open (M1a, docs amendment) |
-| [#23](https://github.com/odjhey/orc-werk/issues/23) | `status` labels the run id as `intent:` instead of the submitted intent text | Read `history` seq 1 (`FACT-INTENT-SUBMITTED.data.text`) | Open (M1a) |
+
+No open rows as of `TASK-M1-003` (#16, #17, #18, #23 all closed by that task's PR).
 
 ## Evolution rules
 

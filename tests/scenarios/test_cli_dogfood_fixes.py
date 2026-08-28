@@ -241,12 +241,19 @@ class Friction5MissingJournalPathTest(unittest.TestCase):
             error = json.loads(result.stderr)
             self.assertEqual(error["error"], "ERR-NOT-FOUND")
 
-    def test_bare_run_id_unaffected(self) -> None:
+    def test_bare_unknown_run_id_now_fails_closed(self) -> None:
+        # TASK-M1-003/#18: a bare run id with no journal on disk used to
+        # silently succeed ("(no work recorded yet)", exit 0) and create a
+        # stray `.orc/` directory as a side effect -- it is now canonical
+        # `ERR-NOT-FOUND` naming the run id, with no directory created.
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             result = _run_cli(tmp_dir, "status", "no-such-run-id")
-            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-            self.assertIn("(no work recorded yet)", result.stdout)
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            error = json.loads(result.stderr)
+            self.assertEqual(error["error"], "ERR-NOT-FOUND")
+            self.assertIn("no-such-run-id", error["message"])
+            self.assertFalse((tmp_dir / ".orc").exists())
 
     def test_directory_target_unaffected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
