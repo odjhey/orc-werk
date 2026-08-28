@@ -12,7 +12,7 @@ from orc_werk.core.effects import FX_START_EXECUTION, make_effect
 from orc_werk.core.errors import ERR_VALIDATION, CoreError
 from orc_werk.core.facts import FACT_CANDIDATE_OBSERVED, make_fact
 from orc_werk.core.models import Candidate
-from orc_werk.core.portable import is_portable
+from orc_werk.core.portable import is_portable, to_portable
 from orc_werk.core.serialization import (
     DECISION_RESERVED_DATA_KEYS,
     EFFECT_RESERVED_DATA_KEYS,
@@ -153,6 +153,31 @@ class ReservedEnvelopeKeyGuardTest(unittest.TestCase):
 
 class PortabilityTest(unittest.TestCase):
     """No Python class names/pickle/exception objects anywhere in canonical output."""
+
+    def test_non_finite_floats_are_rejected_as_non_portable(self) -> None:
+        # P5 review F1: nan/inf/-inf have no JSON literal (RFC 8259) -- a Go
+        # reader of the canonical journal errors on them, so they are not
+        # portable and must be rejected at the source.
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(bad=repr(bad)):
+                self.assertFalse(is_portable(bad))
+                self.assertFalse(is_portable({"metric": [bad]}))
+                with self.assertRaises(TypeError):
+                    to_portable({"metric": bad})
+                # a Fact carrying a non-finite float in its data is rejected
+                # at construction.
+                with self.assertRaises(ValueError):
+                    make_fact(
+                        FACT_CANDIDATE_OBSERVED,
+                        delivery_run_id=DRID,
+                        work_id="w1",
+                        candidate_id="c1",
+                        fingerprint="fp1",
+                        execution_id="e1",
+                        metric=bad,
+                    )
+        # finite floats remain portable.
+        self.assertTrue(is_portable({"metric": 1.5}))
 
     def test_candidate_to_dict_raises_on_non_portable_subject_identity(self) -> None:
         # P2 review nit: Candidate.to_dict() must not silently emit a

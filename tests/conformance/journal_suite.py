@@ -21,6 +21,7 @@ from typing import Callable
 
 from orc_werk.core.decisions import DEC_DISPATCH, make_decision
 from orc_werk.core.effects import FX_START_EXECUTION, make_effect
+from orc_werk.core.errors import CoreError
 from orc_werk.core.facts import (
     FACT_CANDIDATE_OBSERVED,
     FACT_EXEC_SETTLED,
@@ -119,22 +120,28 @@ class JournalConformanceSuite(unittest.TestCase):
         drid = "dr-conf-immutable-history"
         self.journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"))
         history = self.journal.history(delivery_run_id=drid)
-        tampered = dict(history[0])
-        tampered["data"] = {"tampered": True}
-        tampered["seq"] = 999
+        # Mutate the RETURNED record itself, in place -- top-level and a
+        # nested field -- so this actually proves defensive copying rather
+        # than copy-then-mutate.
+        history[0]["seq"] = 999
+        history[0]["data"]["injected"] = True
+        history[0]["extensions"]["injected-ext/v1"] = {"evil": True}
 
         history_again = self.journal.history(delivery_run_id=drid)
         self.assertEqual(history_again[0]["seq"], 1)
-        self.assertNotEqual(history_again[0]["data"], {"tampered": True})
+        self.assertNotIn("injected", history_again[0]["data"])
+        self.assertNotIn("injected-ext/v1", history_again[0]["extensions"])
 
     def test_mutating_an_append_return_value_does_not_affect_the_journal(self) -> None:
         drid = "dr-conf-immutable-append"
         returned = self.journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"))
-        tampered = dict(returned)
-        tampered["data"] = {"tampered": True}
+        # Mutate the RETURNED envelope itself, in place, including a nested field.
+        returned["seq"] = 999
+        returned["data"]["injected"] = True
 
         history = self.journal.history(delivery_run_id=drid)
-        self.assertNotEqual(history[0]["data"], {"tampered": True})
+        self.assertEqual(history[0]["seq"], 1)
+        self.assertNotIn("injected", history[0]["data"])
 
     def test_earlier_records_unchanged_after_later_appends(self) -> None:
         drid = "dr-conf-append-only"
@@ -251,6 +258,27 @@ class JournalConformanceSuite(unittest.TestCase):
         reopened = self.reopen()
         reloaded_history = reopened.history(delivery_run_id=drid)
         self.assertEqual(reloaded_history[0]["extensions"], extensions)
+
+    # ------------------------------------------------------------------
+    # Portability: non-finite floats must never persist (P5 review F1).
+    # ------------------------------------------------------------------
+
+    def test_record_containing_non_finite_float_is_rejected(self) -> None:
+        # nan/inf/-inf have no JSON literal, so a persisted record carrying
+        # one would poison the canonical journal for non-Python readers.
+        # `Fact.__post_init__` already rejects them at construction; smuggle
+        # one past that guard (frozen-dataclass bypass) to prove the
+        # journal's own serialization path is defense in depth, not just a
+        # pass-through.
+        drid = "dr-conf-nan"
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(bad=repr(bad)):
+                fact = make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1")
+                object.__setattr__(fact, "data", {**fact.data, "metric": bad})
+                with self.assertRaises((TypeError, CoreError)):
+                    self.journal.append_fact(fact)
+        # nothing was persisted by the rejected appends.
+        self.assertEqual(len(self.journal.history(delivery_run_id=drid)), 0)
 
 
 __all__ = ["JournalConformanceSuite"]

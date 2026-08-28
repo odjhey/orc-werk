@@ -11,7 +11,7 @@ from pathlib import Path
 
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.core.errors import CoreError
-from orc_werk.core.facts import FACT_WORK_CREATED, FACT_WORK_READY, make_fact
+from orc_werk.core.facts import FACT_WORK_CLAIMED, FACT_WORK_CREATED, FACT_WORK_READY, make_fact
 from orc_werk.core.reducer import reduce
 from orc_werk.ports.journal import JournalPort
 
@@ -110,6 +110,63 @@ class JSONLJournalFileShapeTest(unittest.TestCase):
                 make_fact(FACT_WORK_CREATED, delivery_run_id="../escape", work_id="w1")
             )
         self.assertEqual(ctx.exception.error["error"], "ERR-VALIDATION")
+
+    # ------------------------------------------------------------------
+    # Torn-tail recovery rule (P5 review F2, watchtower ruling).
+    # ------------------------------------------------------------------
+
+    def test_partial_trailing_line_is_ignored_on_reopen_and_next_append_continues_seq(self) -> None:
+        drid = "dr-jsonl-torn-tail"
+        facts = [
+            make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"),
+            make_fact(FACT_WORK_READY, delivery_run_id=drid, work_id="w1"),
+        ]
+        for fact in facts:
+            self.journal.append_fact(fact)
+        path = self.directory / f"{drid}.jsonl"
+        # Simulate a torn write: a flush interrupted mid-record leaves a
+        # partial (non-JSON, newline-less) final line.
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write('{"schema_version": 1, "seq": 3, "delivery_')
+
+        reopened = JSONLJournal(self.directory)
+        # Reopen succeeds with N-1 records (the torn tail is ignored) and
+        # the projection replays from the good prefix.
+        history = reopened.history(delivery_run_id=drid)
+        self.assertEqual([r["seq"] for r in history], [1, 2])
+        projection = reopened.load_projection(delivery_run_id=drid)
+        self.assertEqual(projection.to_dict(), reduce(facts, delivery_run_id=drid).to_dict())
+
+        # The next append gets the right seq (3, not 4) and heals the file
+        # back to one-valid-JSON-object-per-line form.
+        third = reopened.append_fact(
+            make_fact(FACT_WORK_CLAIMED, delivery_run_id=drid, work_id="w1", claim_ref="claim-1")
+        )
+        self.assertEqual(third["seq"], 3)
+        lines = path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertEqual([json.loads(line)["seq"] for line in lines], [1, 2, 3])
+
+    def test_malformed_non_final_line_raises_err_validation(self) -> None:
+        drid = "dr-jsonl-corrupt-middle"
+        self.journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"))
+        self.journal.append_fact(make_fact(FACT_WORK_READY, delivery_run_id=drid, work_id="w1"))
+        path = self.directory / f"{drid}.jsonl"
+        # Corrupt the FIRST line (non-final): real corruption, not a torn
+        # write -- must fail closed.
+        lines = path.read_text(encoding="utf-8").splitlines()
+        lines[0] = "NOT-JSON-CORRUPTION"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        reopened = JSONLJournal(self.directory)
+        with self.assertRaises(CoreError) as ctx:
+            reopened.history(delivery_run_id=drid)
+        self.assertEqual(ctx.exception.error["error"], "ERR-VALIDATION")
+        with self.assertRaises(CoreError) as ctx2:
+            reopened.append_fact(
+                make_fact(FACT_WORK_CLAIMED, delivery_run_id=drid, work_id="w1", claim_ref="c")
+            )
+        self.assertEqual(ctx2.exception.error["error"], "ERR-VALIDATION")
 
 
 if __name__ == "__main__":
