@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.S)
 ID_LINE_RE = re.compile(r"^id:\s*([^\s#]+)\s*$", re.M)
-STABLE_PREFIXES = "P|INV|ENT|PORT|FACT|DEC|FX|CAP|ERR|SCN|CONF|ADR|M|TASK|ARCH"
+STABLE_PREFIXES = "P|INV|ENT|PORT|FACT|DEC|FX|CAP|ERR|SCN|CONF|ADR|M|TASK|ARCH|EXT"
 REF_RE = re.compile(rf"`((?:{STABLE_PREFIXES})-[A-Z0-9-]+)`")
 
 
@@ -47,7 +47,7 @@ def main() -> int:
         text = path.read_text(encoding="utf-8")
         declared_inline.update(declaration_re.findall(text))
         # Registry-style tables intentionally declare stable IDs in code formatting.
-        if any(part in path.parts for part in ("contracts", "protocol", "conformance")):
+        if any(part in path.parts for part in ("contracts", "protocol", "conformance", "extensions")):
             declared_inline.update(table_id_re.findall(text))
 
     known = set(ids) | declared_inline
