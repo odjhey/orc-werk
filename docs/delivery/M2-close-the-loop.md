@@ -130,6 +130,23 @@ Sequenced before Phase M2b and Phase M2c below: both benefit from — and
 
 ## Phase M2b — Multi-work real DAGs (practice run)
 
+> **Status: EXERCISED (2026-08-29).** Run `task-m2-003-practice` (ledger:
+> `.orc/task-m2-003-practice/`) drove a real diamond DAG — `alpha` ∥
+> `beta` → `gamma` fan-in — through the `acp`/Pi execution adapter with
+> per-work briefs (issue #82's `briefs`-as-prompts fix), git candidates,
+> and the Beads mirror live-projecting every transition (including
+> `closed --reason accepted` on kernel acceptance and both dependency
+> edges) into a sandbox `bd` database. Three real Pi sessions; two
+> verification seats; dependency unlock driven by recorded acceptance;
+> all three works ACCEPTED, exit `0`; wall clock ~4m21s. The dependency
+> tree report (issue #41) rendered the real journal-derived topology.
+> Harvest recorded per `DELIVERY-STANCE`: per-work prompt gap fixed
+> pre-run (issue #82 → its fix PR), shared-worktree candidate-scoping
+> evidence filed on issue #82 (parallel works settled against one
+> combined-HEAD fingerprint; ruling trigger named there), run crew-report
+> carries the full summary. The practice branch is intentionally
+> unmerged — the ledger record, not the artifact, is the deliverable.
+
 **Reframed (operator ruling, M2 reshape): this phase is a practice run,
 not a build.** M1b proved one real Work through the acp adapter. M2b now
 drives one real, dependent multi-work plan through it with real agents in
