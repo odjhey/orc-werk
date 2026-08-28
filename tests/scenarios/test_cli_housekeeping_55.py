@@ -66,6 +66,71 @@ def _accepted_config(run_id: str, **overrides) -> dict:
     return config
 
 
+class ExplicitJournalFileResolutionTest(unittest.TestCase):
+    """Issue #69: explicit journal.jsonl paths use the per-run layout."""
+
+    def _dispatch(self, tmp_dir: Path, run_id: str) -> Path:
+        journal_dir = tmp_dir / ".orc"
+        config_path = tmp_dir / "cfg.json"
+        config_path.write_text(json.dumps(_accepted_config(run_id)), encoding="utf-8")
+        result = _run_cli(
+            tmp_dir, "dispatch", "explicit journal path fixture", "--config", str(config_path),
+            "--journal", str(journal_dir),
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        return layout.journal_path(journal_dir, run_id)
+
+    def test_status_accepts_per_run_journal_file_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_path = self._dispatch(tmp_dir, "status-file-run")
+
+            result = _run_cli(tmp_dir, "status", str(journal_path))
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("run: status-file-run", result.stdout)
+            self.assertIn("state=ACCEPTED", result.stdout)
+
+    def test_status_accepts_bare_journal_file_from_inside_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_path = self._dispatch(tmp_dir, "status-bare-file-run")
+
+            result = _run_cli(journal_path.parent, "status", "journal.jsonl")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("run: status-bare-file-run", result.stdout)
+            self.assertIn("state=ACCEPTED", result.stdout)
+
+    def test_history_accepts_per_run_journal_file_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_path = self._dispatch(tmp_dir, "history-file-run")
+
+            result = _run_cli(tmp_dir, "history", str(journal_path))
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("FACT-INTENT-SUBMITTED", result.stdout)
+
+    def test_flat_legacy_journal_dot_jsonl_uses_reserved_new_layout_meaning(self) -> None:
+        """The canonical basename wins the otherwise ambiguous collision.
+
+        A flat legacy run literally named ``journal`` is therefore read as
+        a per-run journal whose run id is the containing directory name.
+        Its envelope mismatch is reported rather than silently guessing.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            source = self._dispatch(tmp_dir, "journal")
+            flat_dir = tmp_dir / "flat-journal-dir"
+            flat_dir.mkdir()
+            flat_path = flat_dir / "journal.jsonl"
+            flat_path.write_bytes(source.read_bytes())
+            shutil.rmtree(source.parent)
+
+            result = _run_cli(tmp_dir, "status", str(flat_path))
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            self.assertIn("ERR-VALIDATION", result.stderr)
+            self.assertIn('"expected": "flat-journal-dir"', result.stderr)
+
+
 class LegacyLayoutReadFallbackTest(unittest.TestCase):
     """H1: writes always land on the new per-run-dir layout, but every
     read path (bare `orc` index, `status`/`history` by bare run id,
