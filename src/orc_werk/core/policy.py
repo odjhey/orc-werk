@@ -51,6 +51,10 @@ def _block_reason(projection: WorkProjection, *, max_attempts: int) -> str:
     fact_id = trigger.get("id")
     if fact_id == "FACT-ASSURE-SETTLED" and trigger.get("data", {}).get("verdict") == "inconclusive":
         return "assurance-inconclusive"
+    if fact_id == "FACT-ATTEMPT-ABANDONED":
+        # STATE-DELIVERY item 9 (TASK-M3B-001): DEC-ABANDON-ATTEMPT
+        # exhausted the retry budget on resolution.
+        return "attempt-abandoned"
     return "retry-budget-exhausted"
 
 

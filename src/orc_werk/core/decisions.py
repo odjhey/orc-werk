@@ -22,19 +22,39 @@ DEC_RETRY = "DEC-RETRY"
 DEC_REQUEST_ASSURANCE = "DEC-REQUEST-ASSURANCE"
 DEC_ACCEPT = "DEC-ACCEPT"
 DEC_BLOCK = "DEC-BLOCK"
+# TASK-M3B-001 (issues #76/#95): the one Decision an *operator* attributes
+# rather than v0 policy -- see PROTOCOL-DECISIONS and STATE-DELIVERY
+# mechanical fact sequencing item 9. Reachable in v0/M0, but never produced
+# by `orc_werk.core.policy.decide`.
+DEC_ABANDON_ATTEMPT = "DEC-ABANDON-ATTEMPT"
 
 # Reserved: declared per PROTOCOL-DECISIONS, unreachable in v0/M0 (STATE-DELIVERY).
 DEC_ESCALATE = "DEC-ESCALATE"
 DEC_CANCEL = "DEC-CANCEL"
 
 ALL_DECISION_IDS = frozenset(
-    {DEC_DISPATCH, DEC_RETRY, DEC_REQUEST_ASSURANCE, DEC_ACCEPT, DEC_BLOCK, DEC_ESCALATE, DEC_CANCEL}
+    {
+        DEC_DISPATCH,
+        DEC_RETRY,
+        DEC_REQUEST_ASSURANCE,
+        DEC_ACCEPT,
+        DEC_BLOCK,
+        DEC_ABANDON_ATTEMPT,
+        DEC_ESCALATE,
+        DEC_CANCEL,
+    }
 )
 
-# Producible by v0/M0 policy; excludes DEC-ESCALATE and DEC-CANCEL.
+# Producible by v0 policy (`decide`); excludes DEC-ESCALATE and DEC-CANCEL.
 PRODUCIBLE_DECISION_IDS = frozenset(
     {DEC_DISPATCH, DEC_RETRY, DEC_REQUEST_ASSURANCE, DEC_ACCEPT, DEC_BLOCK}
 )
+
+# Reachable in v0/M0 but recorded outside `decide()`, by the CLI operator
+# surface (`docs/playbooks/cli-usage.md`) via `Orchestrator.abandon_attempt`
+# -- never by v0 policy's deterministic lookup, and never by the ship/verify
+# agent observation path (`docs/playbooks/agent-cli-usage.md`).
+OPERATOR_DECISION_IDS = frozenset({DEC_ABANDON_ATTEMPT})
 
 # v0 policy attribution is a fixed, deterministic identity (no operator/LLM
 # judgment in M0 -- see docs/product/thesis.md / M-000 "out of scope: LLM

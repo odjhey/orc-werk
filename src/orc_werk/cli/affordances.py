@@ -9,12 +9,14 @@ dispatch`/`orc status` render from. A new transition in that state machine
 must force the affordance question here -- there must be no hand-scattered
 "next:" string anywhere else in this CLI.
 
-Per-state map (issue #43, second watchtower comment):
+Per-state map (issue #43, second watchtower comment; the `CANDIDATE-CONFLICT`
+row is `TASK-M3B-001`, `STATE-DELIVERY` mechanical fact sequencing item 9):
 
 | Work state                         | Affordance                                                              |
 |-------------------------------------|--------------------------------------------------------------------------|
 | PENDING @ EXECUTING (`is_pending`)  | record the execution outcome, then re-dispatch (exact command)          |
 | PENDING @ ASSURING  (`is_pending`)  | record the assurance verdict -- a different agent than the settlement recorder (playbook discipline), then re-dispatch |
+| CANDIDATE-CONFLICT @ EXECUTING (`has_candidate_conflict`) | operator-only: `orc dispatch --abandon-work <id> --abandon-reason "<why>"` (`TASK-M3B-001`) -- verdict inheritance could not resolve this re-observed candidate |
 | BLOCKED                             | `orc history <run>` root-cause pointer + retry-budget note              |
 | ACCEPTED                            | `orc report <run>` (+ `gh pr view <n>` when the candidate carries a `pr` field) |
 | READY                               | no affordance -- not actionable by an agent; the kernel dispatches it   |
@@ -43,7 +45,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from orc_werk.adapters.jsonl import layout
-from orc_werk.app.orchestrator import is_pending
+from orc_werk.app.orchestrator import has_candidate_conflict, is_pending
 from orc_werk.cli.journal_reading import BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED, _awaiting_label
 from orc_werk.core.decisions import DEC_BLOCK
 from orc_werk.core.state import (
@@ -148,6 +150,8 @@ def _work_group_key(work_id: str, wp: WorkProjection) -> Optional[str]:
     current state carries no affordance (`READY`: not actionable by an
     agent -- the kernel dispatches it, `STATE-DELIVERY` declares no agent
     action at `READY`)."""
+    if has_candidate_conflict(wp):
+        return "candidate-conflict"
     if is_pending(wp):
         if wp.state == STATE_EXECUTING:
             return "pending-execution"
@@ -195,7 +199,20 @@ def render_next_block(
     for key in order:
         work_ids = groups[key]
         ids_text = ", ".join(work_ids)
-        if key == "pending-execution":
+        if key == "candidate-conflict":
+            # TASK-M3B-001 (issues #76/#95): an operator-only power, never
+            # part of the ship/verify agent seat rotation this block's
+            # other entries implicitly invite -- named explicitly here
+            # rather than folded into the shared re-dispatch line below.
+            for work_id in work_ids:
+                lines.append(
+                    f"  - work {work_id} rests at a candidate-observation conflict "
+                    "verdict inheritance could not resolve (STATE-DELIVERY item 9): "
+                    "operator-only -- orc dispatch --run-id "
+                    f"{run_id} --journal {journal_dir} --abandon-work {work_id} "
+                    '--abandon-reason "<why>"'
+                )
+        elif key == "pending-execution":
             lines.append(f"  - record the execution outcome for work(s): {ids_text}")
             needs_redispatch = True
         elif key == "pending-assurance":

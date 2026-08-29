@@ -24,6 +24,9 @@ FACT_ASSURE_STARTED = "FACT-ASSURE-STARTED"
 FACT_ASSURE_SETTLED = "FACT-ASSURE-SETTLED"
 FACT_WORK_COMPLETED = "FACT-WORK-COMPLETED"
 FACT_WORK_BLOCKED = "FACT-WORK-BLOCKED"
+# TASK-M3B-001 (issues #76/#95): pairs with DEC-ABANDON-ATTEMPT
+# (STATE-DELIVERY mechanical fact sequencing item 9). Reachable in v0/M0.
+FACT_ATTEMPT_ABANDONED = "FACT-ATTEMPT-ABANDONED"
 
 # Reserved: declared per PROTOCOL-FACTS, unreachable in v0/M0 (STATE-DELIVERY).
 FACT_WORK_CANCELLED = "FACT-WORK-CANCELLED"
@@ -41,6 +44,7 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     FACT_ASSURE_SETTLED: ("assurance_id", "candidate_fingerprint", "verdict"),
     FACT_WORK_COMPLETED: ("work_id",),
     FACT_WORK_BLOCKED: ("work_id", "reason"),
+    FACT_ATTEMPT_ABANDONED: ("work_id", "reason"),
     FACT_WORK_CANCELLED: ("work_id",),
 }
 

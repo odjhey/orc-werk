@@ -47,6 +47,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+from orc_werk.core.decisions import DEC_ABANDON_ATTEMPT, make_decision
 from orc_werk.core.effects import (
     FX_BLOCK_WORK,
     FX_CLAIM_WORK,
@@ -58,10 +59,11 @@ from orc_werk.core.effects import (
     Effect,
     make_effect,
 )
-from orc_werk.core.errors import ERR_CONFLICT, CoreError
+from orc_werk.core.errors import ERR_CONFLICT, CoreError, not_found_error, validation_error
 from orc_werk.core.facts import (
     FACT_ASSURE_SETTLED,
     FACT_ASSURE_STARTED,
+    FACT_ATTEMPT_ABANDONED,
     FACT_CANDIDATE_OBSERVED,
     FACT_EXEC_SETTLED,
     FACT_EXEC_STARTED,
@@ -157,6 +159,16 @@ def is_pending(wp: WorkProjection) -> bool:
         current = wp.assurances[-1] if wp.assurances else None
         return current is not None and current["verdict"] is None
     return False
+
+
+def has_candidate_conflict(wp: WorkProjection) -> bool:
+    """`TASK-M3B-001`/`STATE-DELIVERY` item 9: true when `wp` rests at
+    `EXECUTING` with an unresolved candidate-observation conflict (a
+    re-observed candidate identity `SCN-009`'s verdict-inheritance rule
+    could not resolve) -- a second, distinct normal resting point,
+    disjoint from `is_pending`. Legal grounds for `Orchestrator.
+    abandon_attempt`, alongside `is_pending`'s `ASSURING` case."""
+    return wp.state == STATE_EXECUTING and wp.candidate_conflict is not None
 
 
 def _find_effect_record(
@@ -578,6 +590,78 @@ class Orchestrator:
         # "no progress possible" once nothing else can advance. No M0
         # golden scenario exercises this path (see PR body).
 
+    # -- operator surface: abandon (TASK-M3B-001, issues #76/#95) -----------
+
+    def _find_fact_record(
+        self, history: Sequence[Mapping[str, Any]], fact_id: str, *, work_id: str, **match: Any
+    ) -> Optional[Mapping[str, Any]]:
+        found: Optional[Mapping[str, Any]] = None
+        for record in history:
+            if record.get("kind") != KIND_FACT or record.get("id") != fact_id:
+                continue
+            data = record.get("data", {})
+            if data.get("work_id") != work_id:
+                continue
+            if any(data.get(key) != value for key, value in match.items()):
+                continue
+            found = record  # last match wins -- history is seq-ordered ascending.
+        return found
+
+    def abandon_attempt(self, *, work_id: str, reason: str, by: str) -> None:
+        """Operator-only recording surface (`docs/playbooks/cli-usage.md`,
+        never the ship/verify agent path): journals `DEC-ABANDON-ATTEMPT` +
+        `FACT-ATTEMPT-ABANDONED` for `work_id` (`STATE-DELIVERY` mechanical
+        fact sequencing item 9). Legal only when the Work currently rests
+        at an unresolved candidate-observation conflict
+        (`has_candidate_conflict`) or at `ASSURING` with its current
+        Assurance still unsettled (`is_pending`) -- anything else raises
+        `ERR-VALIDATION`, never silently no-ops. `reason`/`by` become the
+        Decision's `data`/`attribution` (`INV-011`/`INV-012`); the Fact
+        itself only carries `reason` (mirrors `FACT-WORK-BLOCKED`'s
+        shape -- `PROTOCOL-FACTS`)."""
+        projection = self.projection()
+        wp = projection.works.get(work_id)
+        if wp is None:
+            raise not_found_error(
+                f"no such work in run {self.delivery_run_id!r}: {work_id!r}",
+                work_id=work_id,
+                next_steps=[f"orc status {self.delivery_run_id}"],
+            )
+        history = self.journal.history(delivery_run_id=self.delivery_run_id)
+        if has_candidate_conflict(wp):
+            basis: tuple[Mapping[str, Any], ...] = (dict(wp.candidate_conflict["fact"]),)
+        elif wp.state == STATE_ASSURING and is_pending(wp):
+            started = self._find_fact_record(
+                history, FACT_ASSURE_STARTED, work_id=work_id, assurance_id=wp.current_assurance_id
+            )
+            basis = (dict(started),) if started is not None else ({"work_id": work_id},)
+        else:
+            raise validation_error(
+                f"FACT-ATTEMPT-ABANDONED illegal for work {work_id!r} in state {wp.state!r}: "
+                "no unresolved candidate-observation conflict and no unsettled current "
+                "assurance (STATE-DELIVERY item 9)",
+                work_id=work_id,
+                state=wp.state,
+                next_steps=[f"orc status {self.delivery_run_id}"],
+            )
+        decision = make_decision(
+            DEC_ABANDON_ATTEMPT,
+            delivery_run_id=self.delivery_run_id,
+            work_id=work_id,
+            attribution={"operator": by},
+            basis=list(basis),
+            data={"reason": reason},
+        )
+        self.journal.append_decision(decision)
+        self.journal.append_fact(
+            make_fact(
+                FACT_ATTEMPT_ABANDONED,
+                delivery_run_id=self.delivery_run_id,
+                work_id=work_id,
+                reason=reason,
+            )
+        )
+
     # -- phase 3: policy decisions --------------------------------------------
 
     def _advance_policy(self, projection: DeliveryProjection) -> bool:
@@ -752,5 +836,6 @@ __all__ = [
     "Orchestrator",
     "RunConfig",
     "default_single_work_plan",
+    "has_candidate_conflict",
     "is_pending",
 ]
