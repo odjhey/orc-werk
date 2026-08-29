@@ -1,7 +1,7 @@
 ---
 id: TASK-M4A-003
 type: task-card
-status: draft
+status: current
 authority: normative
 description: Document the bd-board-as-cockpit pattern (shared workspace + ORC_JOURNAL_DIR + project:/run: label slices), reference-first, no new orc read command.
 implements: []

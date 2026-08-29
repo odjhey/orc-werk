@@ -1,7 +1,7 @@
 ---
 id: TASK-M4A-002
 type: task-card
-status: draft
+status: current
 authority: normative
 description: project:<name> label on mirrored bd issues so the shared board slices by project.
 implements: []

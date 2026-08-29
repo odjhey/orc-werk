@@ -1,7 +1,7 @@
 ---
 id: TASK-M4B-002
 type: task-card
-status: draft
+status: current
 authority: normative
 description: An 'in flight' roll-up over one journal dir (all non-terminal/blocked works at a glance).
 implements: []

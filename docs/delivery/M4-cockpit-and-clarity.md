@@ -1,7 +1,7 @@
 ---
 id: M4-COCKPIT-AND-CLARITY
 type: milestone
-status: draft
+status: current
 authority: normative
 description: M4 — make orc usable across projects (a portfolio cockpit) and make the roles crisp for the humans and agents driving it by CLI; ergonomics and clarity, not new autonomy.
 ---
@@ -148,11 +148,15 @@ is exactly what you do":
   probes; findings ride the verdict entry's `extensions`; never
   self-assure.
 The `orc-ledger` skill stays the six-rule quickstart; these guides are the
-**depth** each role reaches for. Installable via `orc onboard` (or
-referenced by stable ID, reference-first) so an adopting project's agents
-inherit role clarity.
-**Scope honesty:** docs (new or restructured from existing dense ones);
-possibly one onboard step to install/point at them.
+**depth** each role reaches for. Per Ruling 4: PACKAGED in `src/orc_werk/`
+(canonical origin, like the skill) and surfaced via a new `orc guide
+watchtower|shipper|verify` command (the `orc config-schema` pattern) —
+reachable in any repo by any agent that can run a CLI, harness-agnostic, no
+dangling path. The skill/agents-block cites the runnable `orc guide <role>`
+command. The verify-seat guide is the net-new, highest-value piece.
+**Scope honesty:** the guide content is docs (distilled from the dense
+playbooks); the `orc guide` command is small new CLI code (reads a packaged
+doc and prints it, like config-schema).
 
 ## Sequencing
 
@@ -163,29 +167,35 @@ M4B-001 before deciding M4B-002). M4c can run in parallel with either — it
 is docs — but reads best authored after M4a so the guides reference the
 cockpit. The whole milestone is small and mostly composition-layer/docs.
 
-## Open questions / rulings for the operator
+## Rulings (operator, 2026-08-30)
 
-1. **Repo-default profile: location + discovery.** Repo root (`.orc-config.json`?),
-   under `.orc/` (`.orc/profile.json`?), or an `ORC_PROFILE` env pointer?
-   This is the first config-file-discovery surface in a CLI that
-   consciously avoided one — the operator should bless the shape.
-2. **`--config` vs profile: deep-merge or replace?** Recommendation:
-   deep-merge (profile provides defaults, `--config` overrides keys), so a
-   repo default + a per-dispatch tweak compose. Confirm.
-3. **Portfolio view: convention+docs only, or a thin `orc` convenience?**
-   Recommendation: convention+docs (raw `bd list`), reference-first, no new
-   orc read command — respects the write-only boundary. A convenience that
-   shells to `bd` read is possible but tips toward the dormant multi-repo
-   registry; keep out unless demanded.
-4. **Role guides: packaged/installed (like the skill) or reference-first
-   citations?** Recommendation: authored as repo docs with stable IDs; the
-   onboard agents-block cites them by ID (adopters read them in the orc-werk
-   docs/package), keeping one canonical origin — unless you want them
-   copied into adopting repos like the skill.
-5. **`project:<name>` source.** Where does the project name come from — the
-   `mirror.project` config key (explicit), the repo dir name (implicit), or
-   the profile? Recommendation: explicit `mirror.project` key, set once in
-   the repo-default profile (M4A-001) — ties the two cards together.
+1. **Repo-default profile location: `.orc/profile.json`** — RULED. Plain
+   JSON, same schema as the dispatch config, discovered by the CLI layer
+   only (the first config-file-discovery surface; kept minimal, no
+   framework).
+2. **`--config` deep-merges over the profile** — RULED. Profile provides
+   defaults; `--config` overrides keys; they compose. Precedence:
+   `--config` (merged) > per-run persisted config > `.orc/profile.json` >
+   `{}`, with the `max_attempts` sub-precedence intact beneath.
+3. **Portfolio view: convention + docs only** — RULED. Raw `bd list --label
+   project:<name> --status all`, reference-first; no new orc read command
+   (respects the write-only boundary; a board-reading command stays dormant
+   in the multi-repo registry).
+4. **Role guides: `orc guide <role>` command** — RULED (operator direction,
+   2026-08-30, supersedes the draft's reference-first recommendation).
+   Guides are PACKAGED (canonical origin in `src/orc_werk/`, like the skill)
+   and surfaced via a new `orc guide watchtower|shipper|verify` command
+   (the `orc config-schema` pattern): reachable in ANY repo by ANY agent
+   that can run a CLI (harness-agnostic — not Claude-Code-skill-specific),
+   zero duplication, zero drift, no dangling path (the #127 lesson: an
+   adopter-facing reference must RESOLVE — a runnable command does, a
+   `docs/…md` path does not). The dense playbooks stay the full normative
+   reference; these are the crisp actionable per-role distillations. The
+   skill/agents-block cites "run `orc guide <role>`" — a runnable reference.
+   The verify-seat guide is the genuinely-new content (that seat is a role
+   documented nowhere today) and the highest-value piece.
+5. **`project:<name>` source: explicit `mirror.project` config key** —
+   RULED, set once in `.orc/profile.json` (ties M4A-001 and M4A-002).
 
 ## Explicitly NOT in M4 (dormant registry, triggers unchanged)
 

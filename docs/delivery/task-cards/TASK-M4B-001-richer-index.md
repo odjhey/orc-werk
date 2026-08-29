@@ -1,7 +1,7 @@
 ---
 id: TASK-M4B-001
 type: task-card
-status: draft
+status: current
 authority: normative
 description: State-aware single-dir index (blocked-first sort, state filter, per-work rollups) + unify bare-orc (mtime) vs HTML --index (id-order) ordering.
 implements: []
