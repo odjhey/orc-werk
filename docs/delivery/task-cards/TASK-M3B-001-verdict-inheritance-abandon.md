@@ -27,7 +27,7 @@ The two halves of the approved issue #76 ruling (operator, 2026-08-29):
    `FACT-CANDIDATE-OBSERVED` reuse, which permanently wedges the run
    (issue #76's live specimen: `.orc/fix-69-status-resolver`).
 2. **Operator abandon record.** A new operator decision record —
-   working name `DEC-ABANDON-ATTEMPT` — journaled with who/why/basis,
+   working name "abandon-attempt" (registered decision id assigned when the protocol row lands) — journaled with who/why/basis,
    legal exactly when an attempt's candidate observation is in
    irrecoverable conflict OR its assurance is unsettleable by any seat
    (issue #95's gap). It consumes the blocking condition and settles the
