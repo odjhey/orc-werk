@@ -223,18 +223,21 @@ adapters' own mapping docs: `docs/adapters/acp/mapping.md`,
 ### Bare `orc` run index
 
 ```text
-usage: orc [--limit LIMIT]
+usage: orc [--limit LIMIT] [--before RUN_ID]
 ```
 
 The content-first invocation lists the most-recently-active runs in the
 default journal directory. It shows 30 by default; `--limit N` bounds the
-listing and `--limit 0` shows all runs. A truncated listing names
-`orc --limit 0` first; `orc report --index` is the secondary HTML view.
+listing, `--limit 0` shows all runs, and `--before RUN_ID` selects runs
+older than that cursor in index order. A truncated listing names
+`orc --limit 0` and prints an exact next-(older)-page command;
+`orc report --index` is the secondary HTML view.
 The journal directory resolves from `ORC_JOURNAL_DIR`, then `./.orc`.
 
 ```bash
 orc
 orc --limit 10
+orc --limit 10 --before oldest-run-id-from-the-current-page
 orc --limit 0
 ```
 
@@ -265,7 +268,7 @@ orc status ./.orc/my-run-id.jsonl
 
 ```text
 usage: orc history [-h] [--journal JOURNAL] [--limit LIMIT]
-                   [--since-seq SINCE_SEQ]
+                   [--since-seq SINCE_SEQ] [--before-seq BEFORE_SEQ]
                    target
 ```
 
@@ -277,19 +280,22 @@ The full seq-ordered fact/decision/effect record -- root-cause detail
 | `target` (positional) | required | journal path (dir or `<run>.jsonl`) or bare run id |
 | `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
 | `--limit` | `30` | most-recent records to show; `0` for all |
-| `--since-seq` | none | only records with `seq` greater than the given value |
+| `--since-seq` | none | only records with `seq` greater than the given value (newer-direction cursor) |
+| `--before-seq` | none | select records older than the given sequence cursor |
 
 For a bare run id, the journal directory resolves with `--journal` >
 `ORC_JOURNAL_DIR` > `./.orc` precedence.
 
 Paginated: a truncated result prints a definitive
-`... showing last N of M` hint, never an ambiguous "...more".
+`... showing last N of M` hint and an exact next-(older)-page command,
+never an ambiguous "...more". Paging is stateless: copy and run that command.
 
 ```bash
 orc history my-run-id
 orc history my-run-id --journal ./.orc
 orc history my-run-id --limit 0
 orc history my-run-id --since-seq 12
+orc history my-run-id --limit 30 --before-seq 16
 ```
 
 Sample record line (`jq`-readable JSONL underneath -- see "Journal file
