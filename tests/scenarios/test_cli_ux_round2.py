@@ -184,6 +184,42 @@ class BareIndexTest(unittest.TestCase):
 
 
 # ----------------------------------------------------------------------
+# issue #127 -- adopter output must cite stable IDs, not repository paths
+# ----------------------------------------------------------------------
+
+
+class AdopterOutputReferenceGuardTest(unittest.TestCase):
+    def test_adopter_surfaces_contain_no_repo_relative_markdown_doc_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "pending-assure",
+                        "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "A"}}]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            dispatch = _run_cli(tmp_dir, "dispatch", "assure me", "--config", str(config_path))
+            self.assertEqual(dispatch.returncode, 3, msg=dispatch.stdout + dispatch.stderr)
+
+            results = [
+                dispatch,
+                _run_cli(tmp_dir, "status", "pending-assure"),
+                _run_cli(tmp_dir),
+                _run_cli(tmp_dir, "--help"),
+                _run_cli(tmp_dir, "config-schema"),
+                _run_cli(tmp_dir, "refs", "--help"),
+            ]
+            for result in results:
+                self.assertIn(result.returncode, (0, 3), msg=result.stdout + result.stderr)
+                output = result.stdout + result.stderr
+                self.assertNotRegex(output, r"docs/[^\n]*?\.md", msg=output)
+
+
+# ----------------------------------------------------------------------
 # item 3 -- pagination (`orc history`)
 # ----------------------------------------------------------------------
 

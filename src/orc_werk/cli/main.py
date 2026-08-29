@@ -593,8 +593,8 @@ exit codes:
 - orc never prompts interactively -- every input comes from flags/config,
   so it is safe to run unattended.
 
-docs: docs/playbooks/cli-usage.md (commands, config, exit codes),
-      docs/playbooks/agent-cli-usage.md (agent settlement/verdict protocol)
+canonical references: PLAYBOOK-CLI-USAGE (commands, config, exit codes),
+                      PLAYBOOK-AGENT-CLI (agent settlement/verdict protocol)
 """
 
 
@@ -714,7 +714,7 @@ def build_parser() -> argparse.ArgumentParser:
         "instead. A resolution failure (refused, missing binary, nonzero exit, timeout after 30s) "
         "never fails this command -- the ref itself remains valid; exit stays 0. Plain listing is "
         "unchanged: still read-only, still never shells out "
-        "(docs/contracts/durability-responsibilities.md, CONTRACT-DURABILITY).",
+        "(canonical: CONTRACT-DURABILITY).",
         epilog="examples:\n"
         "  orc refs my-run-id\n"
         "  orc refs ./.orc/my-run-id.jsonl\n"
