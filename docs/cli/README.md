@@ -571,7 +571,7 @@ usage: orc onboard [-h] [--path PATH] [--print-agents-block] [--force]
                     [--agents-file NAME] [--journal JOURNAL]
 ```
 
-Mechanically scaffolds an adopting repository (`TASK-M3D-001`, `TASK-M4A-001`) -- the
+Mechanically scaffolds an adopting repository (`TASK-M3D-001`, `TASK-M4A-001`, `TASK-M4A-004`) -- the
 hand-work `docs/product/adoption.md` (`PRODUCT-ADOPTION`) used to describe
 as a manual copy. Four independently idempotent steps, each reported
 honestly on its own line:
@@ -595,7 +595,13 @@ honestly on its own line:
    derived from it -- strip the YAML frontmatter and the H1 title, keep
    everything else verbatim) written into `<path>/<agents-file>` (default
    `AGENTS.md`), wrapped in HTML-comment markers so a re-run can detect and
-   compare it. `--print-agents-block` prints this block to stdout and
+   compare it. The block adds a **MODE DECLARATION** derived from
+   `.orc/profile.json`: scripted/absent execution and assurance adapters
+   declare scripted mode (an absent profile is the scripted default), while
+   ACP execution or non-scripted assurance declares adapter-driven mode. It
+   states who performs the seat, notes that configs default via the profile
+   without adapter blocks, and points to the runnable `orc guide <role>`
+   depth surface. `--print-agents-block` prints this block to stdout and
    performs no other step -- writes nothing at all -- for pasting into
    whatever agent-instructions file a repo already uses.
 5. **install verification** -- honestly reports: `orc` on `$PATH`

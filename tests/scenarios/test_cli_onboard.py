@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
 import stat
 import subprocess
 import sys
@@ -165,6 +166,45 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertIn("agents-block: created", output)
         self.assertIn("verification:", output)
         self.assertIn("next:", output)
+
+    def test_scripted_profile_declares_work_doer_mode_and_retires_preamble(self):
+        profile = self.target / ".orc" / "profile.json"
+        profile.parent.mkdir()
+        profile.write_text(
+            json.dumps({"execution": {"adapter": "scripted"}, "assurance": {"adapter": "scripted"}}),
+            encoding="utf-8",
+        )
+        _onboard(path=str(self.target))
+        block = (self.target / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("SCRIPTED MODE", block)
+        self.assertIn("do the work by hand", block)
+        self.assertIn("configs default via profile `.orc/profile.json`", block.lower())
+        self.assertIn("orc guide <role>", block)
+
+    def test_real_execution_and_assurance_profile_declares_adapter_driven_mode(self):
+        profile = self.target / ".orc" / "profile.json"
+        profile.parent.mkdir()
+        profile.write_text(
+            json.dumps(
+                {
+                    "execution": {"adapter": "acp", "cwd": str(self.target)},
+                    "candidate": {"adapter": "git", "repo_path": str(self.target)},
+                    "assurance": {"adapter": "no-mistakes", "repo_path": str(self.target)},
+                }
+            ),
+            encoding="utf-8",
+        )
+        _onboard(path=str(self.target))
+        block = (self.target / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("ADAPTER-DRIVEN MODE", block)
+        self.assertIn("you configure rather than perform", block)
+        self.assertIn("orc guide <role>", block)
+
+    def test_absent_profile_declares_scripted_default_mode(self):
+        _onboard(path=str(self.target))
+        block = (self.target / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("SCRIPTED MODE (scripted default)", block)
+        self.assertIn("orc guide <role>", block)
 
     def test_rerun_is_idempotent_no_dupes_skip_notes(self):
         _onboard(path=str(self.target))

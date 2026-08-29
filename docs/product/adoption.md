@@ -39,6 +39,8 @@ Orc Werk has no server, no daemon, no database, and no accounts. Every rung belo
 
 Each rung is strictly additive: nothing on a lower rung is replaced, only the execution/recording seat moves further from the operator's own hands. Stopping at any rung is a legitimate, supported adoption point — there is no rung you are obligated to climb past.
 
+The lower ledger rungs use **scripted mode**: with execution and assurance adapters scripted or absent, orc records and advances state while the invoking agent performs the work and records settlements and verdicts by hand. The higher, autonomous rung uses **adapter-driven mode**: an ACP execution adapter and/or a non-scripted assurance adapter drives its configured seat, so the invoking agent configures rather than performs that seat. `orc onboard` derives this mode from `.orc/profile.json`; an absent profile is the incremental scripted default.
+
 ### Installing the CLI, mechanically (`TASK-M3D-001`)
 
 The rungs above describe capability; this is the literal install path for each:
@@ -98,7 +100,9 @@ The canonical state machine, its invariants, the facts/decisions/effects vocabul
 `.agents/skills/orc-ledger/SKILL.md` and links it resolvably under
 `.claude/skills/orc-ledger`, and writes (or, with `--print-agents-block`,
 just prints) the same six-rule content as a copy-pasteable
-`## Delivery ledger (orc)` block for `AGENTS.md`-style files — the audience
+`## Delivery ledger (orc)` block for `AGENTS.md`-style files, including a
+mode declaration derived from `.orc/profile.json` and a pointer to
+`orc guide <role>` — the audience
 issue #55's superseded onboarding-snippet idea was right for all along:
 subagents in the adopting repo, distinct from the interactive-session skill
 above. A fresh session (interactive, via the skill, or a subagent, via the
