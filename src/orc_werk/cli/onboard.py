@@ -155,7 +155,8 @@ def agents_block_text(
         "### MODE DECLARATION\n\n"
         f"**{mode}.** {action}\n\n"
         "Dispatch configs default via profile `.orc/profile.json`; no adapter blocks need "
-        "to be specified. For the role-specific procedure, run `orc guide <role>`."
+        "to be specified. The seat discipline and recording protocol are in the "
+        "delivery-ledger rules below (the installed `orc-ledger` skill)."
     )
     return f"## Delivery ledger (orc)\n\n{declaration}\n\n{body}\n"
 

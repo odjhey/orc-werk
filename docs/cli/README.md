@@ -600,7 +600,7 @@ honestly on its own line:
    declare scripted mode (an absent profile is the scripted default), while
    ACP execution or non-scripted assurance declares adapter-driven mode. It
    states who performs the seat, notes that configs default via the profile
-   without adapter blocks, and points to the runnable `orc guide <role>`
+   without adapter blocks, and points to the seat discipline in the installed `orc-ledger` skill
    depth surface. `--print-agents-block` prints this block to stdout and
    performs no other step -- writes nothing at all -- for pasting into
    whatever agent-instructions file a repo already uses.

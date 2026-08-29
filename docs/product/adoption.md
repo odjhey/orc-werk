@@ -101,8 +101,7 @@ The canonical state machine, its invariants, the facts/decisions/effects vocabul
 `.claude/skills/orc-ledger`, and writes (or, with `--print-agents-block`,
 just prints) the same six-rule content as a copy-pasteable
 `## Delivery ledger (orc)` block for `AGENTS.md`-style files, including a
-mode declaration derived from `.orc/profile.json` and a pointer to
-`orc guide <role>` — the audience
+mode declaration derived from `.orc/profile.json` — the audience
 issue #55's superseded onboarding-snippet idea was right for all along:
 subagents in the adopting repo, distinct from the interactive-session skill
 above. A fresh session (interactive, via the skill, or a subagent, via the
