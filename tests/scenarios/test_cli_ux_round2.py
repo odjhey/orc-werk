@@ -19,6 +19,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -157,6 +158,30 @@ class BareIndexTest(unittest.TestCase):
             self.assertEqual(error["error"], "ERR-VALIDATION")
             self.assertIn("--limit 0", " ".join(error["next"]))
 
+    def test_index_next_page_command_returns_older_slice_then_stops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            for i in range(7):
+                _write_minimal_run(tmp_dir / ".orc", f"run-{i}", num_records=1, mtime=1_700_000_000 + i)
+            first = _run_cli(tmp_dir, "--limit", "3")
+            next_line = next(line for line in first.stdout.splitlines() if line.startswith("next (older) page:"))
+            self.assertNotIn("\x1b", next_line)
+            second = _run_cli(tmp_dir, *shlex.split(next_line.removeprefix("next (older) page: orc ")))
+            second_ids = [line.split(":", 1)[0] for line in second.stdout.splitlines() if line.startswith("run-")]
+            self.assertEqual(second_ids, ["run-3", "run-2", "run-1"])
+            third_line = next(line for line in second.stdout.splitlines() if line.startswith("next (older) page:"))
+            third = _run_cli(tmp_dir, *shlex.split(third_line.removeprefix("next (older) page: orc ")))
+            self.assertEqual([line for line in third.stdout.splitlines() if line.startswith("run-")], ["run-0: (no work recorded yet)"])
+            self.assertNotIn("next (older) page:", third.stdout)
+
+    def test_index_bad_cursor_is_canonical_validation_with_next(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _run_cli(Path(tmp), "--before", "not-a-run")
+            self.assertEqual(result.returncode, 2)
+            error = json.loads(result.stderr)
+            self.assertEqual(error["error"], "ERR-VALIDATION")
+            self.assertTrue(error["next"])
+
 
 # ----------------------------------------------------------------------
 # item 3 -- pagination (`orc history`)
@@ -177,7 +202,8 @@ class HistoryPaginationTest(unittest.TestCase):
             # Last N means the most recent: seq 0016..0045 shown, oldest 15 dropped.
             self.assertIn("[0016]", record_lines[0])
             self.assertIn("[0045]", record_lines[-1])
-            self.assertEqual(lines[-1], "... showing last 30 of 45 records; --limit 0 for all")
+            self.assertIn("... showing last 30 of 45 records; --limit 0 for all", lines)
+            self.assertTrue(lines[-1].startswith("next (older) page: orc history big-run "))
 
     def test_negative_limit_is_canonical_validation_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -211,6 +237,32 @@ class HistoryPaginationTest(unittest.TestCase):
             self.assertEqual(len(record_lines), 5)
             self.assertIn("[0041]", record_lines[0])
             self.assertNotIn("showing last", result.stdout)
+
+    def test_history_next_page_command_returns_older_slice_then_stops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            _write_minimal_run(tmp_dir / ".orc", "big-run", num_records=7, mtime=1_700_000_000)
+            first = _run_cli(tmp_dir, "history", "big-run", "--limit", "3")
+            next_line = next(line for line in first.stdout.splitlines() if line.startswith("next (older) page:"))
+            second = _run_cli(tmp_dir, *shlex.split(next_line.removeprefix("next (older) page: orc ")))
+            records = [line for line in second.stdout.splitlines() if line.startswith("[")]
+            self.assertIn("[0002]", records[0])
+            self.assertIn("[0004]", records[-1])
+            third_line = next(line for line in second.stdout.splitlines() if line.startswith("next (older) page:"))
+            third = _run_cli(tmp_dir, *shlex.split(third_line.removeprefix("next (older) page: orc ")))
+            self.assertEqual(len([line for line in third.stdout.splitlines() if line.startswith("[")]), 1)
+            self.assertNotIn("next (older) page:", third.stdout)
+
+    def test_history_bad_cursor_is_canonical_validation_with_next(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            _write_minimal_run(tmp_dir / ".orc", "run", num_records=3, mtime=1_700_000_000)
+            for cursor in ("garbage", "-1"):
+                result = _run_cli(tmp_dir, "history", "run", "--before-seq", cursor)
+                self.assertEqual(result.returncode, 2)
+                error = json.loads(result.stderr)
+                self.assertEqual(error["error"], "ERR-VALIDATION")
+                self.assertTrue(error["next"])
 
     def test_small_run_untruncated_no_regression(self) -> None:
         # Guard: existing small-journal tests must see no hint line at all.

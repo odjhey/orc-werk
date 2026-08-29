@@ -11,7 +11,7 @@ semantics, nothing recorded.
 
 from __future__ import annotations
 
-from typing import Sequence, TypeVar
+from typing import Callable, Sequence, TypeVar
 
 from orc_werk.core.errors import validation_error
 
@@ -50,10 +50,37 @@ def paginate(items: Sequence[T], *, limit: int) -> tuple[Sequence[T], int, bool]
     return items[-limit:], total, True
 
 
+def window_before(
+    items: Sequence[T],
+    *,
+    limit: int,
+    before: str | None,
+    cursor_of: Callable[[T], str],
+    cursor_name: str,
+) -> tuple[Sequence[T], int, bool]:
+    """Window ``items`` in append order before an optional cursor.
+
+    The cursor identifies an item (rather than an offset), making page
+    commands stateless and stable when newer items are appended. The
+    returned count and truncation flag describe the cursor-filtered corpus.
+    """
+    eligible = items
+    if before is not None:
+        cursor_index = next((index for index, item in enumerate(items) if cursor_of(item) == before), None)
+        if cursor_index is None:
+            raise validation_error(
+                f"unknown {cursor_name} cursor",
+                cursor=before,
+                next_steps=[f"omit --{cursor_name} to list the most-recent page, then use its next-page command"],
+            )
+        eligible = items[:cursor_index]
+    return paginate(eligible, limit=limit)
+
+
 def size_hint(shown: int, total: int, *, limit_flag: str = "--limit 0", noun: str = "records") -> str:
     """The definitive truncation hint line: exact counts, and the exact
     flag that shows everything -- never "...N more" ambiguity."""
     return f"... showing last {shown} of {total} {noun}; {limit_flag} for all"
 
 
-__all__ = ["DEFAULT_LIMIT", "paginate", "size_hint"]
+__all__ = ["DEFAULT_LIMIT", "paginate", "size_hint", "window_before"]

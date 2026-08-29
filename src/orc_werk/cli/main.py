@@ -21,6 +21,7 @@ import getpass
 import hashlib
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -55,7 +56,7 @@ from orc_werk.cli.journal_reading import (
     resolve_journal_dir,
 )
 from orc_werk.cli.onboard import DEFAULT_AGENTS_FILE, cmd_onboard
-from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint
+from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint, window_before
 from orc_werk.cli.refs import cmd_refs
 from orc_werk.cli.report import cmd_report
 from orc_werk.cli.show import cmd_show
@@ -432,7 +433,13 @@ def cmd_history(args: argparse.Namespace) -> int:
     # "of N" always names the exact count of what --limit 0 would show.
     if args.since_seq is not None:
         records = [r for r in records if r["seq"] > args.since_seq]
-    window, total, truncated = paginate(records, limit=args.limit)
+    window, total, truncated = window_before(
+        records,
+        limit=args.limit,
+        before=args.before_seq,
+        cursor_of=lambda record: str(record["seq"]),
+        cursor_name="before-seq",
+    )
     for record in window:
         line = f"[{record['seq']:04d}] {record['kind']:8s} {record['id']:28s} {_compact(record['data'])}"
         # FRICTION-1: the envelope's sibling `extensions` field (where e.g.
@@ -445,6 +452,14 @@ def cmd_history(args: argparse.Namespace) -> int:
         print(line)
     if truncated:
         print(size_hint(len(window), total, noun="records"))
+        oldest_seq = window[0]["seq"]
+        command = (
+            f"orc history {shlex.quote(run_id)} --journal {shlex.quote(str(directory.resolve()))} "
+            f"--limit {args.limit} --before-seq {oldest_seq}"
+        )
+        if args.since_seq is not None:
+            command += f" --since-seq {args.since_seq}"
+        print(f"next (older) page: {command}")
     return 0
 
 
@@ -469,7 +484,12 @@ def _index_run_line(run_id: str, projection) -> str:
     return f"{run_id}: {summary}"
 
 
-def cmd_index(journal_dir: Optional[Path] = None, *, limit: int = DEFAULT_LIMIT) -> int:
+def cmd_index(
+    journal_dir: Optional[Path] = None,
+    *,
+    limit: int = DEFAULT_LIMIT,
+    before: str | None = None,
+) -> int:
     """`orc` with no arguments (issue #43 item 1, "content first" -- axi
     #8): a live text index of the default journal dir instead of an
     argparse usage error. Strictly read-only: never constructs
@@ -492,6 +512,8 @@ def cmd_index(journal_dir: Optional[Path] = None, *, limit: int = DEFAULT_LIMIT)
     abs_dir_display = hyperlink_path(abs_dir)
     run_ids = _available_run_ids(directory)
     if not run_ids:
+        if before is not None:
+            window_before((), limit=limit, before=before, cursor_of=str, cursor_name="before")
         # Empty-dir case (issue #43 item 1): definitive "0 runs in <abs
         # dir>" plus the dispatch affordance to create the first one.
         print(f"0 runs in {abs_dir_display}")
@@ -508,14 +530,21 @@ def cmd_index(journal_dir: Optional[Path] = None, *, limit: int = DEFAULT_LIMIT)
         ((run_id, layout.journal_path(directory, run_id)) for run_id in run_ids),
         key=lambda entry: (entry[1].stat().st_mtime, entry[0]),
     )
-    window_entries, total, truncated = paginate(run_entries, limit=limit)
+    corpus_total = len(run_entries)
+    window_entries, total, truncated = window_before(
+        run_entries,
+        limit=limit,
+        before=before,
+        cursor_of=lambda entry: entry[0],
+        cursor_name="before",
+    )
     # Most-recently-active first for the at-a-glance scan (paginate keeps
     # append/chronological order, i.e. oldest-of-the-window first).
     window_entries = list(reversed(window_entries))
 
     journal = JSONLJournal(directory)
-    noun = "run" if total == 1 else "runs"
-    print(f"{total} {noun} in {abs_dir_display}:")
+    noun = "run" if corpus_total == 1 else "runs"
+    print(f"{corpus_total} {noun} in {abs_dir_display}:")
     for run_id, _path in window_entries:
         try:
             projection = journal.load_projection(delivery_run_id=run_id)
@@ -535,6 +564,8 @@ def cmd_index(journal_dir: Optional[Path] = None, *, limit: int = DEFAULT_LIMIT)
         print(_index_run_line(run_id, projection))
     if truncated:
         print(size_hint(len(window_entries), total, noun="runs", limit_flag="orc --limit 0"))
+        oldest_run_id = window_entries[-1][0]
+        print(f"next (older) page: orc --limit {limit} --before {oldest_run_id}")
     print(f"orc status <run-id> for next-step guidance on one run; orc report --index for the secondary full HTML index over {abs_dir}.")
     return 0
 
@@ -719,7 +750,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="examples:\n"
         "  orc history my-run-id\n"
         "  orc history my-run-id --limit 0\n"
-        "  orc history my-run-id --since-seq 12\n\n"
+        "  orc history my-run-id --since-seq 12\n"
+        "  orc history my-run-id --limit 30 --before-seq 16\n\n"
         f"defaults: --limit {DEFAULT_LIMIT} (last {DEFAULT_LIMIT} records; 0 shows all); "
         "a bare run id resolves against --journal, $ORC_JOURNAL_DIR, or ./.orc",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -736,6 +768,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     history_parser.add_argument(
         "--since-seq", type=int, default=None, help="only show records with seq greater than SEQ"
+    )
+    history_parser.add_argument(
+        "--before-seq", default=None, help="show the page of records older than sequence cursor SEQ"
     )
     history_parser.set_defaults(func=cmd_history)
 
@@ -851,15 +886,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
-    if not raw_args or raw_args[:1] == ["--limit"]:
+    if not raw_args or raw_args[:1] in (["--limit"], ["--before"]):
         # The content-first index is intentionally a promoted fast path,
         # not an argparse subcommand. Give that surface its own tiny parser
         # so `orc --limit N` retains the bare invocation while ordinary
         # top-level flags/subcommands (including `--help`) remain unchanged.
         index_parser = argparse.ArgumentParser(prog="orc", add_help=False)
         index_parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+        index_parser.add_argument("--before", default=None)
         index_args = index_parser.parse_args(raw_args)
-        call = lambda: cmd_index(limit=index_args.limit)  # noqa: E731
+        call = lambda: cmd_index(limit=index_args.limit, before=index_args.before)  # noqa: E731
     else:
         parser = build_parser()
         args = parser.parse_args(raw_args)
