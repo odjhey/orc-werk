@@ -161,5 +161,5 @@ scenario's own Verification section for the confirmed-fixed behavior. This
 corpus's currently open, in-flight issues are: #39 (report timeline lacks
 wall-clock time), #40 (report render-all/wildcard + run-id namespace,
 in flight together with #39 as PR #46), #41 (report dependency-tree view
-for multi-work runs), #43 (CLI help conventions), #45 (acp adapter:
-`_orcw_unobservable` placement in the `execution-session/v1` payload).
+for multi-work runs), #43 (CLI help conventions). #45 (acp adapter `_orcw_unobservable`
+placement) was resolved by dropping the key (no consumers).
