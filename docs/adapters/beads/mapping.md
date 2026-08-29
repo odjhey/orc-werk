@@ -120,17 +120,23 @@ uses '<prefix>-' but ID '<id>' doesn't match` on every single call, since
 this adapter's ids are never shaped like the target database's own
 auto-generated ones.
 
-### Label discipline: `--label run:<run_id>` on every `create` (not literally every invocation)
+### Label discipline: run and optional project namespaces on every `create`
 
 Amended wording (PR #81 fix round; the card's original issue-#47 phrasing
 said "on every invocation"): this adapter applies `--label run:<run_id>`
-on every `bd create` call. `update`/`close` calls do NOT re-pass
-`--label` -- they address the run-qualified unique `<run_id>--<work_id>`
-id directly, and `bd update`/`bd close` do not strip or replace existing
-labels (verified against real `bd` 1.2.2: labels applied at create
-persist unchanged through `update --status`/`--set-metadata` and `close
---reason` calls), so the label-scoped isolation the ratified posture
-depends on holds with create-time application alone. The card's bullet
+on every `bd create` call. When the optional `mirror.project` config value
+is present, it also applies a separate `--label project:<name>` pair on
+every create; `bd --label` accepts one value per flag, so these labels are
+never comma-joined. Because every dispatch re-issues create as an upsert,
+existing mirrored issues gain a newly configured project label on their
+next dispatch without a separate backfill operation.
+
+`update`/`close` calls do NOT re-pass either `--label` -- they address the
+run-qualified unique `<run_id>--<work_id>` id directly, and `bd update`/`bd
+close` do not strip or replace existing labels (verified against real `bd`
+1.2.2: labels applied at create persist unchanged through `update
+--status`/`--set-metadata` and `close --reason` calls), so both label
+namespaces persist with create-time application alone. The card's bullet
 carries the same amendment note.
 
 ### Workspace guard: `-C` walk-up containment (operator-DB safety)
@@ -198,7 +204,7 @@ boundary is the `bd` CLI surface only, per `INV-014`.
 
 | Canonical concept | `bd` operation | Mapping |
 |---|---|---|
-| Work created (`FACT-WORK-CREATED`, read from the durable `FX-CREATE-WORK` effect record's `data.plan`) | `bd create --id <run_id>--<work_id> --force --label run:<run_id> --title <work_id> --description <brief> [--deps <upstream ids, comma-joined>]` | One call per Work, dependency-first (topological) order so every `--deps` reference already exists. |
+| Work created (`FACT-WORK-CREATED`, read from the durable `FX-CREATE-WORK` effect record's `data.plan`) | `bd create --id <run_id>--<work_id> --force --label run:<run_id> [--label project:<name>] --title <work_id> --description <brief> [--deps <upstream ids, comma-joined>]` | One call per Work, dependency-first (topological) order so every `--deps` reference already exists. The project label is included when `mirror.project` is configured. |
 | Per-work brief (`briefs[work_id]`, CLI-owned config, falls back to the run's intent text) | `--description` at `create` | The first durable owner of multi-work briefs (see "Durability" below). |
 | Kernel state -> `bd` status/metadata | `bd update <id> [--status <status>] --set-metadata state=<lower(state)> --set-metadata attempt_number=<n> [--set-metadata claim_ref=<ref>] [--set-metadata blocked_reason=<reason>]` | See the status-vocabulary table below. |
 | `DEC-ACCEPT`/`FACT-WORK-COMPLETED` (state `ACCEPTED`) | `bd update <id> --set-metadata ...` then `bd close <id> --reason accepted` | Two calls: metadata first (`close` accepts no `--set-metadata` flag), then the close itself -- a write-only echo, never a trigger. |
@@ -321,9 +327,10 @@ touched by a degraded mirror; only stderr gains the note.
   evaluated and rejected" above), and the deterministic-id requirement is
   non-negotiable while a run-level hierarchy bead is not required by this
   card's acceptance criteria (which only ever names `<run_id>--<work_id>`
-  ids). Grouping is achieved entirely via the `run:<run_id>` label
-  instead -- consistent with the ratified posture's own framing ("shared,
-  label-scoped `bd` database").
+  ids). Grouping instead has two granularities: `run:<run_id>` selects one
+  delivery run, while optional `project:<name>` selects all mirrored work
+  for a configured project across runs -- consistent with the ratified
+  posture's own framing ("shared, label-scoped `bd` database").
 - **`claimed` is metadata, not a `bd` status.** See "Status vocabulary"
   above.
 - **No line-level/structured content beyond title+description+labels+

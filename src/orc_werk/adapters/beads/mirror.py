@@ -100,6 +100,7 @@ from orc_werk.ports.work_graph import validate_plan
 BD_VERSION_PIN = "1.2.2"
 
 _RUN_LABEL_PREFIX = "run:"
+_PROJECT_LABEL_PREFIX = "project:"
 
 # bd's own builtin status vocabulary (`bd statuses`) this adapter maps
 # canonical Work states onto. STATE_ACCEPTED is deliberately absent here --
@@ -214,10 +215,12 @@ class BeadsMirror:
         workspace: str,
         bd_bin: str = "bd",
         timeout_s: float = _DEFAULT_TIMEOUT_S,
+        project: Optional[str] = None,
     ) -> None:
         self._workspace = workspace
         self._bd_bin = bd_bin
         self._timeout_s = timeout_s
+        self._project = project
 
     # -- public API ---------------------------------------------------------
 
@@ -355,6 +358,10 @@ class BeadsMirror:
             "--force",
             "--label",
             label,
+        ]
+        if self._project is not None:
+            argv += ["--label", f"{_PROJECT_LABEL_PREFIX}{self._project}"]
+        argv += [
             "--title",
             work_id,
             "--description",
