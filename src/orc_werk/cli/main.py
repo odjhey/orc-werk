@@ -423,6 +423,7 @@ def cmd_history(args: argparse.Namespace) -> int:
     # `load_projection`, wrapped with `_diagnose_replay_conflict`
     # elsewhere, can); nothing to enrich here.
     records = list(journal.history(delivery_run_id=run_id))
+    print(f"run: {run_id}")
     # issue #43 pagination addendum: --since-seq filters first (an explicit
     # "what's new since I last looked" query), then the default/--limit
     # window applies to the (possibly filtered) result -- the size hint's
@@ -466,7 +467,7 @@ def _index_run_line(run_id: str, projection) -> str:
     return f"{run_id}: {summary}"
 
 
-def cmd_index(journal_dir: Optional[Path] = None) -> int:
+def cmd_index(journal_dir: Optional[Path] = None, *, limit: int = DEFAULT_LIMIT) -> int:
     """`orc` with no arguments (issue #43 item 1, "content first" -- axi
     #8): a live text index of the default journal dir instead of an
     argparse usage error. Strictly read-only: never constructs
@@ -474,13 +475,14 @@ def cmd_index(journal_dir: Optional[Path] = None) -> int:
     the directory already exists and already has at least one run journal
     in it, so a bare `orc` in a fresh checkout creates nothing.
 
-    Paginated the same way as `orc history` (issue
-    #43 pagination addendum), most-recently-active runs first (by journal
-    file mtime); bare `orc` has no flag surface of its own to carry a
-    `--limit`, so its escape hatch to the full set is the already-shipped
-    `orc report --index` (an unpaginated HTML index over every run) rather
-    than an invented flag.
+    Paginated the same way as `orc history` (issue #43 pagination
+    addendum), most-recently-active runs first (by journal file mtime).
+    `--limit 0` is the same-surface escape hatch; `orc report --index` is
+    only the explicitly secondary HTML view.
     """
+    # Validate before the empty-state fast return so an invalid bound is
+    # rejected consistently even when there are no runs to list.
+    paginate((), limit=limit)
     directory = journal_dir if journal_dir is not None else resolve_journal_dir(None)
     abs_dir = directory.resolve()
     # issue #55 OSC-8 scope addition: these two "N runs in <abs dir>"/"0
@@ -504,7 +506,7 @@ def cmd_index(journal_dir: Optional[Path] = None) -> int:
         ((run_id, layout.journal_path(directory, run_id)) for run_id in run_ids),
         key=lambda entry: (entry[1].stat().st_mtime, entry[0]),
     )
-    window_entries, total, truncated = paginate(run_entries, limit=DEFAULT_LIMIT)
+    window_entries, total, truncated = paginate(run_entries, limit=limit)
     # Most-recently-active first for the at-a-glance scan (paginate keeps
     # append/chronological order, i.e. oldest-of-the-window first).
     window_entries = list(reversed(window_entries))
@@ -530,12 +532,8 @@ def cmd_index(journal_dir: Optional[Path] = None) -> int:
             continue
         print(_index_run_line(run_id, projection))
     if truncated:
-        # Bare `orc` has no flag surface of its own to carry `--limit`
-        # (issue #43 item 1 has no args at all beyond the bare invocation),
-        # so its size hint names the real escape hatch instead of a
-        # nonexistent flag: `orc report --index` (unpaginated).
-        print(size_hint(len(window_entries), total, noun="runs", limit_flag="orc report --index"))
-    print(f"orc status <run-id> for next-step guidance on one run; orc report --index for the full unpaginated HTML index over {abs_dir}.")
+        print(size_hint(len(window_entries), total, noun="runs", limit_flag="orc --limit 0"))
+    print(f"orc status <run-id> for next-step guidance on one run; orc report --index for the secondary full HTML index over {abs_dir}.")
     return 0
 
 
@@ -764,13 +762,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
-    if not raw_args:
-        # issue #43 item 1 ("content first", axi #8): bare `orc` (no
-        # subcommand, no flags) prints a live text index of the default
-        # journal dir instead of argparse's usage error. `orc --help`
-        # remains the unchanged reference (any non-empty argv, including
-        # `--help` alone, still goes through the ordinary parser below).
-        call = cmd_index
+    if not raw_args or raw_args[:1] == ["--limit"]:
+        # The content-first index is intentionally a promoted fast path,
+        # not an argparse subcommand. Give that surface its own tiny parser
+        # so `orc --limit N` retains the bare invocation while ordinary
+        # top-level flags/subcommands (including `--help`) remain unchanged.
+        index_parser = argparse.ArgumentParser(prog="orc", add_help=False)
+        index_parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+        index_args = index_parser.parse_args(raw_args)
+        call = lambda: cmd_index(limit=index_args.limit)  # noqa: E731
     else:
         parser = build_parser()
         args = parser.parse_args(raw_args)

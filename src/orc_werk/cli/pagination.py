@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Sequence, TypeVar
 
+from orc_werk.core.errors import validation_error
+
 T = TypeVar("T")
 
 # ~30 is the shared default across `history` and the bare index. Rationale
@@ -21,9 +23,8 @@ T = TypeVar("T")
 # line of plain text (well under 200 chars in the common case), so 30 lines
 # stays a small, legible fraction of even a modest agent context-window
 # turn while still reading as a complete "recent activity" snapshot to a
-# human scanning a terminal. `--limit 0` (or the run-report `--index`
-# escape hatch for the bare index, which has no flag surface of its own) is
-# always one step away for the full set -- the axi #3 escape hatch.
+# human scanning a terminal. `--limit 0` is always one step away for the
+# full set -- the axi #3 escape hatch.
 DEFAULT_LIMIT = 30
 
 
@@ -37,6 +38,12 @@ def paginate(items: Sequence[T], *, limit: int) -> tuple[Sequence[T], int, bool]
     in their size hint, never an approximation (axi #5: "definitive... never
     ambiguous truncation").
     """
+    if limit < 0:
+        raise validation_error(
+            "limit must be greater than or equal to 0",
+            limit=limit,
+            next_steps=["pass --limit 0 to show all rows, or a positive integer to bound the listing"],
+        )
     total = len(items)
     if limit == 0 or total <= limit:
         return items, total, False

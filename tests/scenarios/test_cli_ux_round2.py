@@ -127,14 +127,35 @@ class BareIndexTest(unittest.TestCase):
             result = _run_cli(tmp_dir)
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
             self.assertIn(f"{total} runs in", result.stdout)
-            # Exact counts, never an ambiguous "...more" (axi #5): the hint
-            # names both the shown count and the real total, plus the real
-            # escape hatch (bare `orc` has no --limit of its own).
-            self.assertIn("... showing last 30 of 35 runs; orc report --index for all", result.stdout)
+            # Exact counts, never an ambiguous "...more" (axi #5): the
+            # same-surface text escape hatch is named first.
+            self.assertIn("... showing last 30 of 35 runs; orc --limit 0 for all", result.stdout)
+            self.assertIn("orc report --index for the secondary full HTML index", result.stdout)
             run_lines = [line for line in result.stdout.splitlines() if line.startswith("run-")]
             self.assertEqual(len(run_lines), 30)
             # Most-recently-modified first: run-034 (highest mtime) leads.
             self.assertTrue(run_lines[0].startswith("run-034:"))
+
+    def test_index_accepts_limit_and_zero_means_all(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            for i in range(5):
+                _write_minimal_run(tmp_dir / ".orc", f"run-{i}", num_records=1, mtime=1_700_000_000 + i)
+            bounded = _run_cli(tmp_dir, "--limit", "2")
+            self.assertEqual(bounded.returncode, 0, msg=bounded.stdout + bounded.stderr)
+            self.assertEqual(len([line for line in bounded.stdout.splitlines() if line.startswith("run-")]), 2)
+            all_runs = _run_cli(tmp_dir, "--limit", "0")
+            self.assertEqual(all_runs.returncode, 0, msg=all_runs.stdout + all_runs.stderr)
+            self.assertEqual(len([line for line in all_runs.stdout.splitlines() if line.startswith("run-")]), 5)
+            self.assertNotIn("showing last", all_runs.stdout)
+
+    def test_negative_limit_is_canonical_validation_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _run_cli(Path(tmp), "--limit", "-1")
+            self.assertEqual(result.returncode, 2)
+            error = json.loads(result.stderr)
+            self.assertEqual(error["error"], "ERR-VALIDATION")
+            self.assertIn("--limit 0", " ".join(error["next"]))
 
 
 # ----------------------------------------------------------------------
@@ -150,12 +171,23 @@ class HistoryPaginationTest(unittest.TestCase):
             result = _run_cli(tmp_dir, "history", "big-run")
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
             lines = result.stdout.splitlines()
+            self.assertEqual(lines[0], "run: big-run")
             record_lines = [line for line in lines if line.startswith("[")]
             self.assertEqual(len(record_lines), 30)
             # Last N means the most recent: seq 0016..0045 shown, oldest 15 dropped.
             self.assertIn("[0016]", record_lines[0])
             self.assertIn("[0045]", record_lines[-1])
             self.assertEqual(lines[-1], "... showing last 30 of 45 records; --limit 0 for all")
+
+    def test_negative_limit_is_canonical_validation_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            _write_minimal_run(tmp_dir / ".orc", "big-run", num_records=3, mtime=1_700_000_000)
+            result = _run_cli(tmp_dir, "history", "big-run", "--limit", "-1")
+            self.assertEqual(result.returncode, 2)
+            error = json.loads(result.stderr)
+            self.assertEqual(error["error"], "ERR-VALIDATION")
+            self.assertIn("--limit 0", " ".join(error["next"]))
 
     def test_limit_zero_shows_all(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -314,6 +346,17 @@ class AffordanceTest(unittest.TestCase):
             self.assertIn("record the execution outcome for work(s): a, b", dispatch.stdout)
             self.assertEqual(dispatch.stdout.count("record the execution outcome for work(s):"), 1)
             self.assertEqual(dispatch.stdout.count("then re-run:"), 1)
+
+    def test_not_found_run_truncates_available_runs_with_exact_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            for i in range(35):
+                _write_minimal_run(tmp_dir / ".orc", f"known-{i:03d}", num_records=1, mtime=1_700_000_000 + i)
+            result = _run_cli(tmp_dir, "status", "unknown-run")
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("... showing last 30 of 35 runs; orc --limit 0 for all", result.stdout)
+            error = json.loads(result.stderr)
+            self.assertIn("... showing last 30 of 35 runs; orc --limit 0 for all", error["next"])
 
     def test_not_found_run_shows_available_runs_and_dispatch_affordance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
