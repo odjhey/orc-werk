@@ -3,7 +3,7 @@ id: M3-HARDEN-THE-LOOP
 type: milestone
 status: draft
 authority: normative
-description: M3 — close the wedge class the adoption testing exposed; small by design, most of the originally-proposed scope shipped ahead of the milestone.
+description: M3 — close the wedge class the adoption testing exposed, and make autonomous runs fast to review; most of the originally-proposed scope shipped ahead of the milestone.
 ---
 
 # M3 — Harden the loop
@@ -34,6 +34,39 @@ amends the state machine the second relies on).
   scope extension). An already-bound divergent provider run must never
   settle this candidate's verdict.
 
+## Phase M3c — Review experience (operator direction, 2026-08-29)
+
+Autonomy is only trustworthy if reviewing what the autonomous machinery
+did is fast. The operator's target experience is one descending
+staircase, each level one command: *what happened/is happening* (bare
+`orc` + the mirror board) → *this run in depth, including briefs and
+hand-offs per turn* → *adapter-specific content via the provider's own
+tooling*. Levels one and four have surfaces (`orc`, `orc refs`); the
+middle is the gap — a run's narrative is scattered across the journal
+(intent, facts, findings), the persisted config (briefs), and provider
+transcripts (prompts, agent turns), with nothing composing them. The
+issue #111 briefs-starvation incident is the proof of pain.
+
+- `TASK-M3C-001` — `orc show <run> [work]`: the terminal narrative
+  view. Per work, per attempt: what was asked (brief/intent, and which
+  text actually became the prompt — derived and displayed, never
+  guessed), who executed (provider, session ref, duration from the
+  times sidecar), what was produced (candidate identity), what was
+  judged (verdict, findings summary, evidence refs), and where full
+  content lives (resolve commands inline, reference-first). Pure
+  composition of existing readers; no new storage.
+- `TASK-M3C-002` — `orc refs --resolve <ref>`: shell out to the
+  provider's own tooling and show the referenced content inline (the
+  issue #100 deferred nice-to-have). Fragility caveat documented per
+  the TOON known-issues pattern: assumes the provider CLI surface at
+  the pinned version; re-probe on upgrade.
+
+Sequenced after the issue #113 listing-convention lane lands, so both
+new surfaces are born conforming to the listing convention rather than
+retrofitted. Full task cards authored at dispatch time (the M2 "details
+firm up at dispatch" convention); this phase note is their design
+source.
+
 ## Tail (explicitly unglamorous)
 
 - Trivia sweep (in flight at draft time: DFS-013 enumeration, stale CLI
@@ -54,8 +87,12 @@ attention model.
 
 ## Acceptance
 
-- `TASK-M3B-001` and `TASK-M3B-002` accepted through the ledger with the
-  standard adversarial-verification pipeline.
+- `TASK-M3B-001`, `TASK-M3B-002`, `TASK-M3C-001`, and `TASK-M3C-002`
+  accepted through the ledger with the standard adversarial-verification
+  pipeline.
+- The operator's four review questions (what happened / this run in
+  depth / briefs+hand-offs per turn / adapter content) each answerable
+  in one command from the previous level's output.
 - A regression scenario exists for each wedge shape (same-candidate
   retry; foreign-run settlement) proving the closed behavior.
 - The dormant registry above is untouched.
