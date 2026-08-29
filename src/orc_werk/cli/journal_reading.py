@@ -20,6 +20,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from orc_werk.adapters.jsonl import layout
 from orc_werk.cli.hyperlink import hyperlink_path
+from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint
 from orc_werk.core.effects import FX_START_EXECUTION
 from orc_werk.core.errors import ERR_CONFLICT, CoreError, not_found_error, validation_error
 from orc_werk.core.facts import FACT_INTENT_SUBMITTED
@@ -245,8 +246,17 @@ def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
         # what does and does not qualify.
         abs_dir_display = hyperlink_path(abs_dir)
         available = _available_run_ids(directory)
+        available_window, available_total, available_truncated = paginate(available, limit=DEFAULT_LIMIT)
         if available:
-            print(f"available runs in {abs_dir_display}: {', '.join(available)}")
+            available_line = f"available runs in {abs_dir_display}: {', '.join(available_window)}"
+            print(available_line)
+            available_hint = (
+                size_hint(len(available_window), available_total, noun="runs", limit_flag="orc --limit 0")
+                if available_truncated
+                else None
+            )
+            if available_hint:
+                print(available_hint)
         else:
             print(f"0 runs in {abs_dir_display}")
         print("next:")
@@ -265,10 +275,15 @@ def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
             delivery_run_id=run_id,
             path=str(path),
             target=target,
-            next_steps=[
-                (f"available runs in {abs_dir}: {', '.join(available)}" if available else f"0 runs in {abs_dir}"),
-                dispatch_affordance,
-            ],
+            next_steps=(
+                [
+                    f"available runs in {abs_dir}: {', '.join(available_window)}",
+                    *([available_hint] if available_hint else []),
+                    dispatch_affordance,
+                ]
+                if available
+                else [f"0 runs in {abs_dir}", dispatch_affordance]
+            ),
         )
     return path
 
