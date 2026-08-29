@@ -39,6 +39,14 @@ Orc Werk has no server, no daemon, no database, and no accounts. Every rung belo
 
 Each rung is strictly additive: nothing on a lower rung is replaced, only the execution/recording seat moves further from the operator's own hands. Stopping at any rung is a legitimate, supported adoption point — there is no rung you are obligated to climb past.
 
+### Installing the CLI, mechanically (`TASK-M3D-001`)
+
+The rungs above describe capability; this is the literal install path for each:
+
+- **Rung 1 (simulator/spec-executor) — zero install.** Clone or vendor this repository and either `pip install -e .` for a real `orc` command, or alias the module invocation with no install step at all: `alias orc='PYTHONPATH=src python3 -m orc_werk.cli'` (run from the repo root). This is the adoption ladder's own "Python 3.11+ and this repo — nothing else" promise, and it remains the permanent zero-install fallback at every rung above it — nothing below forces a real install.
+- **Rung 2 (durable ledger for real work) — `pip install`, then `orc onboard`.** `pip install <path-to-a-checkout>` or `pip install <git-or-URL-source>` installs the package and its `orc` console script (`[project.scripts]`, `pyproject.toml`) onto `$PATH`, real going forward rather than an aliased module invocation. From there, `orc onboard [--path DIR]` mechanizes the adopting-repo scaffold this section used to describe as hand-work: it ensures a `.orc/` `.gitignore` entry, installs the orc-ledger skill (content read from THIS installed package — one canonical origin, never a second hand-maintained copy) resolvably under `.claude/skills`, writes (or `--print-agents-block` prints, writing nothing) the copy-pasteable `## Delivery ledger (orc)` block below into the target repo's `AGENTS.md`, and reports install verification honestly (`orc` on `$PATH` vs. module form, journal dir resolution, optional `bd` presence). Idempotent re-run; an operator-modified target is skip-with-note unless `--force`. See `docs/cli/README.md`'s `orc onboard` reference for the full flag/output detail.
+- **Rungs 3–4 (multi-agent ledger, autonomous orchestrator)** — no additional install step: the same `orc` binary `onboard` verified, now driven by agents recording their own observations (`PLAYBOOK-AGENT-CLI`) or a real `PORT-EXECUTION` adapter, per the ladder table above.
+
 ## 3. Tailor-fitting (the customization surfaces)
 
 Orc Werk is customized by *where* you plug into it, not by forking it. The surfaces below are listed in the order most adopters touch them.
@@ -85,13 +93,21 @@ The canonical state machine, its invariants, the facts/decisions/effects vocabul
 
 ### Onboarding sessions in an adopting repository
 
-Copy the `orc-ledger` project skill (`.agents/skills/orc-ledger/` plus the
-`.claude/skills -> .agents/skills` symlink, or place it directly under
-`.claude/skills/`) into the adopting repository. A fresh session then
-self-onboards: orient via bare `orc`, resume rather than duplicate pending
-runs, and follow `PLAYBOOK-AGENT-CLI`'s seat discipline before recording.
-The skill keeps onboarding to six rules because the CLI's affordances teach
-the rest in situ.
+`orc onboard [--path DIR]` (`TASK-M3D-001`) mechanizes this: it installs the
+`orc-ledger` project skill into the adopting repository at
+`.agents/skills/orc-ledger/SKILL.md` and links it resolvably under
+`.claude/skills/orc-ledger`, and writes (or, with `--print-agents-block`,
+just prints) the same six-rule content as a copy-pasteable
+`## Delivery ledger (orc)` block for `AGENTS.md`-style files — the audience
+issue #55's superseded onboarding-snippet idea was right for all along:
+subagents in the adopting repo, distinct from the interactive-session skill
+above. A fresh session (interactive, via the skill, or a subagent, via the
+`AGENTS.md` block) then self-onboards the same way either surface teaches:
+orient via bare `orc`, resume rather than duplicate pending runs, and follow
+`PLAYBOOK-AGENT-CLI`'s seat discipline before recording. Both surfaces stay
+at six rules because the CLI's affordances teach the rest in situ, and both
+are sourced from the exact same packaged skill content — never two
+maintained copies of the protocol.
 
 ## 4. Worked example — a fleet control tower (Rozoro)
 

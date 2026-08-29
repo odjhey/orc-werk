@@ -24,7 +24,8 @@ This document does not replace the two playbooks it cross-links:
   verification-agent seat discipline for recording settlements and verdicts.
 - `.agents/skills/orc-ledger/SKILL.md` -- the fresh-session onboarding
   skill: orient via bare `orc`, resume-don't-duplicate, seat discipline,
-  recording mechanics.
+  recording mechanics. `orc onboard` (below) installs this same content
+  into an adopting repository.
 
 ## Quickstart
 
@@ -555,6 +556,70 @@ path as the visible text) so supporting terminals make it clickable
 capturing output programmatically -- the plain path prints byte-identical,
 with zero escape bytes.
 
+### `orc onboard`
+
+```text
+usage: orc onboard [-h] [--path PATH] [--print-agents-block] [--force]
+                    [--agents-file NAME] [--journal JOURNAL]
+```
+
+Mechanically scaffolds an adopting repository (`TASK-M3D-001`) -- the
+hand-work `docs/product/adoption.md` (`PRODUCT-ADOPTION`) used to describe
+as a manual copy. Four independently idempotent steps, each reported
+honestly on its own line:
+
+1. **gitignore** -- ensure a `.orc/` entry exists in `<path>/.gitignore`
+   (create the file if absent, append the entry if missing, skip-with-note
+   if already present). Append-only: an existing line is never rewritten.
+2. **skill install** -- write the orc-ledger skill's content to
+   `<path>/.agents/skills/orc-ledger/SKILL.md`, and link
+   `<path>/.claude/skills/orc-ledger` to it (a relative symlink,
+   `../../.agents/skills/orc-ledger`, resolving correctly from the link's
+   own directory -- the issue #63 lesson) so Claude Code's project-skill
+   discovery finds it directly. **The content is read from THIS installed
+   package** (`orc_werk.skills`, via `importlib.resources`) -- the single
+   canonical origin `onboard` copies from; it is never a second,
+   hand-maintained copy of the six-rule protocol embedded in this CLI's own
+   source.
+3. **agents-onboarding block** -- a copy-pasteable `## Delivery ledger
+   (orc)` block (the same six-rule content step 2 installs, mechanically
+   derived from it -- strip the YAML frontmatter and the H1 title, keep
+   everything else verbatim) written into `<path>/<agents-file>` (default
+   `AGENTS.md`), wrapped in HTML-comment markers so a re-run can detect and
+   compare it. `--print-agents-block` prints this block to stdout and
+   performs no other step -- writes nothing at all -- for pasting into
+   whatever agent-instructions file a repo already uses.
+4. **install verification** -- honestly reports: `orc` on `$PATH`
+   (`shutil.which`) vs. this interpreter's own ability to import
+   `orc_werk` (module form); the journal directory `--journal`/
+   `$ORC_JOURNAL_DIR`/`./.orc` precedence would resolve to, anchored at
+   `--path`; and the optional `bd` binary's presence (Beads mirror,
+   noted-optional, never required). Fabricates nothing -- every line names
+   what was checked and its found/absent outcome.
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--path` | `.` | target repository directory |
+| `--print-agents-block` | off | print the agents-onboarding block only; no other step runs, nothing is written |
+| `--force` | off | overwrite/replace a target that already exists with different content (default: skip-with-note) |
+| `--agents-file` | `AGENTS.md` | agent-instructions file (relative to `--path`) the Delivery ledger block is written into |
+| `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory the verification step reports on (anchored at `--path`); `onboard` never creates a journal itself |
+
+```bash
+orc onboard --path /path/to/adopting-repo
+orc onboard --path . --force              # re-run, overwriting operator-modified targets
+orc onboard --print-agents-block           # prints only, writes nothing
+```
+
+**Idempotent and non-destructive by construction**: every step compares
+what it would write against what is already there. An exact match is a
+`skip` note (no write). A target that already exists with *different*
+content -- the skill file, the `.claude/skills` link, or the agents-block
+markers -- is `skip-with-note` by default (never a hard failure) unless
+`--force` is given, which overwrites/replaces it in place, also reported.
+Errors (`--path` missing or not a directory) are canonical `ERR-VALIDATION`
+with `next` guidance (issue #94), exit `2`; every other exit is `0`.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -643,6 +708,8 @@ convention" sections -- this reference does not duplicate it.
 - `docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`) -- ship/verify
   seat discipline for recording settlements, candidates, and verdicts.
 - `.agents/skills/orc-ledger/SKILL.md` -- fresh-session onboarding skill.
+- `docs/product/adoption.md` (`PRODUCT-ADOPTION`) -- the adoption ladder
+  and per-rung mechanical install story `orc onboard` fulfills rung 2 of.
 - `docs/scenarios/SCN-007-pending-settlement.md` (`SCN-007`) -- normative
   spec for exit `3` / pending-settlement behavior.
 - `docs/extensions/crew-report/README.md` (`EXT-CREW-REPORT-V1`, superseded)
