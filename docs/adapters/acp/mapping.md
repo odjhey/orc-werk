@@ -108,7 +108,7 @@ Emitted on every settled `inspect()` observation's `extensions`:
 - `transcript_ref`: `eventLog.active_path` — the stable, independently-readable stream file path. Ref-only, never dereferenced/inlined by this adapter (`EXT-EXECUTION-SESSION-V1-SEMANTICS`'s "never inlined" rule).
 - `profile.model`: `sessions show`'s `acpx.current_model_id`, when present.
 - `profile.effort`: the adapter's own pinned `thought_level` value (e.g. `"low"`), when pinning is enabled.
-- An adapter-local `_orcw_unobservable: true` marker is added only on the unobservability-determined `failed` settlement, so a consumer can distinguish "the agent genuinely produced a non-`end_turn` result" from "we gave up because the daemon died with nothing recorded." This key is not part of `execution-session/v1`'s normative schema (`docs/extensions/execution-session/schema.md` defines no such field) — it rides inside the same payload as adapter-local informative debugging metadata, the same way an unknown key would be tolerated/round-tripped per `EXT-005`, and MUST NOT be relied on by any core or cross-provider policy code.
+- Unobservability-determined `failed` settlements add no adapter-local marker to this payload. In particular, the former `_orcw_unobservable` key was removed by issue #45 because nothing outside this adapter's own test consumed it and settlement metadata does not belong inside the session-provenance extension.
 
 ## Capability honesty
 
