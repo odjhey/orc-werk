@@ -41,7 +41,11 @@ from orc_werk.cli.config import (
     build_mirror,
     build_run_config,
     build_scripted_adapters,
+    deep_merge_config,
     load_config,
+    load_config_overlay,
+    load_repo_profile,
+    validate_config,
 )
 from orc_werk.cli.hyperlink import hyperlink_path
 from orc_werk.cli.journal_reading import (
@@ -197,26 +201,18 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     else:
         intent_text = args.intent
 
-    if args.config:
-        config = load_config(args.config)
-        run_id = args.run_id or config.get("run_id") or _derive_run_id(intent_text)
-    else:
-        # issue #55 H2 config persistence: no --config given -- before
-        # falling back to the bare-scripted default ({}), check whether
-        # this run already has an effective config durably persisted in
-        # its own run dir from an earlier dispatch (run-id-only
-        # re-dispatch; docs/playbooks/agent-cli-usage.md's fresh-session
-        # protocol). `run_id` must be resolvable without a config to
-        # consult in this branch -- exactly the same derivation `--config`
-        # would otherwise fall back to (`--run-id` flag, else the
-        # deterministic intent-text hash).
-        run_id = args.run_id or _derive_run_id(intent_text)
-        persisted_config_path = layout.config_path(journal_dir, run_id)
-        if persisted_config_path.exists():
-            config = load_config(str(persisted_config_path))
-            run_id = args.run_id or config.get("run_id") or run_id
-        else:
-            config = {}
+    # TASK-M4A-001 config layering.  The profile is discovered only at
+    # <resolved-journal-dir>/profile.json (normally <repo>/.orc/profile.json).
+    # Each higher layer recursively overrides the one below it.
+    profile = load_repo_profile(journal_dir) or {}
+    explicit = load_config_overlay(args.config) if args.config else {}
+    run_id = args.run_id or explicit.get("run_id") or _derive_run_id(intent_text)
+    persisted_config_path = layout.config_path(journal_dir, run_id)
+    persisted = load_config(str(persisted_config_path)) if persisted_config_path.exists() else {}
+    config = validate_config(
+        deep_merge_config(deep_merge_config(profile, persisted), explicit)
+    )
+    run_id = args.run_id or config.get("run_id") or run_id
 
     if run_id not in existing_run_ids and intent_text in existing_run_ids:
         raise validation_error(
