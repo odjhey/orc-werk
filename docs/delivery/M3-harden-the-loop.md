@@ -67,6 +67,33 @@ retrofitted. Full task cards authored at dispatch time (the M2 "details
 firm up at dispatch" convention); this phase note is their design
 source.
 
+## Phase M3d — Onboarding experience (operator direction, 2026-08-29)
+
+Adoption today is hand-work: the `orc` console script exists
+(`[project.scripts]` in `pyproject.toml`) but `PRODUCT-ADOPTION` never
+states the install path (the live second-repo adoption ran on a
+`PYTHONPATH` alias); the orc-ledger skill must be hand-copied into an
+adopting repo; subagents in adopting repos have no packaged onboarding
+(the skill serves interactive sessions; agents need a repo-doc block or
+a file their briefs can name). The pending/incremental default only
+works when a fresh seat *knows the protocol* — onboarding is therefore a
+correctness surface, not polish.
+
+- `TASK-M3D-001` — `orc onboard` (name firmed at dispatch): scaffolds
+  an adopting repo mechanically — `.orc/` gitignore entry, the
+  orc-ledger skill installed into the repo's skill path (content
+  sourced from the installed package, one canonical origin), a
+  printable/writable agents-onboarding block for `AGENTS.md`-style
+  files (the six-rule protocol, resurrecting the superseded issue #55
+  snippet idea for the audience it was right for: subagents in
+  adopting repos), and an install-verification step (`orc` runnable,
+  journal dir resolvable, `bd` presence noted-optional). Idempotent
+  re-run; refuses nothing it didn't create without saying so.
+- Docs: `PRODUCT-ADOPTION` gains the mechanical install story per rung
+  (pip install from path/URL → console script; the alias form retained
+  as the zero-install fallback), and the onboarding command becomes the
+  rung-2 entry step.
+
 ## Tail (explicitly unglamorous)
 
 - Trivia sweep (in flight at draft time: DFS-013 enumeration, stale CLI
@@ -87,9 +114,11 @@ attention model.
 
 ## Acceptance
 
-- `TASK-M3B-001`, `TASK-M3B-002`, `TASK-M3C-001`, and `TASK-M3C-002`
-  accepted through the ledger with the standard adversarial-verification
-  pipeline.
+- `TASK-M3B-001`, `TASK-M3B-002`, `TASK-M3C-001`, `TASK-M3C-002`, and
+  `TASK-M3D-001` accepted through the ledger with the standard
+  adversarial-verification pipeline.
+- A clean scratch repo reaches a working incremental-mode delivery from
+  `orc onboard`'s output alone (the M3d acceptance).
 - The operator's four review questions (what happened / this run in
   depth / briefs+hand-offs per turn / adapter content) each answerable
   in one command from the previous level's output.
