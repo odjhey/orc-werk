@@ -461,15 +461,32 @@ candidate, mirror, `candidate-pr`) or carried as journal DATA (an
 a hard, per-tool READ-ONLY allowlist at construction time, before it is
 ever offered for execution (the same judge-only bar
 `docs/adapters/no-mistakes/mapping.md`'s "Judge-only ruling" sets for the
-assurance adapter): `cat <path>`; `git [-C <path>] show ...` (no other git
-subcommand); `acpx <agent> sessions <history|show> ...`; `bd [--json]
-[-C <path>] <list|show> ...`; `no-mistakes axi <status|logs> ...`.
-Nothing else -- notably `gh pr view <pr>` (the `candidate-pr` row) is NOT
-in this allowlist, so that row keeps displaying unchanged but never
-executes under `--resolve`. A command outside the allowlist -- including
-a deliberately mutating one smuggled into a journal's `evidence_refs`
-(e.g. `git push`, `bd create`, `rm -rf`) -- REFUSES to execute: it prints
-`REFUSED: <reason>` plus the manual command, never runs.
+assurance adapter). Vetting has TWO layers, both required: (1) a
+tool+subcommand allowlist -- `cat <path>`; `git [-C <path>] show ...` (no
+other git subcommand); `acpx <agent> sessions <history|show> ...`; `bd
+[--json] [-C <path>] <list|show> ...`; `no-mistakes axi <status|logs>
+...`, nothing else; and (2) a **per-tool FLAG policy** over every token
+AFTER the subcommand (`_vet_flags`), because vetting the subcommand alone
+is an arbitrary-file-WRITE hole -- `git show --output=<path>` is a
+documented git write primitive that passes layer 1 (its subcommand is
+`show`). Layer 2 refuses git's write/exec options (`--output`/`-o`/`-O`,
+`--ext-diff`, `--textconv`) and any unknown flag (fail-closed), while
+allowing only curated read/render-only flags (`--stat`, `--numstat`,
+`--name-only`, ...); a value-taking flag's value is consumed unparsed so
+it can never be re-read as a flag. Journal content is attacker-
+influencable input (any executor that filled a seat wrote some of it), so
+interpolated identity tokens (candidate `head_sha`/`repo_path`, `acpx`
+agent/session ref) that begin with `-` are ALSO rejected at build time --
+the builder never mints a token that could be read as a flag (`git show
+--stat -- <sha>` can't guard the sha positionally: git would read it as a
+pathspec, so the guard is build-time `-`-lead rejection plus the flag
+policy). Notably `gh pr view <pr>` (the `candidate-pr` row) is NOT in the
+allowlist at all, so that row keeps displaying unchanged but never
+executes. A command outside either layer -- a mutating one smuggled into a
+journal's `evidence_refs` (`git push`, `bd create`, `rm -rf`) OR a write-
+flag smuggled onto an allowed subcommand (`git show --output=...`, via an
+evidence string or a crafted `head_sha`) -- REFUSES to execute: it prints
+`REFUSED: <reason>` plus the manual command, and writes nothing.
 
 Selectors: the `[N]` index the plain listing prints (copy-pasteable
 as-is), or `<kind>[:<substring>]` -- every row of that kind, optionally
