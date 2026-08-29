@@ -304,10 +304,13 @@ class MirrorRowUnitTest(unittest.TestCase):
             self.assertEqual(row.provider, "beads")
             self.assertIn("run:run-1", row.value)
             self.assertIn("/abs/bd-workspace", row.value)
-            self.assertEqual(row.resolve.display, "bd --json -C /abs/bd-workspace list --label run:run-1")
+            self.assertEqual(
+                row.resolve.display,
+                "bd --json -C /abs/bd-workspace list --label run:run-1 --status all",
+            )
             self.assertEqual(
                 row.resolve.argv,
-                ("bd", "--json", "-C", "/abs/bd-workspace", "list", "--label", "run:run-1"),
+                ("bd", "--json", "-C", "/abs/bd-workspace", "list", "--label", "run:run-1", "--status", "all"),
             )
 
 
@@ -502,7 +505,66 @@ class RefsMirrorCliTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
             self.assertIn("mirror", result.stdout)
             self.assertIn("run:refs-mirror", result.stdout)
-            self.assertIn(f"bd --json -C {workspace} list --label run:refs-mirror", result.stdout)
+            self.assertIn(
+                f"bd --json -C {workspace} list --label run:refs-mirror --status all",
+                result.stdout,
+            )
+
+    def test_resolve_accepted_mirror_includes_closed_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            mirror_stub = install_stub(tmp_dir)
+            workspace = tmp_dir / "bd-workspace"
+            (workspace / ".beads").mkdir(parents=True)
+            config = {
+                "mirror": {"adapter": "beads", "workspace": str(workspace), "bd_bin": str(mirror_stub)},
+                "attempts": {
+                    "work-1": [
+                        {
+                            "outcome": "completed",
+                            "candidate": {"label": "m1"},
+                            "assurance": {"verdict": "accepted"},
+                        }
+                    ]
+                },
+            }
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            dispatch = _run_cli(
+                tmp_dir,
+                "dispatch",
+                "accepted mirror resolve demo",
+                "--config",
+                str(config_path),
+                "--run-id",
+                "refs-mirror-accepted",
+                env={"ORC_BEADS_STUB_LOG": str(tmp_dir / "bd-stub.log")},
+            )
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            bin_dir = tmp_dir / "bin"
+            bin_dir.mkdir()
+            bd = bin_dir / "bd"
+            bd.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                "issue = {'id': 'refs-mirror-accepted--work-1', 'status': 'closed'}\n"
+                "print(json.dumps([issue] if '--status' in sys.argv and sys.argv[sys.argv.index('--status') + 1] == 'all' else []))\n",
+                encoding="utf-8",
+            )
+            bd.chmod(0o755)
+            result = _run_cli(
+                tmp_dir,
+                "refs",
+                "refs-mirror-accepted",
+                "--resolve",
+                "mirror",
+                env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertNotIn("REFUSED", result.stdout)
+            self.assertIn("refs-mirror-accepted--work-1", result.stdout)
+            self.assertNotIn("\n[]\n", result.stdout)
 
 
 # ---------------------------------------------------------------------------
@@ -561,7 +623,7 @@ class VetReadOnlyUnitTest(unittest.TestCase):
             ["acpx", "pi", "sessions", "history", "sess-1"],
             ["acpx", "pi", "sessions", "show", "sess-1"],
             ["bd", "list", "--label", "run:x"],
-            ["bd", "--json", "-C", "/abs/ws", "list", "--label", "run:x"],
+            ["bd", "--json", "-C", "/abs/ws", "list", "--label", "run:x", "--status", "all"],
             ["bd", "--json", "-C", "/abs/ws", "show", "bd-1"],
             ["no-mistakes", "axi", "status", "--run", "r1"],
             ["no-mistakes", "axi", "logs", "--run", "r1", "--step", "review", "--full"],
