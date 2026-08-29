@@ -251,28 +251,26 @@ def render_next_block(
                 wp = projection.works[work_id]
                 if wp.current_assurance_id is None:
                     continue
-                # TASK-M3B-002 (issue #92 scope extension): a pending
-                # assurance may be genuinely still in flight, OR it may be a
-                # bound run whose identity a real adapter's inspect()-side
-                # guard could not positively reconfirm against this
-                # candidate (an already-bound divergent/unconfirmable
-                # provider run) -- indistinguishable from pure journal
-                # state alone (`orc status` never calls a port live). Name
-                # the two facts durably resolvable from journal state
-                # instead of guessing which case this is: the opaque,
-                # adapter-owned `assurance_id` (`wp.current_assurance_id`,
-                # never parsed here, INV-014) and the candidate's own head
-                # when a git-backed candidate identified one -- plus the
-                # one operator recourse that already covers a genuinely
-                # stuck assurance regardless of cause (`TASK-M3B-001`'s
-                # abandon record, PR #115).
+                # TASK-M3B-002 (issue #92 scope extension, fix-round
+                # finding 3): a positively-confirmed identity divergence
+                # SETTLES as inconclusive (visible through the journal as
+                # a BLOCKED root cause -- it never rests here), so a
+                # pending assurance means healthy-in-flight or
+                # identity-unconfirmable only; no speculative "this may
+                # have diverged" framing. Name the two facts durably
+                # resolvable from journal state: the opaque, adapter-owned
+                # `assurance_id` (`wp.current_assurance_id`, never parsed
+                # here, INV-014) and the candidate's own head when a
+                # git-backed candidate identified one; mention the
+                # operator abandon record (`TASK-M3B-001`, PR #115) only
+                # as the recovery for a run that stays pending
+                # unexpectedly long (the unconfirmable case).
                 head = _candidate_head_sha(history, work_id, wp)
                 head_text = head if head is not None else "(unknown)"
                 lines.append(
                     f"  - work {work_id}'s bound assurance is {wp.current_assurance_id} "
-                    f"(candidate head {head_text}) -- if you have out-of-band reason to "
-                    "believe this bound run has diverged from the candidate or will never "
-                    "settle for it, recover via: orc dispatch --run-id "
+                    f"(candidate head {head_text}); if it stays pending unexpectedly "
+                    "long, operator recovery is: orc dispatch --run-id "
                     f"{run_id} --journal {journal_dir} --abandon-work {work_id} "
                     '--abandon-reason "<why>"'
                 )

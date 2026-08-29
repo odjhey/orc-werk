@@ -290,9 +290,15 @@ class NoMistakesAssuranceVerdictMappingTest(unittest.TestCase):
 class NoMistakesInspectIdentityGuardTest(unittest.TestCase):
     """`TASK-M3B-002` (issue #92 scope extension): `inspect()` must
     positively re-confirm the bound run's identity against the candidate
-    before treating anything as this candidate's settlement -- an
-    already-bound divergent or unconfirmable run must never settle
-    (the xatu incident shape, PR #98's audit-flagged follow-up gap).
+    before treating anything as this candidate's settlement (the xatu
+    incident shape, PR #98's audit-flagged follow-up gap). Per the
+    fix-round watchtower ruling (mapping doc "Identity guard"), the two
+    guard outcomes differ: a POSITIVELY-CONFIRMED divergence (both heads
+    known, mismatch) settles `inconclusive` with the divergence detail
+    in `evidence_refs` -- a permanently wrong binding, a judgment about
+    THIS assurance attempt, never an adoption of the foreign outcome
+    (the foreign `outcome: passed` is never mapped to `accepted`); an
+    UNCONFIRMABLE identity (no readable head) stays running/pending.
     Threading design: the candidate's expected head rides the
     (adapter-owned, opaque) `assurance_id` itself -- durable across a
     fresh process/instance with zero in-memory state (INV-020,
@@ -339,29 +345,35 @@ class NoMistakesInspectIdentityGuardTest(unittest.TestCase):
     # real git object ids are not exercised by this failure mode since they
     # are never all-decimal.
 
-    def test_bound_then_divergent_run_does_not_settle(self) -> None:
+    def test_bound_then_divergent_run_settles_inconclusive_never_adopts_foreign_outcome(self) -> None:
         adapter = self._adapter()
         run, run_id = self._bind(adapter, fingerprint="fp-divergent", key="k-divergent", head_sha="a" * 40)
         # The bound run's own observed head has since diverged from the
         # candidate it was bound to (a foreign/adopted pipeline reaching
-        # its own terminal outcome -- exactly the xatu incident shape),
-        # yet reaches an otherwise-settleable terminal outcome.
+        # its own terminal outcome -- exactly the xatu incident shape) and
+        # reaches an otherwise-settleable terminal `outcome: passed`.
         self._world.set_head_shape(run_id, head="b" * 40, emit_run_head=True, emit_branch_sync=True)
         self._world.set_outcome(run_id, "passed")
 
         observed = adapter.inspect(assurance_id=run.id)
-        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
-        self.assertIsNone(observed.verdict)
+        # Settles INCONCLUSIVE (a judgment about this assurance attempt:
+        # the binding is permanently wrong) -- NEVER `accepted` from the
+        # foreign run's own passed outcome (P-004, INV-007..INV-010).
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.verdict, "inconclusive")
+        self.assertEqual(observed.candidate_fingerprint, "fp-divergent")
         ref = observed.evidence_refs[0]
         self.assertEqual(ref["candidate_expected_head"], "a" * 40)
         self.assertEqual(ref["observed_head"], "b" * 40)
         self.assertFalse(ref["identity_confirmed"])
+        self.assertEqual(ref["divergence"], "bound-run-identity-divergent")
         self.assertEqual(ref["no_mistakes_run_id"], run_id)
 
     def test_fresh_process_confirms_divergence_from_durable_assurance_id(self) -> None:
         """CRASH-RECOVERY/INV-020: a FRESH process/instance, given only the
-        durable `assurance_id`, must reach the identical non-settlement --
-        the guard cannot depend on in-process memory from request()."""
+        durable `assurance_id`, must reach the identical inconclusive-with-
+        divergence-evidence settlement -- the guard cannot depend on
+        in-process memory from request()."""
         first = self._adapter()
         run, run_id = self._bind(first, fingerprint="fp-crash-divergent", key="k-crash-divergent", head_sha="c" * 40)
         self._world.set_head_shape(run_id, head="d" * 40, emit_run_head=True, emit_branch_sync=True)
@@ -369,8 +381,9 @@ class NoMistakesInspectIdentityGuardTest(unittest.TestCase):
 
         second = self._adapter()  # fresh instance, empty in-process caches
         observed = second.inspect(assurance_id=run.id)
-        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
-        self.assertIsNone(observed.verdict)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.verdict, "inconclusive")
+        self.assertEqual(observed.evidence_refs[0]["divergence"], "bound-run-identity-divergent")
 
     # -- bound-then-unconfirmable ---------------------------------------------
 
@@ -447,6 +460,24 @@ class NoMistakesInspectIdentityGuardTest(unittest.TestCase):
         )
         with self.assertRaises(CoreError) as ctx:
             adapter.inspect(assurance_id=legacy_id)
+        self.assertEqual(ctx.exception.to_canonical()["error"], "ERR-NOT-FOUND")
+
+    def test_legacy_id_with_colon_bearing_repo_path_never_misparses(self) -> None:
+        """Fix-round finding 2: a LEGACY 4-field id whose repo_path itself
+        contains ':' has the same colon count as a well-formed 5-field id
+        -- without the expected_head shape validation (exactly 40
+        lowercase hex or the literal '-'), the path's first segment would
+        silently land in the expected_head slot and the remainder in
+        repo_path: a wrong head bound to a wrong path. It must instead be
+        the legible legacy-format failure (ERR-NOT-FOUND), never a
+        binding."""
+        adapter = self._adapter()
+        legacy_colon_path_id = (
+            "no-mistakes:fp-aaaaaaaaaaaaaaaaaaaaaaaa:STUB0000000000000000000001:"
+            "/mnt/volumes:archive/repos/xatu"
+        )
+        with self.assertRaises(CoreError) as ctx:
+            adapter.inspect(assurance_id=legacy_colon_path_id)
         self.assertEqual(ctx.exception.to_canonical()["error"], "ERR-NOT-FOUND")
 
 

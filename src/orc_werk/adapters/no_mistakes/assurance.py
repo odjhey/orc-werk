@@ -43,10 +43,13 @@ Design summary (full rationale: `docs/adapters/no-mistakes/mapping.md`):
   settled-observation cache exists only as a fast path, mirroring
   `ScriptedAssurance`/`AcpExecution`). Before treating anything as a
   settlement, `inspect()` re-confirms the bound run's identity against the
-  candidate it was requested for -- an already-bound divergent or
-  unconfirmable run never settles (`TASK-M3B-002`, issue #92 scope
-  extension; see "assurance_id shape" and "Identity guard" in the mapping
-  doc).
+  candidate it was requested for (`TASK-M3B-002`, issue #92 scope
+  extension): a POSITIVELY-CONFIRMED divergence settles `inconclusive`
+  with the divergence detail in `evidence_refs` (a permanently wrong
+  binding -- a judgment about this assurance attempt, never an adoption
+  of the foreign outcome); an UNCONFIRMABLE identity (no readable head)
+  stays pending, never settled (see "assurance_id shape" and "Identity
+  guard" in the mapping doc).
 - `assurance_id` durably encodes everything a FRESH process needs to
   inspect: the candidate fingerprint this run was bound to at request time
   (`INV-007`), the `no-mistakes`-native run id, the candidate's expected
@@ -169,11 +172,29 @@ def _category_for(finding_id: str) -> str:
 # confused with a real head.
 _UNKNOWN_HEAD_TOKEN = "-"
 
+# The only shape a REAL embedded expected_head may take: exactly 40
+# lowercase hex characters (a full git sha1 object id, what `git
+# rev-parse` emits and GitDiffCandidate records). Enforced at BOTH build
+# time (a non-conforming candidate head degrades to the sentinel, so this
+# adapter never mints an id its own parser rejects) and parse time
+# (TASK-M3B-002 fix round, finding 2: without the parse-time check, a
+# LEGACY 4-field id whose repo_path itself contains ':' would silently
+# mis-parse -- the path's first segment landing in the expected_head slot
+# and the remainder in repo_path, a wrong head bound to a wrong path --
+# instead of the legible ERR-NOT-FOUND legacy-format failure; mapping doc
+# "assurance_id shape").
+_HEAD_SHA_HEX_CHARS = frozenset("0123456789abcdef")
+
+
+def _is_conforming_head(value: str) -> bool:
+    return len(value) == 40 and all(c in _HEAD_SHA_HEX_CHARS for c in value)
+
 
 def _assurance_id(*, fingerprint: str, native_run_id: str, expected_head: Optional[str], repo_path: str) -> str:
     # fingerprint is always "fp-<24hex>" (no colon); native_run_id is a
     # fixed-width ULID-shaped token (no colon); expected_head is either a
-    # full git object id (hex, no colon) or `_UNKNOWN_HEAD_TOKEN` -- so a
+    # conforming 40-lowercase-hex git object id or `_UNKNOWN_HEAD_TOKEN`
+    # (build-time conformance fallback, see _is_conforming_head) -- so a
     # maxsplit=4 parse is unambiguous even when repo_path itself contains
     # ':' (mirrors AcpExecution's execution_id shape/rationale). Format
     # bump for TASK-M3B-002: the inspect()-side identity guard (below)
@@ -182,7 +203,11 @@ def _assurance_id(*, fingerprint: str, native_run_id: str, expected_head: Option
     # "assurance_id shape" section for the full rationale and the resulting
     # breaking-format-change note (a pre-TASK-M3B-002 assurance_id, 4
     # fields not 5, no longer parses; see "Limitations").
-    head_token = expected_head if expected_head else _UNKNOWN_HEAD_TOKEN
+    head_token = (
+        expected_head
+        if expected_head is not None and _is_conforming_head(expected_head)
+        else _UNKNOWN_HEAD_TOKEN
+    )
     return f"no-mistakes:{fingerprint}:{native_run_id}:{head_token}:{repo_path}"
 
 
@@ -193,7 +218,13 @@ def _parse_assurance_id(assurance_id: str) -> tuple[str, str, Optional[str], str
         or parts[0] != "no-mistakes"
         or not parts[1].startswith("fp-")
         or not parts[2]
-        or not parts[3]
+        # TASK-M3B-002 fix round, finding 2: the expected_head slot must
+        # POSITIVELY conform (40 lowercase hex, or the exact unknown
+        # sentinel) -- anything else means this is not a well-formed
+        # 5-field reference (most likely a legacy 4-field id whose
+        # colon-bearing repo_path split into this slot) and must fail
+        # legibly, never bind.
+        or not (parts[3] == _UNKNOWN_HEAD_TOKEN or _is_conforming_head(parts[3]))
         or not parts[4]
     ):
         raise not_found_error(
@@ -479,26 +510,57 @@ class NoMistakesAssurance(AssurancePort):
         # was never known, there is nothing to positively confirm against,
         # so this never NEWLY refuses to settle a case request() itself did
         # not refuse (mapping doc "assurance_id shape" documents the
-        # tradeoff). Unconfirmable or divergent: do NOT settle -- report
-        # `running` (never settled, never an error) so the Work rests
-        # pending indefinitely (`STATE-DELIVERY` item 7's existing "waiting
-        # is a normal resting point"), recoverable only via the operator's
-        # `DEC-ABANDON-ATTEMPT` (`TASK-M3B-001`, PR #115) -- this adapter
-        # never resolves the mismatch itself (judge-only ruling).
-        # `evidence_refs` carries the externally-resolvable divergence
-        # detail even though unsettled -- `AssuranceObservation` places no
-        # state restriction on it -- so a caller inspecting the observation
-        # directly (tests, a future live CLI peek) never has to guess.
+        # tradeoff). The two failure outcomes mean different things (fix
+        # round, watchtower ruling; mapping doc "Identity guard"):
+        #
+        # - Divergence POSITIVELY CONFIRMED (observed head known,
+        #   mismatch): the binding is permanently wrong -- no honest
+        #   verdict about THIS candidate is ever derivable from the bound
+        #   run. Settle `inconclusive` (a judgment about this assurance
+        #   attempt, never an adoption of the foreign outcome -- the
+        #   foreign gate/outcome below is deliberately never reached),
+        #   the same terminal-without-a-candidate-judgment posture as the
+        #   cancelled/aborted verdict-table row. The settlement journals
+        #   normally (FACT-ASSURE-SETTLED + evidence_refs, #87), policy
+        #   blocks with assurance-inconclusive, and the divergence is
+        #   visible via orc status/history/refs/report -- the card's
+        #   visibility acceptance, satisfied through the journal.
+        # - UNCONFIRMABLE (no readable head anywhere): nothing positively
+        #   known either way -- the head may become readable on a later
+        #   poll. Report `running` (never settled, never an error) so the
+        #   Work rests pending (`STATE-DELIVERY` item 7's "waiting is a
+        #   normal resting point"); a run pending unconfirmably long is
+        #   recovered via the operator's `DEC-ABANDON-ATTEMPT`
+        #   (`TASK-M3B-001`, PR #115). The unsettled observation's
+        #   `evidence_refs` still carries the identity detail
+        #   (`AssuranceObservation` places no state restriction on it).
         if expected_head is not None:
             observed_head = _observed_head(status)
-            if observed_head is None or observed_head != expected_head:
+            if observed_head is not None and observed_head != expected_head:
+                observation = AssuranceObservation(
+                    state=LIFECYCLE_STATE_SETTLED,
+                    verdict="inconclusive",
+                    candidate_fingerprint=fingerprint,
+                    evidence_refs=(
+                        {
+                            **self._evidence_ref(run_block=run_block, repo_path=repo_path),
+                            "candidate_expected_head": expected_head,
+                            "observed_head": observed_head,
+                            "identity_confirmed": False,
+                            "divergence": "bound-run-identity-divergent",
+                        },
+                    ),
+                )
+                self._settled_snapshot[assurance_id] = observation
+                return observation
+            if observed_head is None:
                 return AssuranceObservation(
                     state=LIFECYCLE_STATE_RUNNING,
                     evidence_refs=(
                         {
                             **self._evidence_ref(run_block=run_block, repo_path=repo_path),
                             "candidate_expected_head": expected_head,
-                            "observed_head": observed_head,
+                            "observed_head": None,
                             "identity_confirmed": False,
                         },
                     ),

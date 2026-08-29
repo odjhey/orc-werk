@@ -214,16 +214,21 @@ class NoMistakesWiringSmokeTest(unittest.TestCase):
         self.assertEqual(result3.returncode, 0, result3.stdout + result3.stderr)
         self.assertIn("state=ACCEPTED", result3.stdout)
 
-    def test_bound_then_divergent_run_never_settles_and_status_surfaces_it(self) -> None:
-        """`TASK-M3B-002` (issue #92 scope extension), the xatu incident
-        shape reproduced end-to-end: a run this candidate's assurance is
-        genuinely bound to reaches a terminal, otherwise-settleable
-        outcome -- but its observed head has since diverged from the
-        candidate. inspect()'s identity guard must refuse to settle it
-        (the Work stays pending, exit 3, forever -- never a silently wrong
-        ACCEPTED), and `orc status` (pure journal read, no live port call)
-        must still name the bound assurance + candidate head + the
-        abandon-flags recovery path."""
+    def test_bound_then_divergent_run_blocks_inconclusive_with_divergence_evidence(self) -> None:
+        """`TASK-M3B-002` (issue #92 scope extension, fix-round watchtower
+        ruling), the xatu incident shape reproduced end-to-end: a run this
+        candidate's assurance is genuinely bound to reaches a terminal
+        `outcome: passed` -- but its observed head has since diverged from
+        the candidate. inspect()'s identity guard settles the assurance
+        INCONCLUSIVE (a permanently wrong binding -- a judgment about this
+        assurance attempt, never an adoption of the foreign passed
+        outcome), so the journaled FACT-ASSURE-SETTLED carries the
+        divergence evidence, v0 policy BLOCKS the work with
+        assurance-inconclusive, and the divergence is visible through the
+        whole journal-reading surface (`orc status` root cause, `orc
+        history`'s settled fact, `orc refs`'s evidence row) -- the card's
+        visibility acceptance, satisfied through the journal with no
+        orchestrator/port change."""
         self._write_config()
 
         result1 = self._run_cli(
@@ -236,8 +241,8 @@ class NoMistakesWiringSmokeTest(unittest.TestCase):
         self.assertIsNotNone(active_run_id)
 
         # The bound run's observed head diverges from the real candidate
-        # (a foreign/adopted pipeline reaching its own terminal outcome),
-        # then reaches an otherwise-settleable terminal outcome.
+        # (a foreign/adopted pipeline), then reaches a terminal,
+        # otherwise-settleable `outcome: passed`.
         self.world.set_head_shape(
             active_run_id, head="f" * 40, emit_run_head=True, emit_branch_sync=True
         )
@@ -248,18 +253,37 @@ class NoMistakesWiringSmokeTest(unittest.TestCase):
             "--config", str(self.config_path), "--journal", str(self.journal_dir),
             "--run-id", self.run_id,
         )
-        # Never silently ACCEPTED on a foreign outcome (P-004/INV-007..
-        # INV-010) -- stays pending, awaiting the operator's out-of-band
-        # judgment (TASK-M3B-001's abandon record is the only recovery).
-        self.assertEqual(result2.returncode, 3, result2.stdout + result2.stderr)
-        self.assertIn("awaiting=assurance-verdict", result2.stdout)
+        # Never silently ACCEPTED on the foreign passed outcome (P-004/
+        # INV-007..INV-010): the inconclusive settlement routes straight
+        # to BLOCKED (assurance-inconclusive), exit 1.
+        self.assertEqual(result2.returncode, 1, result2.stdout + result2.stderr)
         self.assertNotIn("state=ACCEPTED", result2.stdout)
+        self.assertIn("state=BLOCKED", result2.stdout)
+        self.assertIn("blocked_reason=assurance-inconclusive", result2.stdout)
 
+        # `orc status` shows the same blocked root cause durably.
         status = self._run_cli("status", self.run_id, "--journal", str(self.journal_dir))
-        self.assertEqual(status.returncode, 3, status.stdout + status.stderr)
-        self.assertIn("bound assurance is no-mistakes:", status.stdout)
-        self.assertIn("--abandon-work work-1", status.stdout)
-        self.assertIn("--abandon-reason", status.stdout)
+        self.assertEqual(status.returncode, 1, status.stdout + status.stderr)
+        self.assertIn("blocked_reason=assurance-inconclusive", status.stdout)
+
+        # `orc history` carries the settled fact WITH the divergence
+        # evidence (the #85/#87 evidence_refs transport).
+        history = self._run_cli(
+            "history", self.run_id, "--journal", str(self.journal_dir), "--limit", "0"
+        )
+        self.assertEqual(history.returncode, 0, history.stdout + history.stderr)
+        self.assertIn("FACT-ASSURE-SETTLED", history.stdout)
+        self.assertIn('"verdict":"inconclusive"', history.stdout)
+        self.assertIn("bound-run-identity-divergent", history.stdout)
+        self.assertIn("f" * 40, history.stdout)
+        self.assertIn("candidate_expected_head", history.stdout)
+
+        # `orc refs` renders the divergence evidence entry as an evidence
+        # row, resolvable via the adapter's own `command` field.
+        refs = self._run_cli("refs", self.run_id, "--journal", str(self.journal_dir))
+        self.assertEqual(refs.returncode, 0, refs.stdout + refs.stderr)
+        self.assertIn("bound-run-identity-divergent", refs.stdout)
+        self.assertIn(f"no-mistakes axi status --run {active_run_id}", refs.stdout)
 
 
 if __name__ == "__main__":
