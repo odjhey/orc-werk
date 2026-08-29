@@ -144,23 +144,29 @@ Mirrors the acp `AcpExecution` adapter's design principle
   identical verdict by re-querying `axi status --run <id>` (`INV-020`),
   exercised directly by
   `test_fresh_adapter_instance_reaches_same_settlement`
-  (`tests/conformance/test_no_mistakes_assurance_unit.py`).
+  (`tests/conformance/test_no_mistakes_assurance_unit.py`). Before treating
+  any observed status as this candidate's settlement, `inspect()` also
+  re-confirms the bound run's identity -- see "Identity guard
+  (inspect()-side, `TASK-M3B-002`)" below.
 
 ## `assurance_id` shape (durable, self-describing)
 
 ```text
-no-mistakes:<candidate.fingerprint>:<native_run_id>:<repo_path>
+no-mistakes:<candidate.fingerprint>:<native_run_id>:<expected_head>:<repo_path>
 ```
 
 `candidate.fingerprint` is always `fp-<24hex>` (no colon); `native_run_id`
 is `no-mistakes`'s own fixed-width ULID-shaped run id (no colon observed);
-`repo_path` is the remainder of the string (a `maxsplit=3` parse is
-therefore unambiguous even if `repo_path` itself contains `:`) -- mirrors
-`AcpExecution`'s `execution_id` shape/rationale exactly (fixed-width
-tokens first, free-form path last).
+`expected_head` (`TASK-M3B-002`, see "Identity guard" below) is either a
+full git object id (hex, no colon) or the literal sentinel `-` when
+`request()` genuinely could not determine one; `repo_path` is the
+remainder of the string (a `maxsplit=4` parse is therefore unambiguous
+even if `repo_path` itself contains `:`) -- mirrors `AcpExecution`'s
+`execution_id` shape/rationale exactly (fixed-width tokens first,
+free-form path last).
 
-Both durable facts a fresh process needs are embedded directly, rather
-than requiring a separate lookup:
+Every durable fact a fresh process needs is embedded directly, rather than
+requiring a separate lookup:
 
 - **`candidate.fingerprint`** is bound once, at `request()` time, to the
   exact `Candidate` this run was requested against (`INV-007`) -- this
@@ -173,6 +179,119 @@ than requiring a separate lookup:
   most recent" default -- this is what makes a fresh process's
   `inspect()` immune to a newer, unrelated run having since started in
   the same `repo_path`.
+- **`expected_head`** is the candidate identity `inspect()`'s identity
+  guard confirms the bound run's own observed head against, every time,
+  from durable state alone -- see the next section.
+
+**Breaking format change (`TASK-M3B-002`).** This is a 4-field ->
+5-field format bump: a pre-`TASK-M3B-002` `assurance_id` (no
+`expected_head` segment) no longer parses -- `inspect()` raises
+`ERR-NOT-FOUND` for it, the same as any other malformed reference, rather
+than silently reinterpreting a shorter shape (`_parse_assurance_id`,
+`test_pre_task_four_part_assurance_id_no_longer_parses`). Judged an
+acceptable, least-commitment choice over a backward-compatible dual-shape
+parser: this adapter shipped this same sprint (`TASK-M2-001`) with no wide
+deployment history, a fragile "guess the shape from field count/content"
+parser would be exactly the kind of TOON-parser-style ambiguity this doc
+already flags as a known-issues pattern elsewhere ("TOON parsing"), and
+the operational mitigation for a run wedged by this bump is identical to
+the mitigation issue #92 already documents for any other wedge: quarantine
+the journal dir, or -- once this task lands -- abandon the stuck attempt
+via `TASK-M3B-001`'s operator record (see "Identity guard" below).
+
+## Identity guard (inspect()-side, `TASK-M3B-002`, issue #92 scope extension)
+
+PR #98 closed the *adoption*-time hole: `request()` fails closed on an
+unrelated or unconfirmable active run before ever adopting it (see
+"Cross-process `request()` idempotency" below). Its own audit flagged a
+narrower, *settlement*-time gap it did not close: an ALREADY-BOUND run
+(adopted before PR #98's guard existed, or bound via any future identity
+drift) could still reach a terminal, otherwise-settleable outcome that
+belongs to a different candidate than the one this Assurance was requested
+for -- and `inspect()`, re-confirming only the native run id, would settle
+that foreign outcome as this candidate's verdict. This is the exact
+`P-004`/`INV-007`..`INV-010` break the adapter exists to prevent (the xatu
+incident).
+
+**The guard.** Before `inspect()` treats a gate, a completed outcome, or an
+inconclusive-terminal status as this candidate's settlement, it re-derives
+`observed_head` from the freshly-read status using the identical
+precedence `request()`'s own guard uses (`run_block.head` first,
+`branch_sync.pipeline.submitted_head`/`branch_sync.local.head`
+corroboration when absent -- `_observed_head`, shared by both guards) and
+compares it against `expected_head` (embedded in `assurance_id`, see
+above). Unconfirmable (`observed_head` absent) or divergent (`observed_head
+!= expected_head`): `inspect()` returns `state: running` -- never settled,
+never an error -- so the Work rests pending indefinitely, the same
+"waiting is a normal resting point" the port already models for a
+genuinely in-flight run (`STATE-DELIVERY` item 7). The returned
+observation's `evidence_refs` still carries the full, externally-checkable
+divergence detail (`no_mistakes_run_id`, `candidate_expected_head`,
+`observed_head`, `identity_confirmed: false`) even though unsettled --
+`AssuranceObservation` places no state restriction on `evidence_refs`, so
+a direct caller (tests today; a future live CLI peek) never has to guess.
+
+**Threading design decision: `expected_head` rides `assurance_id`, not a
+journaled Fact field.** The task card's design note offered two
+candidates: thread the candidate identity through the journaled
+`FACT-ASSURE-STARTED` (docs-first field amendment, mirroring the #85
+`evidence_refs` precedent), or another durable path. `FACT-ASSURE-STARTED`
+was NOT chosen: `AssurancePort.inspect()` is declared `inspect(self, *,
+assurance_id: str)` -- its only input is the opaque `assurance_id` string.
+A fact journaled durably but never passed into `inspect()` cannot actually
+reach the guard without also changing that signature (e.g. adding an
+`expected_head`/`candidate` parameter) -- which is a `PORT-ASSURANCE`
+contract change the task brief explicitly named as a stop condition ("a
+threading mechanism that would require a `PORT-ASSURANCE` contract change
+-> STOP and report"). Embedding `expected_head` in `assurance_id` instead
+needs zero core/port/orchestrator changes: `assurance_id` is already
+adapter-owned and already documented as "durably encodes everything a
+FRESH process needs to inspect" (see above) -- this is one more field in
+that same envelope, not a new channel. **Tradeoff accepted**: the guard is
+therefore enforced only when `expected_head` is a real value (not the `-`
+sentinel) -- when `request()` itself genuinely could not determine a head
+at bind time (already-accepted, pre-existing degraded territory for the
+fresh-spawn path, unrelated to this task's scope), there is nothing to
+positively confirm against, so `inspect()` never NEWLY refuses to settle a
+case `request()` itself did not refuse. This preserves every pre-existing
+verdict-mapping test unchanged (none of them supply a candidate head) and
+keeps the guard's blast radius exactly the incident shape it targets.
+
+**CRASH-RECOVERY (`INV-020`).** Because `expected_head` lives entirely
+inside the durable `assurance_id` string, a FRESH process/instance with
+zero in-process state reaches the identical guard decision purely from
+`assurance_id` -- exercised directly by
+`test_fresh_process_confirms_divergence_from_durable_assurance_id`,
+`test_fresh_process_confirms_unconfirmable_from_durable_assurance_id`, and
+`test_fresh_process_confirms_matching_identity_still_settles`
+(`tests/conformance/test_no_mistakes_assurance_unit.py`).
+
+**Recovery.** This adapter never resolves the mismatch itself
+(judge-only ruling) -- a Work whose Assurance can never positively
+reconfirm identity rests pending forever unless an operator intervenes.
+Recovery is exactly `TASK-M3B-001`'s existing abandon record (merged PR
+#115): `orc dispatch --run-id <run> --abandon-work <work_id> --abandon-reason
+"<why>"` records `DEC-ABANDON-ATTEMPT`/`FACT-ATTEMPT-ABANDONED` for the
+stuck attempt (never a fabricated verdict, `INV-003`/`INV-009`) and lets
+ordinary retry-budget machinery take over -- this task does not rebuild
+that machinery, only makes sure a diverged no-mistakes run actually lands
+at the same "unsettleable Assurance" resting point `TASK-M3B-001` already
+knows how to recover from. **Status-output surfacing**: since `orc status`
+is a pure journal read (no live port call), it cannot show the bound run's
+CURRENTLY observed head/branch/pr -- only journal-durable facts. The
+`next:` block's pending-assurance affordance (`orc_werk.cli.affordances`)
+therefore names the opaque, adapter-owned `assurance_id` verbatim (never
+parsed by that generic CLI layer, `INV-014`) alongside the candidate's own
+`head_sha` (when a git-backed candidate identified one, read from the
+already-durable `FX-IDENTIFY-CANDIDATE` effect record the same way the
+`accepted` affordance's `gh pr view` hint already does) and a pointer at
+the abandon flags -- for every pending assurance, not conditionally, since
+`orc status` cannot itself distinguish "genuinely still in flight" from
+"identity-guard-blocked" without a live call. The live, currently-observed
+foreign head is visible via the adapter's own `evidence_refs` on a direct
+`inspect()` call, or by querying the provider directly (`no-mistakes axi
+status --run <id>`, printable from the assurance_id's embedded
+`native_run_id`).
 
 ## Cross-process `request()` idempotency (best-effort, unlike acp)
 
@@ -448,3 +567,14 @@ known-issues row in `docs/playbooks/cli-usage.md`.
   regress the mechanical never-push guarantee (see "Judge-only ruling"'s
   fail-closed note for the full hazard and the version re-probe
   mitigation).
+- **`assurance_id`'s `TASK-M3B-002` format bump is breaking, not
+  backward-compatible** -- a pre-`TASK-M3B-002` (4-field) `assurance_id`
+  no longer parses (see "assurance_id shape"'s "Breaking format change").
+- **`orc status` cannot show a bound run's currently-observed
+  head/branch/pr** -- it is a pure journal read with no live port call, so
+  the pending-assurance affordance can only ever show the candidate's own
+  (durably journaled) head, the opaque `assurance_id`, and a static
+  abandon-flags pointer -- never a live "here is what actually diverged"
+  comparison (see "Identity guard"'s "Status-output surfacing"). The live
+  observed value remains directly resolvable via `no-mistakes axi status
+  --run <id>` or a fresh `inspect()` call's `evidence_refs`.

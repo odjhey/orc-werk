@@ -214,6 +214,53 @@ class NoMistakesWiringSmokeTest(unittest.TestCase):
         self.assertEqual(result3.returncode, 0, result3.stdout + result3.stderr)
         self.assertIn("state=ACCEPTED", result3.stdout)
 
+    def test_bound_then_divergent_run_never_settles_and_status_surfaces_it(self) -> None:
+        """`TASK-M3B-002` (issue #92 scope extension), the xatu incident
+        shape reproduced end-to-end: a run this candidate's assurance is
+        genuinely bound to reaches a terminal, otherwise-settleable
+        outcome -- but its observed head has since diverged from the
+        candidate. inspect()'s identity guard must refuse to settle it
+        (the Work stays pending, exit 3, forever -- never a silently wrong
+        ACCEPTED), and `orc status` (pure journal read, no live port call)
+        must still name the bound assurance + candidate head + the
+        abandon-flags recovery path."""
+        self._write_config()
+
+        result1 = self._run_cli(
+            "dispatch", "add a small fix",
+            "--config", str(self.config_path), "--journal", str(self.journal_dir),
+            "--run-id", self.run_id,
+        )
+        self.assertEqual(result1.returncode, 3, result1.stdout + result1.stderr)
+        active_run_id = self.world.active_run_id()
+        self.assertIsNotNone(active_run_id)
+
+        # The bound run's observed head diverges from the real candidate
+        # (a foreign/adopted pipeline reaching its own terminal outcome),
+        # then reaches an otherwise-settleable terminal outcome.
+        self.world.set_head_shape(
+            active_run_id, head="f" * 40, emit_run_head=True, emit_branch_sync=True
+        )
+        self.world.set_outcome(active_run_id, "passed")
+
+        result2 = self._run_cli(
+            "dispatch", "add a small fix",
+            "--config", str(self.config_path), "--journal", str(self.journal_dir),
+            "--run-id", self.run_id,
+        )
+        # Never silently ACCEPTED on a foreign outcome (P-004/INV-007..
+        # INV-010) -- stays pending, awaiting the operator's out-of-band
+        # judgment (TASK-M3B-001's abandon record is the only recovery).
+        self.assertEqual(result2.returncode, 3, result2.stdout + result2.stderr)
+        self.assertIn("awaiting=assurance-verdict", result2.stdout)
+        self.assertNotIn("state=ACCEPTED", result2.stdout)
+
+        status = self._run_cli("status", self.run_id, "--journal", str(self.journal_dir))
+        self.assertEqual(status.returncode, 3, status.stdout + status.stderr)
+        self.assertIn("bound assurance is no-mistakes:", status.stdout)
+        self.assertIn("--abandon-work work-1", status.stdout)
+        self.assertIn("--abandon-reason", status.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -41,12 +41,18 @@ Design summary (full rationale: `docs/adapters/no-mistakes/mapping.md`):
   `no-mistakes axi status --run <id>` (durable, provider-owned state) --
   never from in-process memory as the correctness path (an in-process
   settled-observation cache exists only as a fast path, mirroring
-  `ScriptedAssurance`/`AcpExecution`).
+  `ScriptedAssurance`/`AcpExecution`). Before treating anything as a
+  settlement, `inspect()` re-confirms the bound run's identity against the
+  candidate it was requested for -- an already-bound divergent or
+  unconfirmable run never settles (`TASK-M3B-002`, issue #92 scope
+  extension; see "assurance_id shape" and "Identity guard" in the mapping
+  doc).
 - `assurance_id` durably encodes everything a FRESH process needs to
   inspect: the candidate fingerprint this run was bound to at request time
-  (`INV-007`), the `no-mistakes`-native run id, and the configured
-  `repo_path` (the cwd every `no-mistakes` invocation runs in) -- see
-  `_assurance_id`/`_parse_assurance_id`.
+  (`INV-007`), the `no-mistakes`-native run id, the candidate's expected
+  head at request time (`TASK-M3B-002`'s inspect()-side identity guard),
+  and the configured `repo_path` (the cwd every `no-mistakes` invocation
+  runs in) -- see `_assurance_id`/`_parse_assurance_id`.
 - Verdict mapping (full table + rationale: mapping doc):
   a terminal `outcome: passed` -> `accepted`; `outcome: failed` -> `rejected`;
   a parked gate with 1+ findings -> `rejected` (the review policy itself
@@ -155,29 +161,48 @@ def _category_for(finding_id: str) -> str:
     return _DEFAULT_CATEGORY
 
 
-def _assurance_id(*, fingerprint: str, native_run_id: str, repo_path: str) -> str:
+# TASK-M3B-002 (issue #92 scope extension): the sentinel embedded in place
+# of a real head sha when request() genuinely could not determine one (no
+# `subject_identity['head_sha']` and `git rev-parse HEAD` itself failed --
+# already-accepted, pre-existing degraded territory for the fresh-spawn
+# path, see `request()`). Never a valid git object id, so it can never be
+# confused with a real head.
+_UNKNOWN_HEAD_TOKEN = "-"
+
+
+def _assurance_id(*, fingerprint: str, native_run_id: str, expected_head: Optional[str], repo_path: str) -> str:
     # fingerprint is always "fp-<24hex>" (no colon); native_run_id is a
-    # fixed-width ULID-shaped token (no colon) -- so a maxsplit=3 parse is
-    # unambiguous even when repo_path itself contains ':' (mirrors
-    # AcpExecution's execution_id shape/rationale).
-    return f"no-mistakes:{fingerprint}:{native_run_id}:{repo_path}"
+    # fixed-width ULID-shaped token (no colon); expected_head is either a
+    # full git object id (hex, no colon) or `_UNKNOWN_HEAD_TOKEN` -- so a
+    # maxsplit=4 parse is unambiguous even when repo_path itself contains
+    # ':' (mirrors AcpExecution's execution_id shape/rationale). Format
+    # bump for TASK-M3B-002: the inspect()-side identity guard (below)
+    # needs the candidate's expected head available to a FRESH process from
+    # durable state alone (INV-020/CRASH-RECOVERY) -- see the mapping doc's
+    # "assurance_id shape" section for the full rationale and the resulting
+    # breaking-format-change note (a pre-TASK-M3B-002 assurance_id, 4
+    # fields not 5, no longer parses; see "Limitations").
+    head_token = expected_head if expected_head else _UNKNOWN_HEAD_TOKEN
+    return f"no-mistakes:{fingerprint}:{native_run_id}:{head_token}:{repo_path}"
 
 
-def _parse_assurance_id(assurance_id: str) -> tuple[str, str, str]:
-    parts = assurance_id.split(":", 3)
+def _parse_assurance_id(assurance_id: str) -> tuple[str, str, Optional[str], str]:
+    parts = assurance_id.split(":", 4)
     if (
-        len(parts) != 4
+        len(parts) != 5
         or parts[0] != "no-mistakes"
         or not parts[1].startswith("fp-")
         or not parts[2]
         or not parts[3]
+        or not parts[4]
     ):
         raise not_found_error(
             "assurance_id is not a recognizable NoMistakesAssurance reference",
             assurance_id=assurance_id,
         )
-    _prefix, fingerprint, native_run_id, repo_path = parts
-    return fingerprint, native_run_id, repo_path
+    _prefix, fingerprint, native_run_id, head_token, repo_path = parts
+    expected_head = None if head_token == _UNKNOWN_HEAD_TOKEN else head_token
+    return fingerprint, native_run_id, expected_head, repo_path
 
 
 class _NoMistakesInvocationError(Exception):
@@ -414,7 +439,10 @@ class NoMistakesAssurance(AssurancePort):
             native_run_id = self._spawn_and_capture_run_id(intent)
 
         assurance_id = _assurance_id(
-            fingerprint=candidate.fingerprint, native_run_id=native_run_id, repo_path=self._repo_path
+            fingerprint=candidate.fingerprint,
+            native_run_id=native_run_id,
+            expected_head=expected_head,
+            repo_path=self._repo_path,
         )
         run = AssuranceRun(id=assurance_id, candidate_id=candidate.id)
         self._by_idempotency_key[idempotency_key] = run
@@ -429,7 +457,7 @@ class NoMistakesAssurance(AssurancePort):
             # re-derivable from `axi status --run <id>` (INV-020).
             return self._settled_snapshot[assurance_id]
 
-        fingerprint, native_run_id, repo_path = _parse_assurance_id(assurance_id)
+        fingerprint, native_run_id, expected_head, repo_path = _parse_assurance_id(assurance_id)
         status = self._axi_status(repo_path=repo_path, run_id=native_run_id)
         run_block = status.get("run") if isinstance(status.get("run"), dict) else None
 
@@ -437,6 +465,44 @@ class NoMistakesAssurance(AssurancePort):
             # Nothing durable observed yet for THIS exact run id -- honest
             # PORT-ASSURE-002 "requested", never fabricated.
             return AssuranceObservation(state=LIFECYCLE_STATE_REQUESTED)
+
+        # TASK-M3B-002 (issue #92 scope extension): re-confirm the bound
+        # run's identity BEFORE treating anything below as this candidate's
+        # settlement -- an already-bound divergent run (adopted before
+        # PR #98's request()-time guard existed, or via any future identity
+        # drift) must never settle a foreign outcome as this candidate's
+        # verdict (P-004, INV-007..INV-010). Same precedence as request()'s
+        # own guard: `run_block.head` first, `branch_sync` corroboration
+        # when absent (`_observed_head`). Enforced only when `expected_head`
+        # is durably known (a real head embedded in `assurance_id` at
+        # request() time, never `_UNKNOWN_HEAD_TOKEN`) -- when it genuinely
+        # was never known, there is nothing to positively confirm against,
+        # so this never NEWLY refuses to settle a case request() itself did
+        # not refuse (mapping doc "assurance_id shape" documents the
+        # tradeoff). Unconfirmable or divergent: do NOT settle -- report
+        # `running` (never settled, never an error) so the Work rests
+        # pending indefinitely (`STATE-DELIVERY` item 7's existing "waiting
+        # is a normal resting point"), recoverable only via the operator's
+        # `DEC-ABANDON-ATTEMPT` (`TASK-M3B-001`, PR #115) -- this adapter
+        # never resolves the mismatch itself (judge-only ruling).
+        # `evidence_refs` carries the externally-resolvable divergence
+        # detail even though unsettled -- `AssuranceObservation` places no
+        # state restriction on it -- so a caller inspecting the observation
+        # directly (tests, a future live CLI peek) never has to guess.
+        if expected_head is not None:
+            observed_head = _observed_head(status)
+            if observed_head is None or observed_head != expected_head:
+                return AssuranceObservation(
+                    state=LIFECYCLE_STATE_RUNNING,
+                    evidence_refs=(
+                        {
+                            **self._evidence_ref(run_block=run_block, repo_path=repo_path),
+                            "candidate_expected_head": expected_head,
+                            "observed_head": observed_head,
+                            "identity_confirmed": False,
+                        },
+                    ),
+                )
 
         gate = status.get("gate") if isinstance(status.get("gate"), dict) else None
         if gate is not None:

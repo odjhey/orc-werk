@@ -118,17 +118,17 @@ def _block_budget(history: Sequence[Mapping[str, Any]], work_id: str) -> Optiona
     return result
 
 
-def _candidate_pr(history: Sequence[Mapping[str, Any]], work_id: str, wp: WorkProjection) -> Optional[Any]:
-    """The `pr` field of the accepted candidate's `subject_identity`, when
-    the shipper's recorded candidate happens to carry one
-    (`docs/playbooks/agent-cli-usage.md` #3's "externally resolvable
-    identity" -- a PR number is the common case). Reads the same
-    `FX-IDENTIFY-CANDIDATE` effect records
-    `orc_werk.cli.report._candidate_subject_identities` reads; duplicated
-    here narrowly (one field, one candidate) rather than importing
-    `cli.report`, to avoid a `cli.report` <-> `cli.affordances` import
-    cycle (`report.py` will import this module for its own `next:`
-    rendering)."""
+def _identified_candidate_subject_identity(
+    history: Sequence[Mapping[str, Any]], work_id: str, wp: WorkProjection
+) -> Optional[Mapping[str, Any]]:
+    """The current candidate's `subject_identity`, when the shipper's
+    recorded candidate happens to carry one (`docs/playbooks/
+    agent-cli-usage.md` #3's "externally resolvable identity"). Reads the
+    same `FX-IDENTIFY-CANDIDATE` effect records `orc_werk.cli.report.
+    _candidate_subject_identities` reads; duplicated here narrowly (one
+    lookup, generic-shaped) rather than importing `cli.report`, to avoid a
+    `cli.report` <-> `cli.affordances` import cycle (`report.py` imports
+    this module for its own `next:` rendering)."""
     candidate_id = wp.current_candidate_id
     if candidate_id is None:
         return None
@@ -140,8 +140,33 @@ def _candidate_pr(history: Sequence[Mapping[str, Any]], work_id: str, wp: WorkPr
         candidate = record.get("data", {}).get("dispatch_result", {}).get("candidate")
         if isinstance(candidate, Mapping) and candidate.get("id") == candidate_id:
             subject_identity = candidate.get("subject_identity")
-            if isinstance(subject_identity, Mapping) and "pr" in subject_identity:
-                return subject_identity["pr"]
+            if isinstance(subject_identity, Mapping):
+                return subject_identity
+    return None
+
+
+def _candidate_pr(history: Sequence[Mapping[str, Any]], work_id: str, wp: WorkProjection) -> Optional[Any]:
+    """The `pr` field of the accepted candidate's `subject_identity`, when
+    present -- a PR number is the common case for a `git`-backed
+    candidate."""
+    subject_identity = _identified_candidate_subject_identity(history, work_id, wp)
+    if subject_identity is not None and "pr" in subject_identity:
+        return subject_identity["pr"]
+    return None
+
+
+def _candidate_head_sha(history: Sequence[Mapping[str, Any]], work_id: str, wp: WorkProjection) -> Optional[str]:
+    """The `head_sha` field of the current candidate's `subject_identity`,
+    when present (a `git`-backed candidate, `orc_werk.adapters.git.
+    candidate`) -- generic across every assurance adapter (`PORT-CANDIDATE`
+    concept, not adapter-specific vocabulary, `INV-014`). Used by the
+    pending-assurance affordance (`TASK-M3B-002`, issue #92) to name the
+    candidate identity a bound assurance run's outcome must still match
+    before it can honestly settle -- without this CLI layer ever parsing
+    any adapter-owned `assurance_id` format itself."""
+    subject_identity = _identified_candidate_subject_identity(history, work_id, wp)
+    if subject_identity is not None and isinstance(subject_identity.get("head_sha"), str):
+        return subject_identity["head_sha"]
     return None
 
 
@@ -222,6 +247,35 @@ def render_next_block(
                 "(playbook discipline, docs/playbooks/agent-cli-usage.md)"
             )
             needs_redispatch = True
+            for work_id in work_ids:
+                wp = projection.works[work_id]
+                if wp.current_assurance_id is None:
+                    continue
+                # TASK-M3B-002 (issue #92 scope extension): a pending
+                # assurance may be genuinely still in flight, OR it may be a
+                # bound run whose identity a real adapter's inspect()-side
+                # guard could not positively reconfirm against this
+                # candidate (an already-bound divergent/unconfirmable
+                # provider run) -- indistinguishable from pure journal
+                # state alone (`orc status` never calls a port live). Name
+                # the two facts durably resolvable from journal state
+                # instead of guessing which case this is: the opaque,
+                # adapter-owned `assurance_id` (`wp.current_assurance_id`,
+                # never parsed here, INV-014) and the candidate's own head
+                # when a git-backed candidate identified one -- plus the
+                # one operator recourse that already covers a genuinely
+                # stuck assurance regardless of cause (`TASK-M3B-001`'s
+                # abandon record, PR #115).
+                head = _candidate_head_sha(history, work_id, wp)
+                head_text = head if head is not None else "(unknown)"
+                lines.append(
+                    f"  - work {work_id}'s bound assurance is {wp.current_assurance_id} "
+                    f"(candidate head {head_text}) -- if you have out-of-band reason to "
+                    "believe this bound run has diverged from the candidate or will never "
+                    "settle for it, recover via: orc dispatch --run-id "
+                    f"{run_id} --journal {journal_dir} --abandon-work {work_id} "
+                    '--abandon-reason "<why>"'
+                )
         elif key.startswith("blocked-"):
             reason = key[len("blocked-") :]
             for work_id in work_ids:
