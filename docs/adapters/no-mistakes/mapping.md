@@ -158,12 +158,27 @@ no-mistakes:<candidate.fingerprint>:<native_run_id>:<expected_head>:<repo_path>
 `candidate.fingerprint` is always `fp-<24hex>` (no colon); `native_run_id`
 is `no-mistakes`'s own fixed-width ULID-shaped run id (no colon observed);
 `expected_head` (`TASK-M3B-002`, see "Identity guard" below) is either a
-full git object id (hex, no colon) or the literal sentinel `-` when
-`request()` genuinely could not determine one; `repo_path` is the
-remainder of the string (a `maxsplit=4` parse is therefore unambiguous
-even if `repo_path` itself contains `:`) -- mirrors `AcpExecution`'s
-`execution_id` shape/rationale exactly (fixed-width tokens first,
-free-form path last).
+full git object id (exactly 40 lowercase hex characters, no colon) or the
+literal sentinel `-` when `request()` genuinely could not determine one;
+`repo_path` is the remainder of the string (a `maxsplit=4` parse is
+therefore unambiguous even if `repo_path` itself contains `:`) -- mirrors
+`AcpExecution`'s `execution_id` shape/rationale exactly (fixed-width
+tokens first, free-form path last).
+
+**The `expected_head` field shape is VALIDATED at parse time**
+(`TASK-M3B-002` fix round, verifier finding 2): after the `maxsplit=4`
+split, an `expected_head` field that is neither exactly 40 lowercase hex
+characters nor the literal `-` makes the whole id unparseable
+(`ERR-NOT-FOUND`) -- never a binding. Without this check, a *legacy
+4-field* id whose `repo_path` itself contains `:` would silently
+mis-parse: the path's first segment would land in the `expected_head`
+slot and the remainder in `repo_path`, yielding a wrong head bound to a
+wrong path instead of the legible legacy-format failure
+(`test_legacy_id_with_colon_bearing_repo_path_never_misparses`). The same
+shape is enforced at *build* time symmetrically: `request()` embeds a
+candidate head only when it conforms to the 40-lowercase-hex shape,
+falling back to the `-` sentinel otherwise, so this adapter never mints
+an id its own parser rejects.
 
 Every durable fact a fresh process needs is embedded directly, rather than
 requiring a separate lookup:
@@ -220,16 +235,45 @@ precedence `request()`'s own guard uses (`run_block.head` first,
 `branch_sync.pipeline.submitted_head`/`branch_sync.local.head`
 corroboration when absent -- `_observed_head`, shared by both guards) and
 compares it against `expected_head` (embedded in `assurance_id`, see
-above). Unconfirmable (`observed_head` absent) or divergent (`observed_head
-!= expected_head`): `inspect()` returns `state: running` -- never settled,
-never an error -- so the Work rests pending indefinitely, the same
-"waiting is a normal resting point" the port already models for a
-genuinely in-flight run (`STATE-DELIVERY` item 7). The returned
-observation's `evidence_refs` still carries the full, externally-checkable
-divergence detail (`no_mistakes_run_id`, `candidate_expected_head`,
-`observed_head`, `identity_confirmed: false`) even though unsettled --
-`AssuranceObservation` places no state restriction on `evidence_refs`, so
-a direct caller (tests today; a future live CLI peek) never has to guess.
+above). The two failure outcomes MEAN different things and are treated
+differently (`TASK-M3B-002` fix round, watchtower ruling on the #92
+follow-up's visibility requirement):
+
+- **Divergence positively confirmed** (both heads known, mismatch): the
+  binding is *permanently* wrong -- the bound run's submitted head can
+  never become this candidate's head, so this Assurance attempt can never
+  validly settle from that run's outcome. The adapter SETTLES the
+  assurance as `verdict: inconclusive`, with the full divergence detail
+  in `evidence_refs` (the bound `no_mistakes_run_id`, observed
+  `branch`/head, `candidate_expected_head`, `identity_confirmed: false`,
+  `divergence: "bound-run-identity-divergent"`). This is a judgment about
+  THIS assurance attempt -- "no honest verdict about this candidate is
+  derivable from the bound run" -- never an adoption of the foreign
+  outcome (`P-004`, `INV-007`..`INV-010`; no foreign `outcome`/gate is
+  ever mapped), consistent with the existing `cancelled`/`aborted` ->
+  `inconclusive` verdict-table posture (a terminal-without-a-candidate-
+  judgment shape, honestly reported). Because this is an ordinary
+  settlement, it journals normally (`FACT-ASSURE-SETTLED` with
+  `evidence_refs`, the #85/#87 transport), v0 policy blocks the Work with
+  `reason: assurance-inconclusive`, and the divergence is visible through
+  the whole journal-reading surface -- `orc status` (BLOCKED root cause),
+  `orc history` (the settled fact with its evidence), `orc refs` (one
+  `evidence` row carrying the divergence entry verbatim), `orc report` --
+  satisfying the card's visibility acceptance THROUGH THE JOURNAL, with
+  no orchestrator or port change.
+- **Unconfirmable** (`observed_head` absent -- no readable head anywhere
+  in the observed status): nothing is positively known either way, and
+  the head may yet become readable on a later poll. `inspect()` returns
+  `state: running` -- never settled, never an error -- so the Work rests
+  pending, the same "waiting is a normal resting point" the port already
+  models for a genuinely in-flight run (`STATE-DELIVERY` item 7). The
+  returned (unsettled) observation's `evidence_refs` still carries the
+  identity detail (`no_mistakes_run_id`, `candidate_expected_head`,
+  `observed_head: null`, `identity_confirmed: false`) --
+  `AssuranceObservation` places no state restriction on `evidence_refs`,
+  so a direct caller never has to guess. A run that stays unconfirmable
+  indefinitely is recovered by the operator's abandon record (see
+  "Recovery" below).
 
 **Threading design decision: `expected_head` rides `assurance_id`, not a
 journaled Fact field.** The task card's design note offered two
@@ -266,32 +310,33 @@ zero in-process state reaches the identical guard decision purely from
 `test_fresh_process_confirms_matching_identity_still_settles`
 (`tests/conformance/test_no_mistakes_assurance_unit.py`).
 
-**Recovery.** This adapter never resolves the mismatch itself
-(judge-only ruling) -- a Work whose Assurance can never positively
-reconfirm identity rests pending forever unless an operator intervenes.
-Recovery is exactly `TASK-M3B-001`'s existing abandon record (merged PR
-#115): `orc dispatch --run-id <run> --abandon-work <work_id> --abandon-reason
-"<why>"` records `DEC-ABANDON-ATTEMPT`/`FACT-ATTEMPT-ABANDONED` for the
-stuck attempt (never a fabricated verdict, `INV-003`/`INV-009`) and lets
-ordinary retry-budget machinery take over -- this task does not rebuild
-that machinery, only makes sure a diverged no-mistakes run actually lands
-at the same "unsettleable Assurance" resting point `TASK-M3B-001` already
-knows how to recover from. **Status-output surfacing**: since `orc status`
-is a pure journal read (no live port call), it cannot show the bound run's
-CURRENTLY observed head/branch/pr -- only journal-durable facts. The
+**Recovery.** This adapter never resolves a wrong binding itself
+(judge-only ruling). A positively-divergent binding needs no special
+recovery path: its `inconclusive` settlement flows through ordinary
+policy (BLOCKED, `reason: assurance-inconclusive`) like any other
+inconclusive verdict. The *unconfirmable* case is the one that can rest
+pending indefinitely; its recovery is exactly `TASK-M3B-001`'s existing
+abandon record (merged PR #115): `orc dispatch --run-id <run>
+--abandon-work <work_id> --abandon-reason "<why>"` records
+`DEC-ABANDON-ATTEMPT`/`FACT-ATTEMPT-ABANDONED` for the stuck attempt
+(never a fabricated verdict, `INV-003`/`INV-009`) and lets ordinary
+retry-budget machinery take over -- this task does not rebuild that
+machinery. **Status-output surfacing**: a confirmed divergence is visible
+through the journal itself (see "The guard" above -- the settled
+`FACT-ASSURE-SETTLED`'s `evidence_refs` reach `orc
+status`/`history`/`refs`/`report`). For a still-*pending* assurance
+(healthy-in-flight or unconfirmable -- `orc status` is a pure journal
+read with no live port call, so it cannot distinguish the two), the
 `next:` block's pending-assurance affordance (`orc_werk.cli.affordances`)
-therefore names the opaque, adapter-owned `assurance_id` verbatim (never
-parsed by that generic CLI layer, `INV-014`) alongside the candidate's own
+names the opaque, adapter-owned `assurance_id` verbatim (never parsed by
+that generic CLI layer, `INV-014`) alongside the candidate's own
 `head_sha` (when a git-backed candidate identified one, read from the
 already-durable `FX-IDENTIFY-CANDIDATE` effect record the same way the
-`accepted` affordance's `gh pr view` hint already does) and a pointer at
-the abandon flags -- for every pending assurance, not conditionally, since
-`orc status` cannot itself distinguish "genuinely still in flight" from
-"identity-guard-blocked" without a live call. The live, currently-observed
-foreign head is visible via the adapter's own `evidence_refs` on a direct
-`inspect()` call, or by querying the provider directly (`no-mistakes axi
-status --run <id>`, printable from the assurance_id's embedded
-`native_run_id`).
+`accepted` affordance's `gh pr view` hint already does), and points at
+the abandon flags as the recovery for a run that stays pending
+unexpectedly long. The live, currently-observed provider-side head is
+always directly resolvable via `no-mistakes axi status --run <id>`
+(printable from the assurance_id's embedded `native_run_id`).
 
 ## Cross-process `request()` idempotency (best-effort, unlike acp)
 
@@ -348,6 +393,8 @@ Only a TERMINAL existing run (or none at all) triggers a fresh spawn.
 | A top-level `gate:` block is present (`status: awaiting_approval`, any step), with 1+ findings | `rejected` | `no-mistakes`'s OWN review policy already declined to let this exact candidate proceed automatically -- `EXT-REVIEW-FINDINGS-V1-SEMANTICS`'s disposition framing ("may the candidate proceed under the producing review policy") answers no, regardless of individual finding severity. This adapter never resolves the gate itself (judge-only ruling) -- see "Findings mapping" below for how `review-findings/v1` is populated. |
 | A top-level `gate:` block is present with 0 findings | `inconclusive` | Genuinely ambiguous (nothing to explain the park); never guessed toward rejected or accepted. |
 | `run.status in {cancelled, aborted, failed}` and no `gate:`/`outcome:` | `inconclusive` | A terminal-without-a-verdict shape (e.g. an operator ran `axi abort` on a stale run) -- honestly reported, never fabricated as a candidate judgment. |
+| Bound-run identity POSITIVELY DIVERGENT: observed head known and `!= expected_head` (any underlying gate/outcome/status -- checked before all rows above except the no-run row) | `inconclusive`, with the divergence detail in `evidence_refs` | `TASK-M3B-002` identity guard: the binding is permanently wrong, so no honest verdict about THIS candidate is derivable from the bound run -- a judgment about this assurance attempt, never an adoption of the foreign outcome (the foreign `outcome`/gate is never mapped; `P-004`, `INV-007`..`INV-010`). Same terminal-without-a-candidate-judgment posture as the `cancelled`/`aborted` row. See "Identity guard" below. |
+| Bound-run identity UNCONFIRMABLE: `expected_head` known but no readable observed head anywhere in the status | not settled (`state: running`), identity detail in `evidence_refs` | `TASK-M3B-002` identity guard: nothing positively known either way -- the head may become readable on a later poll, so never guessed toward settled. A run pending unconfirmably long is the operator-abandon recovery case (`TASK-M3B-001`). |
 | `run.status == "running"`, no `gate:` block | not settled (`state: running`) | Still in flight. |
 | No run observed yet matching this exact `assurance_id`'s `native_run_id` | not settled (`state: requested`) | Nothing durable to report yet -- never fabricated. |
 
@@ -569,12 +616,17 @@ known-issues row in `docs/playbooks/cli-usage.md`.
   mitigation).
 - **`assurance_id`'s `TASK-M3B-002` format bump is breaking, not
   backward-compatible** -- a pre-`TASK-M3B-002` (4-field) `assurance_id`
-  no longer parses (see "assurance_id shape"'s "Breaking format change").
-- **`orc status` cannot show a bound run's currently-observed
-  head/branch/pr** -- it is a pure journal read with no live port call, so
-  the pending-assurance affordance can only ever show the candidate's own
-  (durably journaled) head, the opaque `assurance_id`, and a static
-  abandon-flags pointer -- never a live "here is what actually diverged"
-  comparison (see "Identity guard"'s "Status-output surfacing"). The live
-  observed value remains directly resolvable via `no-mistakes axi status
-  --run <id>` or a fresh `inspect()` call's `evidence_refs`.
+  no longer parses (see "assurance_id shape"'s "Breaking format change"
+  and the parse-time `expected_head` shape validation that keeps a
+  colon-bearing legacy `repo_path` from mis-parsing into a false
+  binding).
+- **`orc status` cannot distinguish a healthy in-flight assurance from an
+  unconfirmable one** -- it is a pure journal read with no live port
+  call, and the unconfirmable case journals nothing (it never settles).
+  A POSITIVELY-CONFIRMED divergence is not subject to this limitation:
+  it settles `inconclusive` and its divergence evidence reaches every
+  journal-reading surface (see "Identity guard"). For the pending cases,
+  the affordance shows the candidate's own (durably journaled) head, the
+  opaque `assurance_id`, and the abandon-flags recovery pointer; the
+  live provider-side head remains directly resolvable via `no-mistakes
+  axi status --run <id>`.
