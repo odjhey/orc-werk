@@ -374,7 +374,7 @@ with zero escape bytes.
 |---|---|
 | `0` | all Work `ACCEPTED` |
 | `1` | some Work `BLOCKED` (or another non-accepted terminal state) |
-| `2` | usage/config error -- canonical error JSON on stderr: `{"error": "ERR-*", "message": "...", "details": {...}}` |
+| `2` | usage/config error -- canonical error JSON on stderr: `{"error": "ERR-*", "message": "...", "details": {...}}`, optionally with the additive `"next": ["next-step guidance", "..."]` field |
 | `3` | run non-terminal, pending operator-recorded input -- safe to re-check; the current attempt's outcome (`execution-outcome`) or verdict (`assurance-verdict`) has not been recorded yet |
 
 Exit `3`'s semantics -- what "pending" means, why nothing is fabricated for
@@ -396,7 +396,7 @@ orc dispatch "blocked demo" --config blocked-cfg.json --journal ./.orc --run-id 
 
 # exit 2 -- config path does not exist
 orc dispatch "bad" --config does-not-exist.json --journal ./.orc --run-id demo-bad
-# {"details": {}, "error": "ERR-NOT-FOUND", "message": "[Errno 2] No such file or directory: '...'"}
+# {"details": {}, "error": "ERR-NOT-FOUND", "message": "[Errno 2] No such file or directory: 'does-not-exist.json'", "next": ["double check the path was typed correctly", "orc (bare) lists every run id under the default journal dir"]}
 # exit=2
 ```
 
