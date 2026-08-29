@@ -121,7 +121,7 @@ config never has to spell out a hash by hand.
 The optional `briefs` mapping supplies per-work ACP prompts and, when the
 mirror is configured, descriptions for the write-only projection of
 run/work state into a shared `bd` database
-(`docs/adapters/beads/mapping.md` has the full design):
+(canonical `ADAPTER-BEADS-MAPPING` has the full design):
 
 ```json
 {

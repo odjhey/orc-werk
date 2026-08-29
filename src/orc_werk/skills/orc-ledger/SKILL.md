@@ -29,8 +29,9 @@ always safe (it is the resume, poll, and crash-recovery verb all at once).
 
 ## 3. Know your seat before recording anything
 
-Read `docs/playbooks/agent-cli-usage.md` (PLAYBOOK-AGENT-CLI) before touching
-a run's backing config. The non-negotiables:
+The seat-discipline non-negotiables come from canonical
+`PLAYBOOK-AGENT-CLI` in the orc-werk docs/package; the essentials are here
+so a fresh session needs no other file:
 
 - You record **observations only** — never decisions. The kernel decides.
 - **One seat per candidate**: either you record the execution settlement +

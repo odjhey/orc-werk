@@ -244,7 +244,7 @@ def render_next_block(
             lines.append(
                 f"  - record the assurance verdict for work(s): {ids_text} -- needs a "
                 "different agent than the one that recorded the settlement "
-                "(playbook discipline, docs/playbooks/agent-cli-usage.md)"
+                "(canonical playbook discipline: PLAYBOOK-AGENT-CLI)"
             )
             needs_redispatch = True
             for work_id in work_ids:
