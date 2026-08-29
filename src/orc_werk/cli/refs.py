@@ -76,16 +76,24 @@ only when present -- absence is never fabricated (`CLAUDE.md` #3):
    specification" disposition), so this is the one source read from the
    config sidecar rather than the journal.
 
-Every "resolve" value is a DISPLAY string only -- this command never
-shells out to anything (issue #65's ruling reserves an actual `--resolve`
-execution flag for a later, separate task, with its own
-may-break-on-provider-API-change caveat).
+Every "resolve" value is, in the base `orc refs <run>` listing, a DISPLAY
+string. `TASK-M3C-002` (`orc refs <run> --resolve <selector>` /
+`--resolve-all`) adds actual execution on top of the exact same values --
+"one vocabulary, what you see is what runs": every row's `ResolveCommand`
+below carries both the display string AND (when the command passed the
+read-only allowlist at construction) the argv `--resolve` executes, with
+the display mechanically DERIVED from that argv rather than kept as a
+hand-maintained second copy, so the two can never drift apart. See
+`ResolveCommand`'s own docstring for the safety model.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import shlex
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -93,11 +101,154 @@ from typing import Any, Mapping, Optional, Sequence
 from orc_werk.adapters.jsonl import layout
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.cli.journal_reading import _require_journal_file, _resolve_journal
+from orc_werk.core.errors import validation_error
 
 FACT_EXEC_SETTLED = "FACT-EXEC-SETTLED"
 FACT_ASSURE_SETTLED = "FACT-ASSURE-SETTLED"
 FX_IDENTIFY_CANDIDATE = "FX-IDENTIFY-CANDIDATE"
 EXECUTION_SESSION_V1 = "execution-session/v1"
+
+# `--resolve`/`--resolve-all` execution bounds (TASK-M3C-002).
+RESOLVE_TIMEOUT_S = 30.0
+# ~8 KiB: large enough for a normal `git show --stat`/`bd list`/session-
+# history page to render whole in the common case, small enough that a
+# pathological transcript/log can't flood a terminal or an agent's context
+# window -- the same "definitive truncation, escape hatch always named"
+# posture `pagination.py`'s size_hint documents for listing surfaces,
+# applied here to resolved *content* instead of row counts.
+RESOLVE_OUTPUT_CAP_BYTES = 8192
+
+
+def _vet_read_only(argv: Sequence[str]) -> Optional[str]:
+    """The read-only allowlist `--resolve`/`--resolve-all` vet EVERY
+    resolve command against at construction time, before it is ever offered
+    for execution (the judge-only bar `docs/adapters/no-mistakes/
+    mapping.md`'s "Judge-only ruling" sets for the assurance adapter,
+    applied here to this CLI's own command construction). Returns `None`
+    when `argv` is vetted-safe to execute; otherwise a human-readable
+    refusal reason.
+
+    A hard allowlist, not a denylist: `cat <path>`; `git [-C <path>] show
+    ...` (never any other git subcommand); `acpx <agent> sessions
+    <history|show> ...`; `bd [--json] [-C <path>] <list|show> ...`;
+    `no-mistakes axi <status|logs> ...`. Nothing else -- notably `gh pr
+    view <pr>` (the `candidate-pr` row's display command) is NOT vetted
+    (see the PR body's Ambiguities section): the task's own allowlist
+    wording ends "nothing else", and the acceptance criteria's runnable-
+    resolve-command list (transcript, session, candidate, mirror,
+    command-bearing evidence) omits `candidate-pr` -- that row keeps
+    displaying `gh pr view <pr>` exactly as before, just never executes
+    under `--resolve`.
+
+    This is a shape-based, bare-tool-name check (matching this codebase's
+    existing conservative-derivation precedent, `_session_resolve`'s own
+    docstring) -- a tool invoked via an absolute or relative path (e.g.
+    `/usr/bin/git`) does not match any bare name here and is refused, a
+    known limitation recorded in `docs/playbooks/cli-usage.md`'s known-
+    issues ledger rather than silently over-trusted.
+    """
+    if not argv:
+        return "empty command"
+    tool = argv[0]
+    if tool == "cat":
+        if len(argv) != 2:
+            return "cat: only a single path argument is vetted"
+        return None
+    if tool == "git":
+        rest = list(argv[1:])
+        if rest[:1] == ["-C"]:
+            if len(rest) < 2:
+                return "git -C: missing path"
+            rest = rest[2:]
+        if not rest or rest[0] != "show":
+            return "git: only the read-only 'show' subcommand is vetted"
+        return None
+    if tool == "acpx":
+        if len(argv) < 4 or argv[2] != "sessions" or argv[3] not in ("history", "show"):
+            return "acpx: only 'sessions history'/'sessions show' is vetted"
+        return None
+    if tool == "bd":
+        rest = list(argv[1:])
+        if rest[:1] == ["--json"]:
+            rest = rest[1:]
+        if rest[:1] == ["-C"]:
+            if len(rest) < 2:
+                return "bd -C: missing workspace path"
+            rest = rest[2:]
+        if not rest or rest[0] not in ("list", "show"):
+            return "bd: only 'list'/'show' is vetted"
+        return None
+    if tool == "no-mistakes":
+        if len(argv) < 3 or argv[1] != "axi" or argv[2] not in ("status", "logs"):
+            return "no-mistakes: only 'axi status'/'axi logs' is vetted"
+        return None
+    return f"tool {tool!r} is not in the vetted read-only allowlist"
+
+
+@dataclass(frozen=True)
+class ResolveCommand:
+    """One row's resolve command: `display` is always the exact string
+    shown in the `orc refs` listing; `argv` is that SAME command as a
+    vetted-safe argv list ready to execute via `subprocess.run(argv, ...)`
+    (never `shell=True`, never string-interpolated) -- or `None` when this
+    resolve command cannot be executed by `--resolve`/`--resolve-all` (no
+    command at all, or refused by `_vet_read_only`).
+
+    `display` is ALWAYS rendered mechanically FROM `argv` (`" ".join`) when
+    a candidate argv exists -- for a builder-constructed command (session,
+    transcript, candidate, mirror, candidate-pr) this is the only argv
+    that ever existed; for a journal-carried evidence `command`/
+    `*_command` field (`from_raw_text`) the field's raw text is first
+    parsed into argv and the display is regenerated from THAT argv, not
+    kept as the original string, so a builder can never emit a display
+    string that diverges from what `--resolve` would actually run.  A
+    command that fails to parse into argv at all keeps its original raw
+    text as `display` (there is no argv to derive it from) with `argv`
+    left `None` -- the same "print the manual command, never execute it"
+    degrade as a refused command.
+
+    This is the single source `_row_line` (the listing) and `--resolve`/
+    `--resolve-all` (execution) both read -- there is no second,
+    independently-maintained command vocabulary anywhere in this module.
+    """
+
+    display: str
+    argv: Optional[tuple[str, ...]]
+    refusal: Optional[str] = None
+
+    @staticmethod
+    def none() -> "ResolveCommand":
+        return ResolveCommand(display="-", argv=None)
+
+    @staticmethod
+    def of(argv: Sequence[str]) -> "ResolveCommand":
+        """Vet a builder-constructed argv against the read-only allowlist
+        and derive `display` from it."""
+        argv_t = tuple(argv)
+        display = " ".join(argv_t)
+        reason = _vet_read_only(argv_t)
+        if reason is not None:
+            return ResolveCommand(display=display, argv=None, refusal=reason)
+        return ResolveCommand(display=display, argv=argv_t)
+
+    @staticmethod
+    def from_raw_text(text: str) -> "ResolveCommand":
+        """A resolve command supplied as free text by journal-derived DATA
+        (an `evidence_refs` entry's `command`/`*_command` field) --
+        attacker-influencable input (a journal), never trusted as
+        executable merely because it looks command-shaped. Parsed into
+        argv with `shlex.split` and vetted exactly like a builder-
+        constructed command via `of`; text that fails to parse (malformed
+        shell quoting) degrades the same way an unvetted tool does --
+        `argv=None`, the original text preserved verbatim as `display`,
+        never executed."""
+        try:
+            argv = shlex.split(text)
+        except ValueError as exc:
+            return ResolveCommand(display=text, argv=None, refusal=f"could not parse command text ({exc})")
+        if not argv:
+            return ResolveCommand(display=text, argv=None, refusal="empty command")
+        return ResolveCommand.of(argv)
 
 
 @dataclass(frozen=True)
@@ -105,7 +256,7 @@ class RefRow:
     kind: str
     provider: str
     value: str
-    resolve: str
+    resolve: ResolveCommand
 
 
 def _display(value: Any) -> str:
@@ -126,7 +277,7 @@ def _display(value: Any) -> str:
 _ACPX_PROVIDER_PREFIX = "acpx-"
 
 
-def _session_resolve(provider: Any, ref: str) -> str:
+def _session_resolve(provider: Any, ref: str) -> ResolveCommand:
     """Conservative, `docs/adapters/acp/mapping.md`-derived tool form: a
     provider string exactly matching `acpx-<agent>` (the only convention
     any adapter in this codebase currently emits, `AcpExecution.
@@ -137,11 +288,11 @@ def _session_resolve(provider: Any, ref: str) -> str:
     the kind of provider-specific guessing `CLAUDE.md` #6/#9 forbid a
     generic surface from doing."""
     if not isinstance(provider, str) or not provider.startswith(_ACPX_PROVIDER_PREFIX):
-        return "-"
+        return ResolveCommand.none()
     agent = provider[len(_ACPX_PROVIDER_PREFIX) :]
     if not agent:
-        return "-"
-    return f"acpx {agent} sessions history {ref}"
+        return ResolveCommand.none()
+    return ResolveCommand.of(["acpx", agent, "sessions", "history", ref])
 
 
 def _execution_session_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
@@ -175,7 +326,7 @@ def _execution_session_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow
                     kind="resume",
                     provider=provider_display,
                     value=_display(resume["ref"]),
-                    resolve="-",
+                    resolve=ResolveCommand.none(),
                 )
             )
 
@@ -187,7 +338,7 @@ def _execution_session_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow
                     kind="transcript",
                     provider=provider_display,
                     value=transcript_display,
-                    resolve=f"cat {transcript_display}",
+                    resolve=ResolveCommand.of(["cat", transcript_display]),
                 )
             )
     return rows
@@ -232,11 +383,11 @@ def _evidence_ref_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
         if not evidence_refs:
             continue
         for entry in evidence_refs:
-            resolve = "-"
+            resolve = ResolveCommand.none()
             if isinstance(entry, Mapping):
                 command = _command_field(entry)
                 if command is not None:
-                    resolve = command
+                    resolve = ResolveCommand.from_raw_text(command)
             rows.append(RefRow(kind="evidence", provider="-", value=_display(entry), resolve=resolve))
     return rows
 
@@ -263,10 +414,10 @@ def _candidate_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
             repo_path = subject_identity.get("repo_path")
             if repo_path is not None:
                 value = _display({"head_sha": head_sha, "repo_path": repo_path})
-                resolve = f"git -C {repo_path} show {head_sha} --stat"
+                resolve = ResolveCommand.of(["git", "-C", str(repo_path), "show", str(head_sha), "--stat"])
             else:
                 value = _display({"head_sha": head_sha})
-                resolve = "-"
+                resolve = ResolveCommand.none()
             rows.append(RefRow(kind="candidate", provider="-", value=value, resolve=resolve))
 
         pr = subject_identity.get("pr")
@@ -274,8 +425,19 @@ def _candidate_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
             # issue #94 folded item / PR #104 verifier recommendation:
             # unconditional, matching orc_werk.cli.affordances._candidate_pr's
             # own unconditional `gh pr view <pr>` precedent for the
-            # ACCEPTED-state next: block -- no repo-context gate.
-            rows.append(RefRow(kind="candidate-pr", provider="-", value=_display(pr), resolve=f"gh pr view {pr}"))
+            # ACCEPTED-state next: block -- no repo-context gate. `gh` is
+            # not in TASK-M3C-002's execution allowlist (see
+            # `_vet_read_only`'s docstring), so this row's resolve command
+            # keeps displaying unchanged but never executes under
+            # `--resolve`/`--resolve-all` -- refused, not silently dropped.
+            rows.append(
+                RefRow(
+                    kind="candidate-pr",
+                    provider="-",
+                    value=_display(pr),
+                    resolve=ResolveCommand.of(["gh", "pr", "view", str(pr)]),
+                )
+            )
     return rows
 
 
@@ -318,7 +480,7 @@ def _mirror_row(directory: Path, run_id: str) -> Optional[RefRow]:
         kind="mirror",
         provider=adapter,
         value=f"label={label} workspace={workspace}",
-        resolve=f"bd --json -C {workspace} list --label {label}",
+        resolve=ResolveCommand.of(["bd", "--json", "-C", workspace, "list", "--label", label]),
     )
 
 
@@ -343,7 +505,126 @@ def collect_refs(directory: Path, run_id: str, history: Sequence[Mapping[str, An
 
 
 def _row_line(row: RefRow) -> str:
-    return f"{row.kind:12s} {row.provider:16s} {row.value}  (resolve: {row.resolve})"
+    return f"{row.kind:12s} {row.provider:16s} {row.value}  (resolve: {row.resolve.display})"
+
+
+# ---------------------------------------------------------------------------
+# --resolve / --resolve-all (TASK-M3C-002)
+# ---------------------------------------------------------------------------
+
+
+def _select_row(rows: Sequence[RefRow], selector: str) -> tuple[int, RefRow]:
+    """A selector is either the 1-based index exactly as printed by the
+    plain listing (`[N]`, copy-able verbatim -- `orc refs <run> --resolve
+    2`), or `<kind>[:<substring>]`: every row of that `kind`, optionally
+    narrowed to rows whose `value` contains `<substring>` (case-sensitive),
+    selected only when exactly one match remains. Ambiguous/absent
+    selectors raise `ERR-VALIDATION` with a `next` pointer (issue #94's
+    affordance rule extended to this command's own error surface) rather
+    than guessing which ref was meant."""
+    if selector.isdigit():
+        index = int(selector)
+        if index < 1 or index > len(rows):
+            next_steps = (
+                [f"orc refs <run> lists every valid index (1..{len(rows)})"]
+                if rows
+                else ["orc refs <run> lists 0 refs for this run"]
+            )
+            raise validation_error(
+                f"selector {selector!r} is out of range (1..{len(rows)})",
+                selector=selector,
+                row_count=len(rows),
+                next_steps=next_steps,
+            )
+        return index, rows[index - 1]
+
+    kind, _, match = selector.partition(":")
+    candidates = [
+        (index, row) for index, row in enumerate(rows, start=1) if row.kind == kind and (not match or match in row.value)
+    ]
+    if not candidates:
+        raise validation_error(
+            f"no ref matches selector {selector!r}",
+            selector=selector,
+            next_steps=["orc refs <run> lists every ref's index and kind"],
+        )
+    if len(candidates) > 1:
+        matches = ", ".join(f"[{index}]" for index, _ in candidates)
+        raise validation_error(
+            f"selector {selector!r} matches {len(candidates)} refs ({matches})",
+            selector=selector,
+            next_steps=[
+                f"use the index directly, e.g. orc refs <run> --resolve {candidates[0][0]}",
+                "or narrow with '<kind>:<substring>' against the listed value",
+            ],
+        )
+    return candidates[0]
+
+
+def _execute_resolve(argv: Sequence[str], *, timeout: float = RESOLVE_TIMEOUT_S) -> tuple[bool, str]:
+    """Execute a vetted-safe argv (never `shell=True`, never a string
+    built from journal text) bounded by `timeout` seconds. Returns `(ok,
+    text)`: `text` is captured stdout when `ok`, otherwise a human-
+    readable description of what went wrong (missing binary, nonzero
+    exit, timeout) -- callers append the manual command themselves so the
+    same failure text is reusable for both the single-ref and
+    `--resolve-all` paths."""
+    tool = argv[0]
+    if shutil.which(tool) is None and "/" not in tool:
+        return False, f"binary not found on PATH: {tool!r}"
+    try:
+        proc = subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, f"timed out after {timeout:g}s"
+    except OSError as exc:
+        return False, str(exc)
+    if proc.returncode != 0:
+        stderr_tail = proc.stderr.strip()
+        detail = f": {stderr_tail}" if stderr_tail else ""
+        return False, f"exited {proc.returncode}{detail}"
+    return True, proc.stdout
+
+
+def _render_resolution(index: int, row: RefRow) -> list[str]:
+    """One ref's `--resolve` output block: a header naming the ref (index,
+    kind, provider) and the EXACT command run (or that would have run),
+    followed by content, a refusal note, or an error -- never a fabricated
+    substitute for any of the three. Failure (refusal, missing binary,
+    nonzero exit, timeout) is never a `orc refs` run failure -- the ref
+    itself remains valid; only the resolution attempt did not produce
+    content -- so this never raises."""
+    lines = [f"--- [{index}] {row.kind} ({row.provider}): {row.resolve.display} ---"]
+    if row.resolve.argv is None:
+        if row.resolve.refusal is not None:
+            lines.append(f"REFUSED: {row.resolve.refusal}")
+            lines.append(f"manual command: {row.resolve.display}")
+        else:
+            lines.append("no resolve command available for this ref")
+        return lines
+
+    ok, text = _execute_resolve(row.resolve.argv)
+    if not ok:
+        lines.append(f"ERROR: {text}")
+        lines.append(f"manual command: {row.resolve.display}")
+        return lines
+
+    # Content passthrough is raw by nature (issue #43/axi #6 non-TTY
+    # escape-free hygiene applies to THIS command's own output, not to
+    # verbatim adapter-native content it displays on request) -- stripped
+    # or denied nothing silently; only the size cap below is applied, and
+    # only with a definitive count plus the same manual command already
+    # named in the header.
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) > RESOLVE_OUTPUT_CAP_BYTES:
+        truncated = encoded[:RESOLVE_OUTPUT_CAP_BYTES].decode("utf-8", errors="ignore")
+        lines.append(truncated)
+        lines.append(
+            f"... truncated, showing first {RESOLVE_OUTPUT_CAP_BYTES} of {len(encoded)} bytes; "
+            f"run manually for full output: {row.resolve.display}"
+        )
+    else:
+        lines.append(text.rstrip("\n"))
+    return lines
 
 
 def cmd_refs(args: argparse.Namespace) -> int:
@@ -371,9 +652,36 @@ def cmd_refs(args: argparse.Namespace) -> int:
         print(f"  - orc status {run_id}")
         return 0
 
-    for row in rows:
-        print(_row_line(row))
+    selector = getattr(args, "resolve", None)
+    resolve_all = getattr(args, "resolve_all", False)
+
+    if selector is not None:
+        # `_select_row` raises canonical ERR-VALIDATION (propagated by
+        # `main()`'s top-level CoreError handler, exit 2) for an
+        # out-of-range/ambiguous/absent selector -- a usage error, distinct
+        # from a resolution FAILURE below, which never changes this
+        # command's exit code (TASK-M3C-002's failure-honesty rule: the ref
+        # remains valid even when resolving it fails).
+        index, row = _select_row(rows, selector)
+        for line in _render_resolution(index, row):
+            print(line)
+        return 0
+
+    if resolve_all:
+        any_resolved = False
+        for index, row in enumerate(rows, start=1):
+            if row.resolve.display == "-":
+                continue
+            any_resolved = True
+            for line in _render_resolution(index, row):
+                print(line)
+        if not any_resolved:
+            print("no refs in this run carry a resolve command")
+        return 0
+
+    for index, row in enumerate(rows, start=1):
+        print(f"[{index}] {_row_line(row)}")
     return 0
 
 
-__all__ = ["RefRow", "cmd_refs", "collect_refs"]
+__all__ = ["RefRow", "ResolveCommand", "cmd_refs", "collect_refs"]

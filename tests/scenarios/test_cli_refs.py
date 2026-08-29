@@ -1,22 +1,34 @@
-"""`orc refs` (GitHub issue #100 part 1): pure journal-projection tests for
-`orc_werk.cli.refs`, mirroring `test_cli_beads_mirror_wiring.py`'s
-mixed shape -- unit-level coverage of the per-source row builders
-(`RefsUnitTest`), plus subprocess-driven CLI wiring/regression coverage
-(`RefsCliTest`) matching `test_cli_report.py`'s pattern.
+"""`orc refs` (GitHub issue #100 part 1) and `orc refs --resolve`/
+`--resolve-all` (`TASK-M3C-002`, part 2): pure journal-projection tests
+for `orc_werk.cli.refs`, mirroring `test_cli_beads_mirror_wiring.py`'s
+mixed shape -- unit-level coverage of the per-source row builders and the
+`ResolveCommand`/allowlist/selector/execution machinery, plus subprocess-
+driven CLI wiring/regression coverage matching `test_cli_report.py`'s
+pattern.
 
 `execution-session/v1` fixtures are crafted directly through
 `orc_werk.app.Orchestrator` + a real `JSONLJournal` (`test_extension_
 lossless_transport.py`'s pattern). `evidence_refs`/candidate/mirror
 fixtures use the ordinary `orc dispatch --config` path.
+
+`--resolve`/`--resolve-all` execution tests run the real CLI subprocess
+with a deliberately restricted `PATH=/usr/bin:/bin` (matching `_run_cli`'s
+existing env below) -- `cat`/`git` are real binaries there (used for
+genuine success-path resolution: `cat` on a fixture transcript file,
+`git show` in a real fixture repo), while `acpx`/`bd`/`no-mistakes`/`gh`
+are deliberately absent, giving an honest "binary not found" degrade path
+with no stubbing required.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from orc_werk.adapters.jsonl import layout
@@ -27,13 +39,18 @@ from orc_werk.adapters.scripted.candidate import ScriptedCandidate, fingerprint_
 from orc_werk.adapters.scripted.execution import ScriptedExecution
 from orc_werk.app import Orchestrator, RunConfig, default_single_work_plan
 from orc_werk.cli.refs import (
+    RESOLVE_OUTPUT_CAP_BYTES,
     RefRow,
+    ResolveCommand,
     _candidate_rows,
     _command_field,
     _evidence_ref_rows,
     _execution_session_rows,
     _mirror_row,
+    _render_resolution,
+    _select_row,
     _session_resolve,
+    _vet_read_only,
     collect_refs,
 )
 from tests.conformance.support_beads_stub import install_stub, read_calls
@@ -64,12 +81,14 @@ def _run_cli(tmp_dir: Path, *args: str, env: dict | None = None) -> subprocess.C
 
 class SessionResolveUnitTest(unittest.TestCase):
     def test_acpx_provider_derives_conservative_tool_form(self) -> None:
-        self.assertEqual(_session_resolve("acpx-pi", "sess-123"), "acpx pi sessions history sess-123")
+        resolve = _session_resolve("acpx-pi", "sess-123")
+        self.assertEqual(resolve.display, "acpx pi sessions history sess-123")
+        self.assertEqual(resolve.argv, ("acpx", "pi", "sessions", "history", "sess-123"))
 
     def test_non_acpx_provider_renders_no_resolve(self) -> None:
-        self.assertEqual(_session_resolve("some-other-provider", "sess-123"), "-")
-        self.assertEqual(_session_resolve(None, "sess-123"), "-")
-        self.assertEqual(_session_resolve("acpx-", "sess-123"), "-")  # empty agent name
+        self.assertEqual(_session_resolve("some-other-provider", "sess-123").display, "-")
+        self.assertEqual(_session_resolve(None, "sess-123").display, "-")
+        self.assertEqual(_session_resolve("acpx-", "sess-123").display, "-")  # empty agent name
 
 
 class CommandFieldUnitTest(unittest.TestCase):
@@ -99,7 +118,11 @@ class EvidenceRefRowsUnitTest(unittest.TestCase):
 
     def test_plain_string_entry_renders_verbatim_no_resolve(self) -> None:
         rows = _evidence_ref_rows(self._history(["evidence-for-fp-1"]))
-        self.assertEqual(rows, [RefRow(kind="evidence", provider="-", value="evidence-for-fp-1", resolve="-")])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].kind, "evidence")
+        self.assertEqual(rows[0].provider, "-")
+        self.assertEqual(rows[0].value, "evidence-for-fp-1")
+        self.assertEqual(rows[0].resolve, ResolveCommand.none())
 
     def test_structured_entry_with_command_field_surfaces_resolve(self) -> None:
         entry = {
@@ -109,7 +132,9 @@ class EvidenceRefRowsUnitTest(unittest.TestCase):
         }
         rows = _evidence_ref_rows(self._history([entry]))
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].resolve, "no-mistakes axi status --run r1")
+        self.assertEqual(rows[0].resolve.display, "no-mistakes axi status --run r1")
+        self.assertEqual(rows[0].resolve.argv, ("no-mistakes", "axi", "status", "--run", "r1"))
+        self.assertIsNone(rows[0].resolve.refusal)
         # value carries the entry verbatim (portable JSON), not a summary.
         self.assertEqual(json.loads(rows[0].value), entry)
 
@@ -117,8 +142,29 @@ class EvidenceRefRowsUnitTest(unittest.TestCase):
         entry = {"future_field": "an-unregistered-shape", "nested": {"a": [1, 2, 3]}}
         rows = _evidence_ref_rows(self._history([entry]))
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].resolve, "-")
+        self.assertEqual(rows[0].resolve, ResolveCommand.none())
         self.assertEqual(json.loads(rows[0].value), entry)
+
+    def test_mutating_command_field_is_refused_never_executable(self) -> None:
+        """Safety-critical: a crafted journal evidence entry whose `command`
+        field is a mutating provider command must never become an
+        executable argv -- `_vet_read_only` refuses it and the row keeps
+        only the manual display (TASK-M3C-002's judge-only bar)."""
+        for command in ("git push origin main", "bd create --title pwned", "rm -rf /"):
+            entry = {"command": command}
+            rows = _evidence_ref_rows(self._history([entry]))
+            self.assertEqual(len(rows), 1, msg=command)
+            self.assertIsNone(rows[0].resolve.argv, msg=command)
+            self.assertIsNotNone(rows[0].resolve.refusal, msg=command)
+            self.assertEqual(rows[0].resolve.display, command, msg=command)
+
+    def test_malformed_command_text_degrades_to_raw_display(self) -> None:
+        entry = {"command": "git show 'unterminated"}
+        rows = _evidence_ref_rows(self._history([entry]))
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0].resolve.argv)
+        self.assertIsNotNone(rows[0].resolve.refusal)
+        self.assertEqual(rows[0].resolve.display, "git show 'unterminated")
 
     def test_absent_evidence_refs_yields_no_rows(self) -> None:
         history = [{"kind": "fact", "id": "FACT-ASSURE-SETTLED", "data": {"assurance_id": "a1", "verdict": "accepted"}}]
@@ -144,21 +190,26 @@ class ExecutionSessionRowsUnitTest(unittest.TestCase):
             "transcript_ref": "/abs/transcript.log",
         }
         rows = _execution_session_rows(self._history(payload))
+        self.assertEqual(len(rows), 3)
+        session, resume, transcript = rows
+        self.assertEqual((session.kind, session.provider, session.value), ("session", "acpx-pi", "sess-9f2c"))
+        self.assertEqual(session.resolve.display, "acpx pi sessions history sess-9f2c")
+        self.assertEqual(session.resolve.argv, ("acpx", "pi", "sessions", "history", "sess-9f2c"))
+        self.assertEqual((resume.kind, resume.provider, resume.value), ("resume", "acpx-pi", "resume-ref-9f2c"))
+        self.assertEqual(resume.resolve, ResolveCommand.none())
         self.assertEqual(
-            rows,
-            [
-                RefRow(kind="session", provider="acpx-pi", value="sess-9f2c", resolve="acpx pi sessions history sess-9f2c"),
-                RefRow(kind="resume", provider="acpx-pi", value="resume-ref-9f2c", resolve="-"),
-                RefRow(kind="transcript", provider="acpx-pi", value="/abs/transcript.log", resolve="cat /abs/transcript.log"),
-            ],
+            (transcript.kind, transcript.provider, transcript.value),
+            ("transcript", "acpx-pi", "/abs/transcript.log"),
         )
+        self.assertEqual(transcript.resolve.display, "cat /abs/transcript.log")
+        self.assertEqual(transcript.resolve.argv, ("cat", "/abs/transcript.log"))
 
     def test_minimal_payload_yields_session_row_only(self) -> None:
         payload = {"provider": "opaque-provider-c", "native_session_id": "opaque-session-55zz"}
         rows = _execution_session_rows(self._history(payload))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].kind, "session")
-        self.assertEqual(rows[0].resolve, "-")
+        self.assertEqual(rows[0].resolve, ResolveCommand.none())
 
     def test_unknown_future_field_in_payload_does_not_break_known_rows(self) -> None:
         payload = {
@@ -194,28 +245,33 @@ class CandidateRowsUnitTest(unittest.TestCase):
         rows = _candidate_rows(self._history({"head_sha": "abc123", "repo_path": "/abs/repo"}))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].kind, "candidate")
-        self.assertEqual(rows[0].resolve, "git -C /abs/repo show abc123 --stat")
+        self.assertEqual(rows[0].resolve.display, "git -C /abs/repo show abc123 --stat")
+        self.assertEqual(rows[0].resolve.argv, ("git", "-C", "/abs/repo", "show", "abc123", "--stat"))
 
     def test_head_sha_without_repo_path_has_no_resolve(self) -> None:
         rows = _candidate_rows(self._history({"head_sha": "abc123"}))
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].resolve, "-")
+        self.assertEqual(rows[0].resolve, ResolveCommand.none())
 
-    def test_pr_alone_yields_gh_resolve_unconditionally(self) -> None:
+    def test_pr_alone_yields_gh_resolve_display_but_not_executable(self) -> None:
         # issue #94 folded item / PR #104 verifier recommendation:
         # `gh pr view <pr>` is surfaced whenever the candidate carries `pr`,
         # with no same-`subject_identity` repo/URL sibling-field gate --
         # matching orc_werk.cli.affordances._candidate_pr's own
-        # unconditional precedent for the ACCEPTED-state next: block.
+        # unconditional precedent for the ACCEPTED-state next: block. `gh`
+        # is not in TASK-M3C-002's execution allowlist, so the display
+        # command is unchanged but argv is refused (see _vet_read_only).
         rows = _candidate_rows(self._history({"pr": 42}))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].kind, "candidate-pr")
-        self.assertEqual(rows[0].resolve, "gh pr view 42")
+        self.assertEqual(rows[0].resolve.display, "gh pr view 42")
+        self.assertIsNone(rows[0].resolve.argv)
+        self.assertIsNotNone(rows[0].resolve.refusal)
 
     def test_pr_with_repo_context_field_yields_gh_resolve(self) -> None:
         rows = _candidate_rows(self._history({"pr": 42, "repo_path": "/abs/repo"}))
         pr_row = next(r for r in rows if r.kind == "candidate-pr")
-        self.assertEqual(pr_row.resolve, "gh pr view 42")
+        self.assertEqual(pr_row.resolve.display, "gh pr view 42")
 
     def test_no_candidate_effect_yields_no_rows(self) -> None:
         self.assertEqual(_candidate_rows([]), [])
@@ -248,8 +304,10 @@ class MirrorRowUnitTest(unittest.TestCase):
             self.assertEqual(row.provider, "beads")
             self.assertIn("run:run-1", row.value)
             self.assertIn("/abs/bd-workspace", row.value)
+            self.assertEqual(row.resolve.display, "bd --json -C /abs/bd-workspace list --label run:run-1")
             self.assertEqual(
-                row.resolve, "bd --json -C /abs/bd-workspace list --label run:run-1"
+                row.resolve.argv,
+                ("bd", "--json", "-C", "/abs/bd-workspace", "list", "--label", "run:run-1"),
             )
 
 
@@ -445,6 +503,458 @@ class RefsMirrorCliTest(unittest.TestCase):
             self.assertIn("mirror", result.stdout)
             self.assertIn("run:refs-mirror", result.stdout)
             self.assertIn(f"bd --json -C {workspace} list --label run:refs-mirror", result.stdout)
+
+
+# ---------------------------------------------------------------------------
+# TASK-M3C-002: ResolveCommand single-source, allowlist vetting, selector,
+# execution (success/refusal/failure/truncation)
+# ---------------------------------------------------------------------------
+
+
+class ResolveCommandSingleSourceUnitTest(unittest.TestCase):
+    """Mutation-honest single-source guarantee: `ResolveCommand.of`'s
+    `display` is mechanically DERIVED from `argv` (`" ".join`), never a
+    second hand-maintained copy -- changing the argv given to `of` changes
+    the display it returns, every time, with no way to construct a
+    `ResolveCommand` whose vetted `argv` and `display` name different
+    commands."""
+
+    def test_display_is_derived_from_argv_changing_argv_changes_display(self) -> None:
+        first = ResolveCommand.of(["cat", "/abs/one.log"])
+        second = ResolveCommand.of(["cat", "/abs/two.log"])
+        self.assertEqual(first.display, "cat /abs/one.log")
+        self.assertEqual(second.display, "cat /abs/two.log")
+        self.assertNotEqual(first.display, second.display)
+        self.assertEqual(first.display, " ".join(first.argv))
+        self.assertEqual(second.display, " ".join(second.argv))
+
+    def test_refused_argv_still_derives_display_from_the_same_argv(self) -> None:
+        # A refused command (tool/subcommand outside the allowlist) has no
+        # executable argv, but its display is still exactly the argv that
+        # was vetted and rejected -- never a different, manually-typed
+        # string -- so the listing never claims a command was runnable
+        # that in fact differs from what was checked.
+        refused = ResolveCommand.of(["git", "push", "origin", "main"])
+        self.assertIsNone(refused.argv)
+        self.assertEqual(refused.display, "git push origin main")
+
+    def test_from_raw_text_display_is_rederived_from_parsed_argv(self) -> None:
+        # A journal-carried command string round-trips through shlex
+        # parse -> vet -> " ".join, not preserved verbatim -- so its
+        # display can never silently diverge from the argv --resolve would
+        # actually execute.
+        resolved = ResolveCommand.from_raw_text("cat   /abs/spaced.log")
+        self.assertEqual(resolved.argv, ("cat", "/abs/spaced.log"))
+        self.assertEqual(resolved.display, "cat /abs/spaced.log")
+
+
+class VetReadOnlyUnitTest(unittest.TestCase):
+    """The read-only allowlist itself (TASK-M3C-002's per-tool vetting):
+    cat; git show/--stat forms; acpx sessions history/show; bd list/show;
+    no-mistakes axi status/logs -- nothing else."""
+
+    def test_vetted_forms_pass(self) -> None:
+        vetted = [
+            ["cat", "/abs/transcript.log"],
+            ["git", "show", "abc123", "--stat"],
+            ["git", "-C", "/abs/repo", "show", "abc123", "--stat"],
+            ["acpx", "pi", "sessions", "history", "sess-1"],
+            ["acpx", "pi", "sessions", "show", "sess-1"],
+            ["bd", "list", "--label", "run:x"],
+            ["bd", "--json", "-C", "/abs/ws", "list", "--label", "run:x"],
+            ["bd", "--json", "-C", "/abs/ws", "show", "bd-1"],
+            ["no-mistakes", "axi", "status", "--run", "r1"],
+            ["no-mistakes", "axi", "logs", "--run", "r1", "--step", "review", "--full"],
+        ]
+        for argv in vetted:
+            self.assertIsNone(_vet_read_only(argv), msg=argv)
+
+    def test_refused_forms(self) -> None:
+        refused = [
+            [],
+            ["cat"],
+            ["cat", "a", "b"],
+            ["git", "push", "origin", "main"],
+            ["git", "-C", "/abs/repo", "commit", "-m", "x"],
+            ["acpx", "pi", "sessions", "delete", "sess-1"],
+            ["acpx", "pi", "prompt", "sess-1"],
+            ["bd", "create", "--title", "x"],
+            ["bd", "--json", "-C", "/abs/ws", "update", "bd-1"],
+            ["no-mistakes", "axi", "run"],
+            ["no-mistakes", "push"],
+            ["gh", "pr", "view", "1"],
+            ["rm", "-rf", "/"],
+            ["sh", "-c", "echo pwned"],
+        ]
+        for argv in refused:
+            self.assertIsNotNone(_vet_read_only(argv), msg=argv)
+
+
+class SelectRowUnitTest(unittest.TestCase):
+    def _rows(self) -> list[RefRow]:
+        return [
+            RefRow(kind="session", provider="acpx-pi", value="sess-1", resolve=ResolveCommand.none()),
+            RefRow(kind="transcript", provider="acpx-pi", value="/abs/t.log", resolve=ResolveCommand.of(["cat", "/abs/t.log"])),
+            RefRow(kind="evidence", provider="-", value="ev-a", resolve=ResolveCommand.none()),
+            RefRow(kind="evidence", provider="-", value="ev-b", resolve=ResolveCommand.none()),
+        ]
+
+    def test_valid_index_selects_the_matching_row(self) -> None:
+        rows = self._rows()
+        index, row = _select_row(rows, "2")
+        self.assertEqual(index, 2)
+        self.assertIs(row, rows[1])
+
+    def test_out_of_range_index_is_validation_error_with_next(self) -> None:
+        rows = self._rows()
+        with self.assertRaises(Exception) as ctx:
+            _select_row(rows, "99")
+        error = ctx.exception.to_canonical()
+        self.assertEqual(error["error"], "ERR-VALIDATION")
+        self.assertIn("next", error)
+        self.assertTrue(error["next"])
+
+    def test_zero_refs_out_of_range_next_points_at_listing(self) -> None:
+        with self.assertRaises(Exception) as ctx:
+            _select_row([], "1")
+        error = ctx.exception.to_canonical()
+        self.assertEqual(error["error"], "ERR-VALIDATION")
+        self.assertIn("0 refs", " ".join(error["next"]))
+
+    def test_kind_selector_with_single_match_selects_it(self) -> None:
+        rows = self._rows()
+        index, row = _select_row(rows, "transcript")
+        self.assertEqual(index, 2)
+        self.assertIs(row, rows[1])
+
+    def test_kind_selector_with_no_match_is_validation_error_with_next(self) -> None:
+        rows = self._rows()
+        with self.assertRaises(Exception) as ctx:
+            _select_row(rows, "candidate")
+        error = ctx.exception.to_canonical()
+        self.assertEqual(error["error"], "ERR-VALIDATION")
+        self.assertIn("next", error)
+
+    def test_kind_selector_ambiguous_is_validation_error_naming_indices(self) -> None:
+        rows = self._rows()
+        with self.assertRaises(Exception) as ctx:
+            _select_row(rows, "evidence")
+        error = ctx.exception.to_canonical()
+        self.assertEqual(error["error"], "ERR-VALIDATION")
+        self.assertIn("[3]", error["message"])
+        self.assertIn("[4]", error["message"])
+        self.assertIn("next", error)
+
+    def test_kind_and_substring_selector_narrows_to_one_match(self) -> None:
+        rows = self._rows()
+        index, row = _select_row(rows, "evidence:ev-b")
+        self.assertEqual(index, 4)
+        self.assertIs(row, rows[3])
+
+
+class RenderResolutionUnitTest(unittest.TestCase):
+    """`_render_resolution` in isolation, exercising the execution/refusal/
+    error/truncation branches directly against `RefRow` fixtures."""
+
+    def test_no_resolve_command_available(self) -> None:
+        row = RefRow(kind="resume", provider="acpx-pi", value="resume-ref", resolve=ResolveCommand.none())
+        lines = _render_resolution(1, row)
+        self.assertIn("no resolve command available for this ref", lines)
+
+    def test_refused_command_prints_reason_and_manual_command(self) -> None:
+        row = RefRow(kind="evidence", provider="-", value="ev", resolve=ResolveCommand.of(["git", "push", "origin", "main"]))
+        lines = _render_resolution(1, row)
+        joined = "\n".join(lines)
+        self.assertIn("REFUSED:", joined)
+        self.assertIn("manual command: git push origin main", joined)
+
+    def test_successful_cat_execution_prints_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "transcript.log"
+            path.write_text("hello from the fixture transcript\n", encoding="utf-8")
+            row = RefRow(kind="transcript", provider="acpx-pi", value=str(path), resolve=ResolveCommand.of(["cat", str(path)]))
+            lines = _render_resolution(1, row)
+            joined = "\n".join(lines)
+            self.assertIn(f"cat {path}", joined)
+            self.assertIn("hello from the fixture transcript", joined)
+
+    def test_missing_binary_degrades_with_manual_command(self) -> None:
+        # PATH restricted to a directory with nothing in it, regardless of
+        # what happens to be installed on the host running this test suite
+        # -- `no-mistakes` (or any other allowlisted tool) is guaranteed
+        # absent under this PATH.
+        with tempfile.TemporaryDirectory() as empty_bin, unittest.mock.patch.dict(os.environ, {"PATH": empty_bin}):
+            row = RefRow(
+                kind="evidence",
+                provider="-",
+                value="ev",
+                resolve=ResolveCommand.of(["no-mistakes", "axi", "status", "--run", "r1"]),
+            )
+            lines = _render_resolution(1, row)
+        joined = "\n".join(lines)
+        self.assertIn("ERROR:", joined)
+        self.assertIn("binary not found on PATH", joined)
+        self.assertIn("manual command: no-mistakes axi status --run r1", joined)
+
+    def test_nonzero_exit_degrades_with_manual_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_path = str(Path(tmp) / "does-not-exist.log")
+            row = RefRow(
+                kind="transcript",
+                provider="acpx-pi",
+                value=missing_path,
+                resolve=ResolveCommand.of(["cat", missing_path]),
+            )
+            lines = _render_resolution(1, row)
+            joined = "\n".join(lines)
+            self.assertIn("ERROR:", joined)
+            self.assertIn(f"manual command: cat {missing_path}", joined)
+
+    def test_output_over_cap_is_truncated_with_definitive_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "big.log"
+            total = RESOLVE_OUTPUT_CAP_BYTES * 2
+            path.write_text("x" * total, encoding="utf-8")
+            row = RefRow(kind="transcript", provider="acpx-pi", value=str(path), resolve=ResolveCommand.of(["cat", str(path)]))
+            lines = _render_resolution(1, row)
+            joined = "\n".join(lines)
+            self.assertIn("x" * RESOLVE_OUTPUT_CAP_BYTES, joined)
+            self.assertNotIn("x" * (RESOLVE_OUTPUT_CAP_BYTES + 1), joined)
+            self.assertIn(f"... truncated, showing first {RESOLVE_OUTPUT_CAP_BYTES} of {total} bytes", joined)
+            self.assertIn(f"run manually for full output: cat {path}", joined)
+
+
+def _git_fixture_repo(repo_dir: Path) -> str:
+    """A real, tiny git repo with one commit -- returns its head sha.
+    Used to exercise `--resolve`'s `git show --stat` path against genuine
+    `git` output rather than a mock."""
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": "orc-werk-test",
+            "GIT_AUTHOR_EMAIL": "test@example.invalid",
+            "GIT_COMMITTER_NAME": "orc-werk-test",
+            "GIT_COMMITTER_EMAIL": "test@example.invalid",
+        }
+    )
+    subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True, env=env)
+    (repo_dir / "widget.txt").write_text("hello widget\n", encoding="utf-8")
+    subprocess.run(["git", "add", "widget.txt"], cwd=repo_dir, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", "add widget"], cwd=repo_dir, check=True, env=env)
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo_dir, check=True, env=env, capture_output=True, text=True
+    )
+    return result.stdout.strip()
+
+
+class RefsResolveCliTest(unittest.TestCase):
+    """End-to-end `orc refs <run> --resolve`/`--resolve-all` over the real
+    CLI subprocess (`_run_cli`'s restricted `PATH=/usr/bin:/bin`)."""
+
+    def test_resolve_by_index_executes_cat_on_transcript_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_dir = tmp_dir / ".orc"
+            drid, work_id = "refs-resolve-transcript", "work-1"
+            transcript_path = journal_dir / "transcript.log"
+
+            def build() -> None:
+                payload = {
+                    "execution-session/v1": {
+                        "provider": "acpx-pi",
+                        "native_session_id": "sess-1",
+                        "transcript_ref": str(transcript_path),
+                    }
+                }
+                journal = JSONLJournal(journal_dir)
+                work_graph = MemoryWorkGraph()
+                execution = ScriptedExecution(script={work_id: [{"outcome": "completed", "extensions": payload}]})
+                candidate_content = {"label": "C1"}
+                execution_id = predicted_execution_id(delivery_run_id=drid, work_id=work_id, attempt_number=1)
+                candidate = ScriptedCandidate(
+                    subjects={execution_id: {"work_id": work_id, "subject_identity": candidate_content}},
+                    current_by_work={},
+                )
+                assurance = ScriptedAssurance(script={fingerprint_of(candidate_content): {"verdict": "accepted"}})
+                orchestrator = Orchestrator(
+                    delivery_run_id=drid,
+                    journal=journal,
+                    work_graph=work_graph,
+                    execution=execution,
+                    candidate=candidate,
+                    assurance=assurance,
+                    config=RunConfig(max_attempts=3),
+                )
+                orchestrator.bootstrap(intent_id=drid, text="resolve transcript fixture", plan=default_single_work_plan(work_id))
+                orchestrator.run()
+
+            build()
+            journal_dir.mkdir(parents=True, exist_ok=True)
+            transcript_path.write_text("the fixture transcript's exact content\n", encoding="utf-8")
+
+            listing = _run_cli(tmp_dir, "refs", drid, "--journal", str(journal_dir))
+            self.assertEqual(listing.returncode, 0, msg=listing.stdout + listing.stderr)
+            self.assertIn("[2]", listing.stdout)  # session=[1], transcript=[2]
+
+            result = _run_cli(tmp_dir, "refs", drid, "--journal", str(journal_dir), "--resolve", "2")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn(f"[2] transcript (acpx-pi): cat {transcript_path}", result.stdout)
+            self.assertIn("the fixture transcript's exact content", result.stdout)
+
+            by_kind = _run_cli(tmp_dir, "refs", drid, "--journal", str(journal_dir), "--resolve", "transcript")
+            self.assertEqual(by_kind.returncode, 0, msg=by_kind.stdout + by_kind.stderr)
+            self.assertIn("the fixture transcript's exact content", by_kind.stdout)
+
+    def test_resolve_git_show_against_fixture_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            repo_dir = tmp_dir / "fixture-repo"
+            head_sha = _git_fixture_repo(repo_dir)
+            config = {
+                "attempts": {
+                    "work-1": [
+                        {
+                            "outcome": "completed",
+                            "candidate": {"head_sha": head_sha, "repo_path": str(repo_dir)},
+                            "assurance": {"verdict": "accepted"},
+                        }
+                    ]
+                }
+            }
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            dispatch = _run_cli(tmp_dir, "dispatch", "resolve candidate demo", "--config", str(config_path), "--run-id", "refs-resolve-candidate")
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            result = _run_cli(tmp_dir, "refs", "refs-resolve-candidate", "--resolve", "candidate")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn(f"git -C {repo_dir} show {head_sha} --stat", result.stdout)
+            self.assertIn("widget.txt", result.stdout)
+            self.assertIn("add widget", result.stdout)
+
+    def test_resolve_refused_mutating_evidence_command_degrades_honestly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config = {
+                "attempts": {
+                    "work-1": [
+                        {
+                            "outcome": "completed",
+                            "candidate": {"label": "m1"},
+                            "assurance": {
+                                "verdict": "accepted",
+                                "evidence_refs": [{"command": "git push origin main"}],
+                            },
+                        }
+                    ]
+                }
+            }
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            dispatch = _run_cli(tmp_dir, "dispatch", "resolve refused demo", "--config", str(config_path), "--run-id", "refs-resolve-refused")
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            result = _run_cli(tmp_dir, "refs", "refs-resolve-refused", "--resolve", "1")
+            # Refusal is not a run failure -- exit stays honest/0 (the ref
+            # itself remains valid; only its resolution was refused).
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("REFUSED:", result.stdout)
+            self.assertIn("manual command: git push origin main", result.stdout)
+
+    def test_resolve_missing_binary_degrades_with_manual_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config = {
+                "attempts": {
+                    "work-1": [
+                        {
+                            "outcome": "completed",
+                            "candidate": {"label": "m1"},
+                            "assurance": {
+                                "verdict": "accepted",
+                                "evidence_refs": [{"command": "no-mistakes axi status --run r1"}],
+                            },
+                        }
+                    ]
+                }
+            }
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            dispatch = _run_cli(tmp_dir, "dispatch", "resolve missing binary demo", "--config", str(config_path), "--run-id", "refs-resolve-missing")
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            result = _run_cli(tmp_dir, "refs", "refs-resolve-missing", "--resolve", "1")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("ERROR: binary not found on PATH: 'no-mistakes'", result.stdout)
+            self.assertIn("manual command: no-mistakes axi status --run r1", result.stdout)
+
+    def test_resolve_selector_out_of_range_is_err_validation_with_next(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config = {
+                "attempts": {
+                    "work-1": [
+                        {
+                            "outcome": "completed",
+                            "candidate": {"label": "m1"},
+                            "assurance": {"verdict": "accepted", "evidence_refs": ["plain-evidence"]},
+                        }
+                    ]
+                }
+            }
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            dispatch = _run_cli(tmp_dir, "dispatch", "resolve oob demo", "--config", str(config_path), "--run-id", "refs-resolve-oob")
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            result = _run_cli(tmp_dir, "refs", "refs-resolve-oob", "--resolve", "99")
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            error = json.loads(result.stderr)
+            self.assertEqual(error["error"], "ERR-VALIDATION")
+            self.assertIn("next", error)
+            self.assertTrue(error["next"])
+
+    def test_resolve_all_headers_every_row_with_a_resolve_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config = {
+                "attempts": {
+                    "work-1": [
+                        {
+                            "outcome": "completed",
+                            "candidate": {"label": "m1"},
+                            "assurance": {
+                                "verdict": "accepted",
+                                "evidence_refs": [
+                                    "no-resolve-plain-string",
+                                    {"command": "no-mistakes axi status --run r1"},
+                                ],
+                            },
+                        }
+                    ]
+                }
+            }
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            dispatch = _run_cli(tmp_dir, "dispatch", "resolve all demo", "--config", str(config_path), "--run-id", "refs-resolve-all")
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            result = _run_cli(tmp_dir, "refs", "refs-resolve-all", "--resolve-all")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            # Row [1] (the plain string, resolve "-") is skipped -- nothing
+            # to resolve; row [2] (the no-mistakes command) gets a header
+            # and its honest missing-binary degrade.
+            self.assertNotIn("[1]", result.stdout)
+            self.assertIn("[2] evidence (-): no-mistakes axi status --run r1", result.stdout)
+            self.assertIn("ERROR: binary not found on PATH", result.stdout)
+
+    def test_resolve_and_resolve_all_are_mutually_exclusive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            result = _run_cli(tmp_dir, "refs", "some-run", "--resolve", "1", "--resolve-all")
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            self.assertIn("not allowed with argument", result.stderr)
 
 
 if __name__ == "__main__":

@@ -397,47 +397,103 @@ is missing).
 ### `orc refs`
 
 ```text
-usage: orc refs [-h] [--journal JOURNAL] target
+usage: orc refs [-h] [--journal JOURNAL] [--resolve SELECTOR | --resolve-all] target
 ```
 
 Pure journal projection (no new recording, no new storage -- `CONTRACT-
 DURABILITY`'s disposition sentence, "narrative/report content is
 provider-owned and the ledger journals resolvable references"): lists
-every resolvable reference recorded for one run, one row per reference,
-with columns `kind`, `provider`, `value`, and a runnable `resolve`
-command. Four independently optional sources, each silently absent when
-the run carries none of it -- never fabricated: `execution-session/v1`
-session/resume/transcript refs (`EXT-EXECUTION-SESSION-V1-SCHEMA`) off
-`FACT-EXEC-SETTLED`; assurance `evidence_refs` off `FACT-ASSURE-SETTLED`
-(`PROTOCOL-FACTS`); candidate identity (`head_sha`/`repo_path`/`pr`) off
-the journaled `FX-IDENTIFY-CANDIDATE` effect; and the Beads mirror's run
-label + workspace, read from the run's own persisted dispatch config when
-one configured a `mirror` block. Resolve commands are DISPLAY strings
-only -- `orc refs` never shells out to anything.
+every resolvable reference recorded for one run, one indexed row per
+reference, with columns `kind`, `provider`, `value`, and a runnable
+`resolve` command. Four independently optional sources, each silently
+absent when the run carries none of it -- never fabricated:
+`execution-session/v1` session/resume/transcript refs
+(`EXT-EXECUTION-SESSION-V1-SCHEMA`) off `FACT-EXEC-SETTLED`; assurance
+`evidence_refs` off `FACT-ASSURE-SETTLED` (`PROTOCOL-FACTS`); candidate
+identity (`head_sha`/`repo_path`/`pr`) off the journaled
+`FX-IDENTIFY-CANDIDATE` effect; and the Beads mirror's run label +
+workspace, read from the run's own persisted dispatch config when one
+configured a `mirror` block. The plain listing never shells out to
+anything -- resolve commands are DISPLAY strings only.
 
 | Flag | Default | Notes |
 |---|---|---|
 | `target` (positional) | required | journal path (dir or `<run>.jsonl`) or bare run id |
 | `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
+| `--resolve SELECTOR` | none | execute one ref's resolve command inline (`--resolve`/`--resolve-all` mutually exclusive) |
+| `--resolve-all` | off | execute every ref's resolve command inline, each under its own header |
 
 ```bash
 orc refs my-run-id
 orc refs my-run-id --journal ./.orc
+orc refs my-run-id --resolve 2            # by the [N] index the plain listing prints
+orc refs my-run-id --resolve transcript    # by kind, when exactly one row matches
+orc refs my-run-id --resolve-all           # every ref with a resolve command, headered
 ```
 
 ```text
 run: my-run-id
-session      acpx-pi          sess-9f2c  (resolve: acpx pi sessions history sess-9f2c)
-resume       acpx-pi          resume-ref-9f2c  (resolve: -)
-transcript   acpx-pi          /abs/path/transcript.log  (resolve: cat /abs/path/transcript.log)
-evidence     -                {"command":"no-mistakes axi status --run r1", ...}  (resolve: no-mistakes axi status --run r1)
-candidate    -                {"head_sha":"abc123","repo_path":"/abs/worktree"}  (resolve: git -C /abs/worktree show abc123 --stat)
-mirror       beads            label=run:my-run-id workspace=/abs/bd-workspace  (resolve: bd --json -C /abs/bd-workspace list --label run:my-run-id)
+[1] session      acpx-pi          sess-9f2c  (resolve: acpx pi sessions history sess-9f2c)
+[2] resume       acpx-pi          resume-ref-9f2c  (resolve: -)
+[3] transcript   acpx-pi          /abs/path/transcript.log  (resolve: cat /abs/path/transcript.log)
+[4] evidence     -                {"command":"no-mistakes axi status --run r1", ...}  (resolve: no-mistakes axi status --run r1)
+[5] candidate    -                {"head_sha":"abc123","repo_path":"/abs/worktree"}  (resolve: git -C /abs/worktree show abc123 --stat)
+[6] mirror       beads            label=run:my-run-id workspace=/abs/bd-workspace  (resolve: bd --json -C /abs/bd-workspace list --label run:my-run-id)
 ```
 
 A run with no resolvable references at all prints a definitive `0 refs
 for <run-id>` plus a one-line pointer at `orc status <run-id>` (same
 "content first" empty-state convention as bare `orc`/`orc report`).
+
+#### `--resolve`/`--resolve-all` (`TASK-M3C-002`)
+
+Executes the SAME command the listing displays -- one vocabulary, what
+you see is what runs. There is no second command string built from
+scratch: every row's resolve command is built once, as an argv list, by
+the same builder that renders its display string (`ResolveCommand.of`/
+`from_raw_text`, `orc_werk.cli.refs`), so a display string and its argv
+can never diverge (mutation-honest: change the argv, the display changes
+with it).
+
+Every resolve command -- builder-constructed (session, transcript,
+candidate, mirror, `candidate-pr`) or carried as journal DATA (an
+`evidence_refs` entry's `command`/`*_command` field) -- is vetted against
+a hard, per-tool READ-ONLY allowlist at construction time, before it is
+ever offered for execution (the same judge-only bar
+`docs/adapters/no-mistakes/mapping.md`'s "Judge-only ruling" sets for the
+assurance adapter): `cat <path>`; `git [-C <path>] show ...` (no other git
+subcommand); `acpx <agent> sessions <history|show> ...`; `bd [--json]
+[-C <path>] <list|show> ...`; `no-mistakes axi <status|logs> ...`.
+Nothing else -- notably `gh pr view <pr>` (the `candidate-pr` row) is NOT
+in this allowlist, so that row keeps displaying unchanged but never
+executes under `--resolve`. A command outside the allowlist -- including
+a deliberately mutating one smuggled into a journal's `evidence_refs`
+(e.g. `git push`, `bd create`, `rm -rf`) -- REFUSES to execute: it prints
+`REFUSED: <reason>` plus the manual command, never runs.
+
+Selectors: the `[N]` index the plain listing prints (copy-pasteable
+as-is), or `<kind>[:<substring>]` -- every row of that kind, optionally
+narrowed by a substring of its `value`, selected only when exactly one
+match remains; an out-of-range, absent, or ambiguous selector is
+canonical `ERR-VALIDATION` (exit 2) with a `next` pointer (issue #94)
+naming the valid range or the matching indices -- never a silent guess.
+
+Execution is bounded (~30s per command, never `shell=True`), and content
+is size-capped (8 KiB) with a definitive truncation note plus the manual
+command for the full view when exceeded -- resolved content itself is
+raw adapter-native passthrough (verbatim stdout), not escaped or
+filtered, since it is the thing the operator explicitly asked to see; only
+the size cap applies. Resolution FAILURE (refusal, missing binary,
+nonzero exit, timeout) is never an `orc refs` run failure -- the ref
+itself remains valid even when resolving it did not produce content, so
+exit stays `0`; only a bad selector or missing run is a hard usage error.
+
+```text
+$ orc refs my-run-id --resolve 3
+run: my-run-id
+--- [3] transcript (acpx-pi): cat /abs/path/transcript.log ---
+<the transcript file's contents, verbatim, capped at 8 KiB>
+```
 
 ### `orc report`
 

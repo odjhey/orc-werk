@@ -671,21 +671,42 @@ def build_parser() -> argparse.ArgumentParser:
 
     refs_parser = subparsers.add_parser(
         "refs",
-        help="list every resolvable reference in a run with its resolve command",
+        help="list every resolvable reference in a run, or resolve one/all inline",
         description="Pure journal projection: list every resolvable reference recorded for one "
         "run (execution-session/v1 session/transcript refs, assurance evidence_refs, candidate "
-        "identity, the Beads mirror when configured), each with a runnable resolve command. "
-        "Read-only; resolve commands are display strings only, never executed "
+        "identity, the Beads mirror when configured), each indexed and shown with a resolve "
+        "command. --resolve/--resolve-all (TASK-M3C-002) execute that SAME command -- never a "
+        "second command vocabulary -- vetted read-only at construction (cat; git show/--stat; "
+        "acpx sessions history/show; bd list/show; no-mistakes axi status/logs -- nothing else); "
+        "an unvetted or malformed command REFUSES to execute and prints the manual command "
+        "instead. A resolution failure (refused, missing binary, nonzero exit, timeout after 30s) "
+        "never fails this command -- the ref itself remains valid; exit stays 0. Plain listing is "
+        "unchanged: still read-only, still never shells out "
         "(docs/contracts/durability-responsibilities.md, CONTRACT-DURABILITY).",
         epilog="examples:\n"
         "  orc refs my-run-id\n"
-        "  orc refs ./.orc/my-run-id.jsonl\n\n"
+        "  orc refs ./.orc/my-run-id.jsonl\n"
+        "  orc refs my-run-id --resolve 2            # by the [N] index the plain listing prints\n"
+        "  orc refs my-run-id --resolve transcript    # by kind, when exactly one row matches\n"
+        "  orc refs my-run-id --resolve-all           # every row with a resolve command, headered\n\n"
         "defaults: a bare run id resolves against --journal, $ORC_JOURNAL_DIR, or ./.orc",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     refs_parser.add_argument("target", help="journal path (dir or <run>.jsonl) or bare run id")
     refs_parser.add_argument(
         "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
+    refs_resolve_group = refs_parser.add_mutually_exclusive_group()
+    refs_resolve_group.add_argument(
+        "--resolve",
+        metavar="SELECTOR",
+        default=None,
+        help="resolve one ref inline: the [N] index from the plain listing, or '<kind>[:<substring>]'",
+    )
+    refs_resolve_group.add_argument(
+        "--resolve-all",
+        action="store_true",
+        help="resolve every ref that carries a resolve command, each under its own header",
     )
     refs_parser.set_defaults(func=cmd_refs)
 
