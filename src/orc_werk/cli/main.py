@@ -17,8 +17,10 @@ stderr, never a Python traceback.
 from __future__ import annotations
 
 import argparse
+import getpass
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -267,6 +269,23 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     # since bootstrap/run below will have already written records by then.
     is_first_dispatch = not journal.history(delivery_run_id=run_id)
     orchestrator.bootstrap(intent_id=run_id, text=intent_text, plan=plan)
+
+    if args.abandon_work is not None:
+        # TASK-M3B-001 (issues #76/#95): operator-only surface, never the
+        # ship/verify agent observation path. Recorded before the ordinary
+        # run() pass below so the same dispatch invocation both consumes
+        # the abandon and advances the resulting retry/block honestly.
+        if not args.abandon_reason:
+            raise validation_error(
+                "--abandon-work requires --abandon-reason",
+                next_steps=[
+                    f'orc dispatch --run-id {run_id} --journal {journal_dir.resolve()} '
+                    f'--abandon-work {args.abandon_work} --abandon-reason "<why>"'
+                ],
+            )
+        by = args.abandon_by or os.environ.get("USER") or getpass.getuser()
+        orchestrator.abandon_attempt(work_id=args.abandon_work, reason=args.abandon_reason, by=by)
+
     projection = orchestrator.run()
     history = journal.history(delivery_run_id=run_id)
 
@@ -594,6 +613,11 @@ def build_parser() -> argparse.ArgumentParser:
         '    #                "candidate": {"adapter": "git", "repo_path": "/abs/worktree"}}\n'
         "    # exits 3 (pending) while Pi works; re-run the identical command to poll; once\n"
         "    # settled, record the assurance verdict in the config's attempts and re-run again\n\n"
+        "  orc dispatch --run-id demo-run --journal ./.orc \\\n"
+        '    --abandon-work work-1 --abandon-reason "adapter session orphaned"  # TASK-M3B-001:\n'
+        "    # operator-only. Legal only when work-1 rests at an unresolved candidate-\n"
+        "    # observation conflict, or at ASSURING awaiting an assurance you know (out-of-\n"
+        "    # band) will never settle; --abandon-by defaults to $USER\n\n"
         + _DISPATCH_CONFIG_EPILOG
         + "\ndefaults: --journal $ORC_JOURNAL_DIR or ./.orc, --max-attempts 3 (policy default), --run-id derived "
         "deterministically from the intent text when omitted; config execution.adapter="
@@ -609,6 +633,22 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch_parser.add_argument("--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None)
     dispatch_parser.add_argument("--max-attempts", type=int, default=None, help="override policy max_attempts")
     dispatch_parser.add_argument("--run-id", default=None, help="explicit delivery_run_id")
+    dispatch_parser.add_argument(
+        "--abandon-work",
+        default=None,
+        metavar="WORK_ID",
+        help="operator-only (TASK-M3B-001): record DEC-ABANDON-ATTEMPT for this work before "
+        "continuing dispatch -- requires --abandon-reason",
+    )
+    dispatch_parser.add_argument(
+        "--abandon-reason", default=None, metavar="TEXT", help="required with --abandon-work: why"
+    )
+    dispatch_parser.add_argument(
+        "--abandon-by",
+        default=None,
+        metavar="WHO",
+        help="operator identity for --abandon-work (default: $USER)",
+    )
     dispatch_parser.set_defaults(func=cmd_dispatch)
 
     status_parser = subparsers.add_parser(

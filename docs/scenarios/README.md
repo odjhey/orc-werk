@@ -18,3 +18,5 @@ The pure core must pass these scenarios with scripted/in-memory adapters before 
 6. [`SCN-006`](SCN-006-capability-failure.md) unsupported stronger capability
 7. [`SCN-007`](SCN-007-pending-settlement.md) pending execution / operator-recorded settlement
 8. [`SCN-008`](SCN-008-replay-budget.md) replay under the run's own retry budget
+9. [`SCN-009`](SCN-009-verdict-inheritance.md) verdict inheritance on candidate re-observation
+10. [`SCN-010`](SCN-010-abandon-attempt.md) abandoned-attempt recovery

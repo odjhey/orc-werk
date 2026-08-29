@@ -61,6 +61,13 @@ class WorkProjection:
     blocked_confirmed: bool = False
     completed_confirmed: bool = False
 
+    # STATE-DELIVERY mechanical fact sequencing item 9 (TASK-M3B-001): set
+    # when a re-observed candidate_id cannot be resolved by verdict
+    # inheritance (item 8) -- an unresolved candidate-observation conflict.
+    # A normal, non-erroneous resting point at EXECUTING (mirrors item 7's
+    # "waiting" rest), cleared only by folding FACT-ATTEMPT-ABANDONED.
+    candidate_conflict: Optional[Mapping[str, Any]] = None
+
     # Portable fact dicts that justify the currently-pending policy decision
     # (INV-011/INV-012 basis).
     trigger_facts: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
@@ -88,6 +95,7 @@ class WorkProjection:
             "blocked_reason": self.blocked_reason,
             "blocked_confirmed": self.blocked_confirmed,
             "completed_confirmed": self.completed_confirmed,
+            "candidate_conflict": dict(self.candidate_conflict) if self.candidate_conflict else None,
         }
 
 

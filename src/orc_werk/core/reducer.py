@@ -22,13 +22,14 @@ idempotency markers (`assurance_started_for_current`, `completed_confirmed`,
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 
 from orc_werk.core.errors import conflict_error, not_found_error, validation_error
 from orc_werk.core.facts import (
     EXEC_OUTCOMES,
     FACT_ASSURE_SETTLED,
     FACT_ASSURE_STARTED,
+    FACT_ATTEMPT_ABANDONED,
     FACT_CANDIDATE_OBSERVED,
     FACT_EXEC_SETTLED,
     FACT_EXEC_STARTED,
@@ -63,6 +64,48 @@ def _require_state(fact: Fact, projection: WorkProjection, *expected: str) -> No
             work_id=projection.work_id,
             state=projection.state,
         )
+
+
+def _settled_assurance_for_candidate(
+    projection: WorkProjection, candidate_id: str
+) -> Optional[dict]:
+    """The most recent settled assurance entry for `candidate_id` in this
+    Work's lineage (verdict inheritance, STATE-DELIVERY item 8), or `None`
+    if this candidate has no settled assurance to inherit from yet."""
+    match = None
+    for entry in projection.assurances:
+        if entry["candidate_id"] == candidate_id and entry.get("verdict") not in (None, "abandoned"):
+            match = entry
+    return match
+
+
+def _inherit_verdict(
+    projection: WorkProjection,
+    candidate_id: str,
+    inherited: Mapping[str, object],
+    *,
+    max_attempts: int,
+) -> WorkProjection:
+    """Fold a re-observed candidate's inherited verdict (STATE-DELIVERY
+    item 8) exactly as the FACT-ASSURE-SETTLED branch would have for a
+    fresh settlement carrying the same verdict -- except no new Fact is
+    journaled (INV-003: no fabricated assurance evidence) and the basis
+    cited for whatever DEC-* follows is the *prior* settlement Fact."""
+    verdict = inherited["verdict"]
+    if verdict == "accepted":
+        next_state = STATE_ACCEPTED
+    elif verdict == "rejected":
+        next_state = STATE_READY if projection.attempt_number < max_attempts else STATE_BLOCKED
+    elif verdict == "inconclusive":
+        next_state = STATE_BLOCKED
+    else:
+        raise validation_error(f"unknown inherited assurance verdict: {verdict!r}")
+    return replace_projection(
+        projection,
+        state=next_state,
+        current_candidate_id=candidate_id,
+        trigger_facts=(inherited["settled_fact"],),
+    )
 
 
 def apply_fact(
@@ -218,10 +261,49 @@ def apply_fact(
             )
         candidate_id = fact.field("candidate_id")
         if candidate_id in projection.candidates:
-            raise conflict_error(
-                "FACT-CANDIDATE-OBSERVED reuses an existing candidate_id",
-                work_id=projection.work_id,
-                candidate_id=candidate_id,
+            # STATE-DELIVERY mechanical fact sequencing item 8
+            # (TASK-M3B-001, issue #76): a re-observed candidate identity is
+            # legal, not an unconditional conflict. When the re-observation
+            # is exact (fingerprint matches -- INV-006) and a prior
+            # FACT-ASSURE-SETTLED exists for it, the kernel mechanically
+            # inherits that verdict (P-007/INV-011: no Decision here --
+            # the ordinary DEC-ACCEPT/DEC-RETRY/DEC-BLOCK machinery reads
+            # the resulting state next and cites the inherited settlement
+            # as basis, INV-012). No new assurance evidence is fabricated
+            # (INV-003): no FACT-ASSURE-SETTLED is journaled for this fold.
+            prior_fp = projection.candidates[candidate_id]["fingerprint"]
+            incoming_fp = fact.field("fingerprint")
+            inherited = (
+                _settled_assurance_for_candidate(projection, candidate_id)
+                if incoming_fp == prior_fp
+                else None
+            )
+            if inherited is not None:
+                return _inherit_verdict(
+                    projection, candidate_id, inherited, max_attempts=max_attempts
+                )
+            # item 9: neither an exact re-observation with something to
+            # inherit, nor a legal fresh observation -- an unresolved
+            # candidate-observation conflict (identity collision, INV-006/
+            # INV-008, or a reused id whose only prior assurance never
+            # settled). The Fact is still journaled/observed (immutable,
+            # PROTOCOL-FACTS) and the Work rests at EXECUTING, marked --
+            # mirroring item 7's "waiting is a normal resting point"
+            # precedent -- rather than raising and permanently wedging
+            # every future replay (the append-only journal cannot un-
+            # observe this Fact). Recovery is DEC-ABANDON-ATTEMPT (item 9).
+            return replace_projection(
+                projection,
+                candidate_conflict={
+                    "candidate_id": candidate_id,
+                    "fact": fact.to_dict(),
+                    "reason": (
+                        "fingerprint-mismatch"
+                        if incoming_fp != prior_fp
+                        else "no-inheritable-verdict"
+                    ),
+                },
+                trigger_facts=(fact.to_dict(),),
             )
         candidates = dict(projection.candidates)
         candidates[candidate_id] = {
@@ -286,7 +368,9 @@ def apply_fact(
             )
         verdict = fact.field("verdict")
         assurances = tuple(
-            {**item, "verdict": verdict} if item["assurance_id"] == assurance_id else item
+            {**item, "verdict": verdict, "settled_fact": fact.to_dict()}
+            if item["assurance_id"] == assurance_id
+            else item
             for item in projection.assurances
         )
         if verdict == "accepted":
@@ -328,6 +412,48 @@ def apply_fact(
             blocked_reason=fact.field("reason"),
             blocked_confirmed=True,
             trigger_facts=(),
+        )
+
+    if fact.id == FACT_ATTEMPT_ABANDONED:
+        # STATE-DELIVERY mechanical fact sequencing item 9 (TASK-M3B-001,
+        # issues #76/#95): legal only from the two resting points item 9
+        # names -- an unresolved candidate-observation conflict at
+        # EXECUTING, or ASSURING with the current Assurance still
+        # unsettled (the operator's out-of-band judgment that it never
+        # will). Consumes the blocking condition and settles the attempt
+        # as failed via the identical INV-018/INV-019 arithmetic every
+        # other failed-attempt row already uses -- never a verdict
+        # (INV-003/INV-009 intact: no FACT-ASSURE-SETTLED accompanies it).
+        conflicted = projection.state == STATE_EXECUTING and projection.candidate_conflict is not None
+        unsettleable = (
+            projection.state == STATE_ASSURING
+            and projection.assurance_started_for_current
+            and projection.assurances
+            and projection.assurances[-1]["verdict"] is None
+        )
+        if not (conflicted or unsettleable):
+            raise conflict_error(
+                "FACT-ATTEMPT-ABANDONED illegal: no unresolved candidate-observation "
+                "conflict and no unsettled current Assurance (STATE-DELIVERY item 9)",
+                work_id=projection.work_id,
+                state=projection.state,
+            )
+        if projection.attempt_number < max_attempts:
+            next_state = STATE_READY
+        else:
+            next_state = STATE_BLOCKED
+        assurances = projection.assurances
+        if unsettleable:
+            assurances = tuple(
+                {**item, "verdict": "abandoned"} if item is projection.assurances[-1] else item
+                for item in assurances
+            )
+        return replace_projection(
+            projection,
+            state=next_state,
+            assurances=assurances,
+            candidate_conflict=None,
+            trigger_facts=(fact.to_dict(),),
         )
 
     if fact.id == FACT_WORK_CANCELLED:
