@@ -119,6 +119,115 @@ RESOLVE_TIMEOUT_S = 30.0
 RESOLVE_OUTPUT_CAP_BYTES = 8192
 
 
+# ---------------------------------------------------------------------------
+# Per-tool read-only FLAG policy (TASK-M3C-002 fix round; verifier
+# F-ALLOWLIST-FLAG-DEPTH-GENERAL). The first round vetted only the
+# SUBCOMMAND and left every post-subcommand token free-form -- an
+# arbitrary-file-WRITE hole: `git show --output=<path>` is a documented git
+# write primitive that passed because its subcommand is `show`. The fix:
+# every vetted tool declares exactly which flags may follow its subcommand;
+# anything else -- notably writers/exec (`--output`/`-o`/`-O`, `--ext-diff`,
+# `--textconv`) -- is refused. Journal content is attacker-influencable
+# input (any executor agent that ever filled a seat wrote some of it), so
+# EVERY argv token is treated as hostile: an unrecognized flag is refused,
+# and a value-taking flag's value is consumed unparsed (never re-read as a
+# flag). The authoritative policy narrative lives in
+# `docs/playbooks/cli-usage.md`'s known-issues ledger; keep the two in sync
+# when adding a tool.
+#
+# git show: read/render-only options only. Deliberately EXCLUDES every
+# writer/exec option -- `--output`/`-o` (write to file), `-O` (order file),
+# `--ext-diff`/`--textconv` (run external diff/textconv drivers). The
+# top-level `-C`-only prefix rule already blocks `git -c <cfg>` (the
+# `GIT_EXTERNAL_DIFF` config-exec vector), so config injection is out of
+# reach before the subcommand too.
+_GIT_SHOW_BOOL_FLAGS = frozenset(
+    {
+        "--stat",
+        "--numstat",
+        "--shortstat",
+        "--summary",
+        "--name-only",
+        "--name-status",
+        "--oneline",
+        "--raw",
+        "--patch",
+        "-p",
+        "--no-patch",
+        "-s",
+        "--no-color",
+        "--color",
+        "--no-textconv",
+        "--no-ext-diff",
+        "--no-renames",
+        "--find-renames",
+    }
+)
+_GIT_SHOW_VALUE_FLAGS: frozenset[str] = frozenset()  # none needed; keep the surface minimal
+
+_ACPX_SESSIONS_BOOL_FLAGS = frozenset({"--json"})
+_ACPX_SESSIONS_VALUE_FLAGS: frozenset[str] = frozenset()
+
+_BD_BOOL_FLAGS = frozenset({"--json"})
+_BD_VALUE_FLAGS = frozenset({"--label", "--status"})
+
+# no-mistakes axi status/logs: `--run`/`--step` take values; `--full`/
+# `--json` are read-only booleans. `--follow` is intentionally EXCLUDED
+# (refused) rather than merely timeout-contained -- streaming a live log
+# against a settled verdict has no resolution value and would only burn the
+# 30s execution cap; refusing it is instant and stricter.
+_NOMISTAKES_BOOL_FLAGS = frozenset({"--full", "--json"})
+_NOMISTAKES_VALUE_FLAGS = frozenset({"--run", "--step"})
+
+
+def _vet_flags(
+    rest: Sequence[str],
+    *,
+    tool_label: str,
+    bool_flags: frozenset[str] = frozenset(),
+    value_flags: frozenset[str] = frozenset(),
+    min_positionals: int = 0,
+    max_positionals: Optional[int] = None,
+) -> Optional[str]:
+    """Classify every token AFTER a vetted subcommand against that tool's
+    flag policy. A token starting with `-` (including a bare `-`) must be
+    an allowed boolean flag or an allowed value-taking flag -- otherwise
+    REFUSED. A value-taking flag's value is consumed WITHOUT re-parsing
+    (`--label <value>` or `--label=<value>`), so a value that itself looks
+    like a flag can never be mistaken for one. A literal `--` ends option
+    parsing: everything after it is a positional (this is how a genuinely
+    `-`-leading positional would be passed safely, where a tool supports
+    it). Returns `None` when safe, else a human-readable refusal reason."""
+    positionals = 0
+    i = 0
+    n = len(rest)
+    after_ddash = False
+    while i < n:
+        tok = rest[i]
+        if not after_ddash and tok == "--":
+            after_ddash = True
+            i += 1
+            continue
+        if not after_ddash and tok.startswith("-"):
+            name = tok.split("=", 1)[0]
+            if name in value_flags:
+                # `--flag=value` carries its value inline (one token);
+                # `--flag value` consumes the next token unparsed.
+                i += 1 if "=" in tok else 2
+                continue
+            if name in bool_flags:
+                i += 1
+                continue
+            return f"{tool_label}: option {tok!r} is not in the read-only flag allowlist"
+        positionals += 1
+        i += 1
+    if positionals < min_positionals:
+        return f"{tool_label}: too few positional arguments ({positionals} < {min_positionals})"
+    if max_positionals is not None and positionals > max_positionals:
+        return f"{tool_label}: too many positional arguments ({positionals} > {max_positionals})"
+    return None
+
+
 def _vet_read_only(argv: Sequence[str]) -> Optional[str]:
     """The read-only allowlist `--resolve`/`--resolve-all` vet EVERY
     resolve command against at construction time, before it is ever offered
@@ -128,17 +237,21 @@ def _vet_read_only(argv: Sequence[str]) -> Optional[str]:
     when `argv` is vetted-safe to execute; otherwise a human-readable
     refusal reason.
 
-    A hard allowlist, not a denylist: `cat <path>`; `git [-C <path>] show
-    ...` (never any other git subcommand); `acpx <agent> sessions
-    <history|show> ...`; `bd [--json] [-C <path>] <list|show> ...`;
-    `no-mistakes axi <status|logs> ...`. Nothing else -- notably `gh pr
-    view <pr>` (the `candidate-pr` row's display command) is NOT vetted
-    (see the PR body's Ambiguities section): the task's own allowlist
-    wording ends "nothing else", and the acceptance criteria's runnable-
-    resolve-command list (transcript, session, candidate, mirror,
-    command-bearing evidence) omits `candidate-pr` -- that row keeps
-    displaying `gh pr view <pr>` exactly as before, just never executes
-    under `--resolve`.
+    Two levels, BOTH required (the first-round escape passed the first and
+    skipped the second): (1) a hard tool+subcommand allowlist -- `cat`;
+    `git [-C <path>] show`; `acpx <agent> sessions <history|show>`; `bd
+    [--json] [-C <path>] <list|show>`; `no-mistakes axi <status|logs>`,
+    nothing else; and (2) a per-tool FLAG policy over every token after the
+    subcommand (`_vet_flags`), so a write/exec-shaped option like `git show
+    --output=<path>` is refused even though its subcommand is allowed.
+    Notably `gh pr view <pr>` (the `candidate-pr` row's display) is NOT in
+    the allowlist at all (see the PR body's Ambiguities section) -- that row
+    displays but never executes.
+
+    Interpolated tool-position tokens are guarded too: the `acpx` agent
+    (`argv[1]`, derived from an adapter-owned `provider` string) is refused
+    if it begins with `-`, closing an agent-name flag-injection path
+    analogous to the git head_sha one the candidate builder guards.
 
     This is a shape-based, bare-tool-name check (matching this codebase's
     existing conservative-derivation precedent, `_session_resolve`'s own
@@ -151,9 +264,11 @@ def _vet_read_only(argv: Sequence[str]) -> Optional[str]:
         return "empty command"
     tool = argv[0]
     if tool == "cat":
-        if len(argv) != 2:
-            return "cat: only a single path argument is vetted"
-        return None
+        # cat has no write/exec option at all; its only risk is a
+        # `-`-leading token being read as an unknown flag -- refused by the
+        # empty flag policy below -- and reading a file is exactly the
+        # read-only action requested. Exactly one positional path.
+        return _vet_flags(argv[1:], tool_label="cat", min_positionals=1, max_positionals=1)
     if tool == "git":
         rest = list(argv[1:])
         if rest[:1] == ["-C"]:
@@ -162,11 +277,24 @@ def _vet_read_only(argv: Sequence[str]) -> Optional[str]:
             rest = rest[2:]
         if not rest or rest[0] != "show":
             return "git: only the read-only 'show' subcommand is vetted"
-        return None
+        return _vet_flags(
+            rest[1:],
+            tool_label="git show",
+            bool_flags=_GIT_SHOW_BOOL_FLAGS,
+            value_flags=_GIT_SHOW_VALUE_FLAGS,
+        )
     if tool == "acpx":
         if len(argv) < 4 or argv[2] != "sessions" or argv[3] not in ("history", "show"):
             return "acpx: only 'sessions history'/'sessions show' is vetted"
-        return None
+        if argv[1].startswith("-"):
+            return "acpx: agent token begins with '-' (refused as possible flag injection)"
+        return _vet_flags(
+            argv[4:],
+            tool_label=f"acpx sessions {argv[3]}",
+            bool_flags=_ACPX_SESSIONS_BOOL_FLAGS,
+            value_flags=_ACPX_SESSIONS_VALUE_FLAGS,
+            max_positionals=1,
+        )
     if tool == "bd":
         rest = list(argv[1:])
         if rest[:1] == ["--json"]:
@@ -177,11 +305,23 @@ def _vet_read_only(argv: Sequence[str]) -> Optional[str]:
             rest = rest[2:]
         if not rest or rest[0] not in ("list", "show"):
             return "bd: only 'list'/'show' is vetted"
-        return None
+        sub = rest[0]
+        return _vet_flags(
+            rest[1:],
+            tool_label=f"bd {sub}",
+            bool_flags=_BD_BOOL_FLAGS,
+            value_flags=_BD_VALUE_FLAGS,
+            max_positionals=1 if sub == "show" else 0,
+        )
     if tool == "no-mistakes":
         if len(argv) < 3 or argv[1] != "axi" or argv[2] not in ("status", "logs"):
             return "no-mistakes: only 'axi status'/'axi logs' is vetted"
-        return None
+        return _vet_flags(
+            argv[3:],
+            tool_label=f"no-mistakes axi {argv[2]}",
+            bool_flags=_NOMISTAKES_BOOL_FLAGS,
+            value_flags=_NOMISTAKES_VALUE_FLAGS,
+        )
     return f"tool {tool!r} is not in the vetted read-only allowlist"
 
 
@@ -251,6 +391,27 @@ class ResolveCommand:
         return ResolveCommand.of(argv)
 
 
+def _guarded_command(argv: Sequence[str], *, interpolated: Sequence[str], field_label: str) -> ResolveCommand:
+    """Build a builder-constructed `ResolveCommand`, but refuse it at
+    BUILD time (defense in depth, TASK-M3C-002 fix round) if any
+    journal-derived `interpolated` token begins with `-`. Those tokens
+    (a candidate `head_sha`/`repo_path`, an `acpx` agent name/session ref)
+    are attacker-influencable, and a `-`-leading value could be read by the
+    tool as an option -- e.g. `head_sha='--output=/tmp/x'` is a git write
+    primitive. `_vet_read_only` would also refuse such a token, but the
+    builder must never MINT one; this is the independent second guard the
+    fix-round ruling requires. The display still shows the (refused)
+    command so the operator sees exactly what would have run."""
+    for token in interpolated:
+        if token.startswith("-"):
+            return ResolveCommand(
+                display=" ".join(argv),
+                argv=None,
+                refusal=f"{field_label} begins with '-' (refused as possible flag injection)",
+            )
+    return ResolveCommand.of(argv)
+
+
 @dataclass(frozen=True)
 class RefRow:
     kind: str
@@ -292,7 +453,11 @@ def _session_resolve(provider: Any, ref: str) -> ResolveCommand:
     agent = provider[len(_ACPX_PROVIDER_PREFIX) :]
     if not agent:
         return ResolveCommand.none()
-    return ResolveCommand.of(["acpx", agent, "sessions", "history", ref])
+    return _guarded_command(
+        ["acpx", agent, "sessions", "history", ref],
+        interpolated=(agent, ref),
+        field_label="acpx agent/session ref",
+    )
 
 
 def _execution_session_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
@@ -397,6 +562,21 @@ def _evidence_ref_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
 # ---------------------------------------------------------------------------
 
 
+def _candidate_git_show(head_sha: str, repo_path: str) -> ResolveCommand:
+    """`git -C <repo_path> show <head_sha> --stat`, with both interpolated
+    identity fields guarded against `-`-leading flag injection at build
+    time (TASK-M3C-002 fix round). A `--` separator cannot be used to
+    protect `<head_sha>` here: `git show --stat -- <sha>` makes git read
+    the sha as a PATHSPEC, not a revision (empirically verified), producing
+    empty output -- so the guard is build-time rejection plus the per-tool
+    flag policy in `_vet_read_only`, not positional separation."""
+    return _guarded_command(
+        ["git", "-C", repo_path, "show", head_sha, "--stat"],
+        interpolated=(head_sha, repo_path),
+        field_label="candidate identity field (head_sha/repo_path)",
+    )
+
+
 def _candidate_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
     rows: list[RefRow] = []
     for record in history:
@@ -414,7 +594,7 @@ def _candidate_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
             repo_path = subject_identity.get("repo_path")
             if repo_path is not None:
                 value = _display({"head_sha": head_sha, "repo_path": repo_path})
-                resolve = ResolveCommand.of(["git", "-C", str(repo_path), "show", str(head_sha), "--stat"])
+                resolve = _candidate_git_show(str(head_sha), str(repo_path))
             else:
                 value = _display({"head_sha": head_sha})
                 resolve = ResolveCommand.none()

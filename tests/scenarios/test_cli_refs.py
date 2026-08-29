@@ -590,6 +590,140 @@ class VetReadOnlyUnitTest(unittest.TestCase):
             self.assertIsNotNone(_vet_read_only(argv), msg=argv)
 
 
+class VetFlagDepthUnitTest(unittest.TestCase):
+    """TASK-M3C-002 fix round (verifier F-ALLOWLIST-FLAG-DEPTH-GENERAL):
+    the vet must constrain post-subcommand FLAGS per tool, not just the
+    subcommand -- otherwise `git show --output=<path>` (a write primitive)
+    passes because its subcommand is `show`. Every allowlisted tool gets a
+    flag policy, not free-form-after-subcommand."""
+
+    def test_git_show_writer_and_exec_flags_are_refused(self) -> None:
+        # THE ESCAPE and its whole class: git show's file-writing / external-
+        # command-driving options must all be refused even though `show`
+        # itself is allowed.
+        for argv in [
+            ["git", "show", "--output=/tmp/x", "HEAD"],
+            ["git", "-C", "/abs/repo", "show", "--output=/tmp/x", "HEAD"],
+            ["git", "show", "-o", "/tmp/x", "HEAD"],
+            ["git", "show", "-o/tmp/x", "HEAD"],
+            ["git", "show", "-O/tmp/orderfile", "HEAD"],
+            ["git", "show", "--ext-diff", "HEAD"],
+            ["git", "show", "--textconv", "HEAD"],
+            ["git", "show", "--unknown-future-flag", "HEAD"],
+        ]:
+            reason = _vet_read_only(argv)
+            self.assertIsNotNone(reason, msg=argv)
+            self.assertIn("allowlist", reason, msg=argv)
+
+    def test_git_show_readonly_flags_and_bare_sha_pass(self) -> None:
+        for argv in [
+            ["git", "show", "HEAD"],
+            ["git", "show", "abc123", "--stat"],
+            ["git", "show", "--stat", "abc123"],
+            ["git", "show", "--numstat", "--name-only", "abc123"],
+            ["git", "-C", "/abs/repo", "show", "abc123", "--stat"],
+        ]:
+            self.assertIsNone(_vet_read_only(argv), msg=argv)
+
+    def test_git_show_value_flag_value_is_not_reparsed_as_flag(self) -> None:
+        # -C consumes its path value unparsed; a `-`-leading path can't be
+        # read as an option (git errors on the chdir, contained) -- but more
+        # importantly it is NOT treated as a flag-injection here.
+        self.assertIsNone(_vet_read_only(["git", "-C", "/abs/repo", "show", "abc123"]))
+
+    def test_git_c_config_injection_refused(self) -> None:
+        # `git -c <cfg>` (the GIT_EXTERNAL_DIFF config-exec vector) is
+        # blocked by the `-C`-only prefix rule: rest[0] != "show".
+        self.assertIsNotNone(_vet_read_only(["git", "-c", "core.pager=sh", "show", "HEAD"]))
+
+    def test_no_mistakes_follow_refused_run_step_full_pass(self) -> None:
+        self.assertIsNotNone(_vet_read_only(["no-mistakes", "axi", "logs", "--run", "r1", "--follow"]))
+        self.assertIsNone(_vet_read_only(["no-mistakes", "axi", "logs", "--run", "r1", "--step", "review", "--full"]))
+        self.assertIsNotNone(_vet_read_only(["no-mistakes", "axi", "status", "--output", "/tmp/x"]))
+
+    def test_bd_unknown_flag_refused_label_status_pass(self) -> None:
+        self.assertIsNone(_vet_read_only(["bd", "--json", "-C", "/abs/ws", "list", "--label", "run:x", "--status", "open"]))
+        self.assertIsNotNone(_vet_read_only(["bd", "--json", "-C", "/abs/ws", "list", "--output", "/tmp/x"]))
+
+    def test_acpx_agent_leading_dash_refused(self) -> None:
+        # A crafted provider string `acpx---output` yields agent `--output`,
+        # which acpx would parse as an option before `sessions`.
+        self.assertIsNotNone(_vet_read_only(["acpx", "--output=/tmp/x", "sessions", "history", "s1"]))
+        self.assertIsNotNone(_vet_read_only(["acpx", "pi", "sessions", "history", "--output=/tmp/x"]))
+        self.assertIsNone(_vet_read_only(["acpx", "pi", "sessions", "history", "s1"]))
+
+
+class BuilderFlagInjectionGuardUnitTest(unittest.TestCase):
+    """The builder must never MINT a token that could be read as a flag
+    (defense in depth beyond the vetter): a journal-derived `head_sha`/
+    `repo_path`/acpx-agent/session-ref beginning with `-` is refused at
+    BUILD time with a clear reason, argv left None."""
+
+    def test_candidate_head_sha_output_flag_is_refused_at_build(self) -> None:
+        history = [
+            {
+                "kind": "effect",
+                "id": "FX-IDENTIFY-CANDIDATE",
+                "data": {
+                    "work_id": "w1",
+                    "dispatch_result": {
+                        "candidate": {
+                            "id": "c1",
+                            "subject_identity": {"head_sha": "--output=/tmp/x", "repo_path": "/abs/repo"},
+                            "fingerprint": "fp",
+                        }
+                    },
+                },
+            }
+        ]
+        rows = _candidate_rows(history)
+        candidate = next(r for r in rows if r.kind == "candidate")
+        self.assertIsNone(candidate.resolve.argv)
+        self.assertIsNotNone(candidate.resolve.refusal)
+        self.assertIn("begins with '-'", candidate.resolve.refusal)
+        # display still shows exactly what would have run (refused).
+        self.assertIn("--output=/tmp/x", candidate.resolve.display)
+
+    def test_candidate_repo_path_leading_dash_is_refused_at_build(self) -> None:
+        history = [
+            {
+                "kind": "effect",
+                "id": "FX-IDENTIFY-CANDIDATE",
+                "data": {
+                    "work_id": "w1",
+                    "dispatch_result": {
+                        "candidate": {
+                            "id": "c1",
+                            "subject_identity": {"head_sha": "abc123", "repo_path": "--upload-pack=sh"},
+                            "fingerprint": "fp",
+                        }
+                    },
+                },
+            }
+        ]
+        rows = _candidate_rows(history)
+        candidate = next(r for r in rows if r.kind == "candidate")
+        self.assertIsNone(candidate.resolve.argv)
+        self.assertIsNotNone(candidate.resolve.refusal)
+
+    def test_acpx_agent_leading_dash_refused_at_build(self) -> None:
+        rows = _execution_session_rows(
+            [
+                {
+                    "kind": "fact",
+                    "id": "FACT-EXEC-SETTLED",
+                    "data": {},
+                    "extensions": {
+                        "execution-session/v1": {"provider": "acpx---output=/tmp/x", "native_session_id": "s1"}
+                    },
+                }
+            ]
+        )
+        session = next(r for r in rows if r.kind == "session")
+        self.assertIsNone(session.resolve.argv)
+        self.assertIsNotNone(session.resolve.refusal)
+
+
 class SelectRowUnitTest(unittest.TestCase):
     def _rows(self) -> list[RefRow]:
         return [
@@ -832,6 +966,83 @@ class RefsResolveCliTest(unittest.TestCase):
             self.assertIn(f"git -C {repo_dir} show {head_sha} --stat", result.stdout)
             self.assertIn("widget.txt", result.stdout)
             self.assertIn("add widget", result.stdout)
+
+    def test_git_show_output_write_escape_evidence_path_writes_nothing(self) -> None:
+        """PERMANENT REGRESSION for the verifier's proven escape (fix
+        round, FINDING 1): a crafted journal whose evidence command is
+        `git show --output=<target> ...` (a git file-write primitive)
+        MUST refuse and write NOTHING. Reverting the per-tool flag guard
+        makes this red (the file would be written, exit 0, rendered as
+        normal output -- exactly the escape)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            repo_dir = tmp_dir / "fixture-repo"
+            head_sha = _git_fixture_repo(repo_dir)
+            target = tmp_dir / "PWNED_EVIDENCE"
+            self.assertFalse(target.exists())
+            config = {
+                "attempts": {
+                    "work-1": [
+                        {
+                            "outcome": "completed",
+                            "candidate": {"label": "m1"},
+                            "assurance": {
+                                "verdict": "accepted",
+                                "evidence_refs": [
+                                    {"command": f"git -C {repo_dir} show --output={target} {head_sha}"}
+                                ],
+                            },
+                        }
+                    ]
+                }
+            }
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            dispatch = _run_cli(tmp_dir, "dispatch", "escape evidence", "--config", str(config_path), "--run-id", "esc-ev")
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            result = _run_cli(tmp_dir, "refs", "esc-ev", "--resolve-all")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("REFUSED:", result.stdout)
+            self.assertIn("read-only flag allowlist", result.stdout)
+            # THE assertion: nothing was written.
+            self.assertFalse(target.exists(), msg=f"ESCAPE: {target} was written")
+
+    def test_git_show_output_write_escape_builder_head_sha_path_writes_nothing(self) -> None:
+        """PERMANENT REGRESSION for the builder reach path (fix round,
+        FINDING 1): a crafted candidate `subject_identity.head_sha` of
+        `--output=<target>` gets interpolated into the trusted git-show
+        builder -- git would parse it as the write flag. The build-time
+        guard MUST refuse and write NOTHING. Reverting the guard makes
+        this red."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            repo_dir = tmp_dir / "fixture-repo"
+            _git_fixture_repo(repo_dir)
+            target = tmp_dir / "PWNED_BUILDER"
+            self.assertFalse(target.exists())
+            config = {
+                "attempts": {
+                    "work-1": [
+                        {
+                            "outcome": "completed",
+                            "candidate": {"head_sha": f"--output={target}", "repo_path": str(repo_dir)},
+                            "assurance": {"verdict": "accepted"},
+                        }
+                    ]
+                }
+            }
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            dispatch = _run_cli(tmp_dir, "dispatch", "escape builder", "--config", str(config_path), "--run-id", "esc-build")
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            result = _run_cli(tmp_dir, "refs", "esc-build", "--resolve-all")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("REFUSED:", result.stdout)
+            self.assertIn("begins with '-'", result.stdout)
+            # THE assertion: nothing was written.
+            self.assertFalse(target.exists(), msg=f"ESCAPE: {target} was written")
 
     def test_resolve_refused_mutating_evidence_command_degrades_honestly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
