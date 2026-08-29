@@ -174,6 +174,24 @@ and harvest.
 
 ## Phase M2c — orc as ledger for another repo (gated, sequenced last)
 
+> **Status: COMPLETE (operator close, 2026-08-29) — and M2 with it.** The
+> adoption test happened in the wild rather than as a staged demo: the
+> operator independently ran real deliveries in a second repository
+> (xatu-delivery-companion) through an orc ledger via `ORC_JOURNAL_DIR`,
+> reaching ACCEPTED terminal states, and a blind-reconstruction audit
+> there recovered states, identities, fingerprints, and seat separation
+> from CLI output alone. Acceptance criteria: (1) terminal-state delivery
+> in an independent repo — met; (2) every friction recorded, never
+> silently absorbed — met beyond expectation (issues #85, #86, #89, #92,
+> #93, #94, #95 filed from the adoption harvest, most fixed within the
+> same window, including one critical verdict-integrity defect the
+> adapter audit had missed); (3) no core changes or bespoke tooling to
+> make adoption work — met. `TASK-M2-004`'s "compelling demo" gate
+> (automatic verdict seat + Beads mirror) is carried forward as ordinary
+> usage rather than a staged event: the mirror is now enabled by default
+> on new orc-werk run configs (shared label-scoped workspace), and the
+> no-mistakes seat is available to any config that opts in.
+
 The first true adoption test: point a real, independent repository's
 delivery work at an orc-werk ledger, with no changes to orc-werk's own
 core semantics.
