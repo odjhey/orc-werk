@@ -219,6 +219,24 @@ vocabulary (ACP session semantics, git diff fingerprinting) lives in the
 adapters' own mapping docs: `docs/adapters/acp/mapping.md`,
 `docs/adapters/git/mapping.md`.
 
+### Bare `orc` run index
+
+```text
+usage: orc [--limit LIMIT]
+```
+
+The content-first invocation lists the most-recently-active runs in the
+default journal directory. It shows 30 by default; `--limit N` bounds the
+listing and `--limit 0` shows all runs. A truncated listing names
+`orc --limit 0` first; `orc report --index` is the secondary HTML view.
+The journal directory resolves from `ORC_JOURNAL_DIR`, then `./.orc`.
+
+```bash
+orc
+orc --limit 10
+orc --limit 0
+```
+
 ### `orc status`
 
 ```text

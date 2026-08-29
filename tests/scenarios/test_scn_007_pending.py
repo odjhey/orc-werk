@@ -421,7 +421,8 @@ class CliPendingModeTest(unittest.TestCase):
             # invocations, and exactly one FACT-EXEC-STARTED overall.
             history = _run_cli(tmp_dir, "history", "scn007-cli")
             self.assertEqual(history.returncode, 0, msg=history.stderr)
-            lines = [line for line in history.stdout.splitlines() if line.strip()]
+            self.assertEqual(history.stdout.splitlines()[0], "run: scn007-cli")
+            lines = [line for line in history.stdout.splitlines() if line.startswith("[")]
             seqs = [int(line[1:5]) for line in lines]
             self.assertEqual(seqs, list(range(1, len(lines) + 1)))
 
