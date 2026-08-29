@@ -229,7 +229,7 @@ _ASSURANCE_ADAPTERS = frozenset({"scripted", "no-mistakes"})
 # `bd_bin` maps to its optional one. No `timeout_s` key exposed at this
 # layer either, matching the no-mistakes precedent's "don't expose every
 # constructor parameter" restraint (`CLAUDE.md` #3).
-_MIRROR_CONFIG_KEYS = frozenset({"adapter", "workspace", "bd_bin"})
+_MIRROR_CONFIG_KEYS = frozenset({"adapter", "workspace", "bd_bin", "project"})
 _MIRROR_ADAPTERS = frozenset({"beads"})
 
 # issue #94: every validation error this module raises is, by construction,
@@ -577,6 +577,11 @@ def _validate_mirror_config(value: Any) -> None:
         raise validation_error(
             "config value at <config>.mirror.bd_bin must be a non-empty string when present",
             path="<config>.mirror.bd_bin",
+        )
+    if "project" in value and (not isinstance(value["project"], str) or not value["project"]):
+        raise validation_error(
+            "config value at <config>.mirror.project must be a non-empty string when present",
+            path="<config>.mirror.project",
         )
 
 
@@ -1042,6 +1047,8 @@ def build_mirror(config: Mapping[str, Any]) -> Optional[BeadsMirror]:
     kwargs: dict[str, Any] = {"workspace": mirror_cfg["workspace"]}
     if "bd_bin" in mirror_cfg:
         kwargs["bd_bin"] = mirror_cfg["bd_bin"]
+    if "project" in mirror_cfg:
+        kwargs["project"] = mirror_cfg["project"]
     return BeadsMirror(**kwargs)
 
 

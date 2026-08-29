@@ -94,7 +94,7 @@ class IdLabelConstructionTest(_StubBeadsCase):
         self.assertIn("--id", argv)
         self.assertEqual(argv[argv.index("--id") + 1], "dr-idlabel--w")
         self.assertIn("--force", argv)
-        self.assertIn("--label", argv)
+        self.assertEqual(argv.count("--label"), 1)
         self.assertEqual(argv[argv.index("--label") + 1], "run:dr-idlabel")
         self.assertIn("--description", argv)
         self.assertEqual(argv[argv.index("--description") + 1], "intent text")
@@ -197,6 +197,9 @@ class StatusVocabularyTest(_StubBeadsCase):
         self.assertIn("state=executing", update_argv)
 
     def test_accepted_updates_metadata_then_closes_with_reason(self) -> None:
+        self.mirror = BeadsMirror(
+            workspace=str(self._workspace), bd_bin=str(self._stub_bin), project="orc-werk"
+        )
         projection, report = self._project(
             "dr-accepted",
             attempts_by_work={"work-1": [{"outcome": "completed", "candidate": {"label": "A"}, "verdict": "accepted"}]},
@@ -211,6 +214,11 @@ class StatusVocabularyTest(_StubBeadsCase):
         self.assertEqual(close_argv[4], "dr-accepted--work-1")
         update_argv = next(c for c in self.calls() if c[3] == "update")
         self.assertIn("state=accepted", update_argv)
+        create_argv = next(c for c in self.calls() if c[3] == "create")
+        labels = [create_argv[index + 1] for index, arg in enumerate(create_argv) if arg == "--label"]
+        self.assertEqual(labels, ["run:dr-accepted", "project:orc-werk"])
+        self.assertNotIn("--label", update_argv)
+        self.assertNotIn("--label", close_argv)
 
     def test_blocked_maps_to_blocked_status_with_reason_metadata(self) -> None:
         projection, report = self._project(

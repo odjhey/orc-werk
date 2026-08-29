@@ -75,14 +75,34 @@ class MirrorConfigValidationTest(unittest.TestCase):
                 load_config(path)
             self.assertEqual(ctx.exception.error["error"], "ERR-VALIDATION")
 
-    def test_mirror_with_workspace_and_bd_bin_accepted(self) -> None:
+    def test_mirror_with_workspace_bd_bin_and_project_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = self._write(
                 Path(tmp),
-                {"mirror": {"adapter": "beads", "workspace": "/tmp", "bd_bin": "/usr/local/bin/bd"}},
+                {
+                    "mirror": {
+                        "adapter": "beads",
+                        "workspace": "/tmp",
+                        "bd_bin": "/usr/local/bin/bd",
+                        "project": "X",
+                    }
+                },
             )
             data = load_config(path)
             self.assertEqual(data["mirror"]["workspace"], "/tmp")
+            self.assertEqual(data["mirror"]["project"], "X")
+
+    def test_mirror_project_must_be_non_empty_string(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for project in ("", None, 1):
+                path = self._write(
+                    Path(tmp),
+                    {"mirror": {"adapter": "beads", "workspace": "/tmp", "project": project}},
+                    name=f"cfg-{project!r}.json",
+                )
+                with self.assertRaises(CoreError) as ctx:
+                    load_config(path)
+                self.assertEqual(ctx.exception.error["error"], "ERR-VALIDATION")
 
     def test_briefs_must_be_string_valued(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,10 +155,12 @@ class MirrorWiringSmokeTest(unittest.TestCase):
             timeout=30,
         )
 
-    def _write_config(self, tmp: Path, *, with_mirror: bool) -> Path:
+    def _write_config(self, tmp: Path, *, with_mirror: bool, project: str | None = None) -> Path:
         data: dict = {"attempts": {"work-1": [{"outcome": "completed"}]}}
         if with_mirror:
             data["mirror"] = {"adapter": "beads", "workspace": str(self.workspace), "bd_bin": str(self.stub_bin)}
+            if project is not None:
+                data["mirror"]["project"] = project
         path = tmp / ("cfg-mirror.json" if with_mirror else "cfg-baseline.json")
         path.write_text(json.dumps(data))
         return path
@@ -168,6 +190,25 @@ class MirrorWiringSmokeTest(unittest.TestCase):
         self.assertGreater(len(calls), 0)
         verbs = {c[3] for c in calls if len(c) > 3}
         self.assertIn("create", verbs)
+        create = next(c for c in calls if c[3] == "create")
+        self.assertEqual(create.count("--label"), 1)
+        self.assertIn("run:mirrored-run", create)
+
+    def test_configured_project_emits_second_create_label_only(self) -> None:
+        config_path = self._write_config(self.root, with_mirror=True, project="X")
+        result = self._run_cli(
+            "dispatch", "ship it",
+            "--config", str(config_path), "--journal", str(self.journal_dir),
+            "--run-id", "project-run",
+        )
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        calls = read_calls(self.stub_log)
+        create = next(c for c in calls if c[3] == "create")
+        labels = [create[index + 1] for index, arg in enumerate(create) if arg == "--label"]
+        self.assertEqual(labels, ["run:project-run", "project:X"])
+        for call in calls:
+            if call[3] in {"update", "close"}:
+                self.assertNotIn("--label", call)
 
     def test_degraded_mirror_never_changes_exit_code_or_stdout(self) -> None:
         baseline_config = self._write_config(self.root, with_mirror=False)
