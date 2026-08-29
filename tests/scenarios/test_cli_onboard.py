@@ -142,6 +142,7 @@ class OnboardScaffoldTest(unittest.TestCase):
 
         gitignore = (self.target / ".gitignore").read_text(encoding="utf-8")
         self.assertIn(GITIGNORE_ENTRY, gitignore.splitlines())
+        self.assertEqual((self.target / ".orc" / "profile.json").read_text(encoding="utf-8"), "{}\n")
 
         skill_path = self.target / ".agents" / "skills" / "orc-ledger" / "SKILL.md"
         self.assertEqual(skill_path.read_text(encoding="utf-8"), packaged_skill_text())
@@ -158,6 +159,7 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertIn("## Delivery ledger (orc)", agents_md)
 
         self.assertIn("gitignore: created", output)
+        self.assertIn("profile: created starter", output)
         self.assertIn("skill: installed", output)
         self.assertIn("skill: linked", output)
         self.assertIn("agents-block: created", output)
@@ -185,6 +187,17 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertIn("already installed and matches the package source", output)
         self.assertIn("already links to the installed skill", output)
         self.assertIn("already present and up to date", output)
+
+    def test_operator_modified_profile_is_skipped_then_replaced_with_force(self):
+        _onboard(path=str(self.target))
+        profile = self.target / ".orc" / "profile.json"
+        profile.write_text('{"max_attempts": 7}\n', encoding="utf-8")
+        _, output = _onboard(path=str(self.target))
+        self.assertEqual(profile.read_text(encoding="utf-8"), '{"max_attempts": 7}\n')
+        self.assertIn("profile: skip", output)
+        _, output = _onboard(path=str(self.target), force=True)
+        self.assertEqual(profile.read_text(encoding="utf-8"), "{}\n")
+        self.assertIn("profile: overwritten (--force)", output)
 
     def test_operator_modified_agents_block_is_skipped_then_replaced_with_force(self):
         _onboard(path=str(self.target))

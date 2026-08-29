@@ -137,7 +137,7 @@ Dispatch an intent and run the delivery state machine to a resting point
 | Flag | Default | Notes |
 |---|---|---|
 | `intent` (positional) | required for new runs | the intent text to submit; optional with `--run-id` naming an existing run whose journal holds its durable intent |
-| `--config` | none (empty scripted config) | path to a portable JSON dispatch config; see "Config schema" below. Omittable on a **later** dispatch of a run that already has a persisted config (see "Config persistence" below) |
+| `--config` | repo profile/persisted config, then empty scripted config | path to a portable JSON dispatch-config overlay; see "Config schema" below. Deep-merges over lower-precedence config |
 | `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
 | `--max-attempts` | policy default `3` | overrides the run's retry budget |
 | `--run-id` | derived deterministically from the intent text | explicit `delivery_run_id` |
@@ -170,6 +170,8 @@ next:
   - record the execution outcome for work(s): work-1
   - then re-run: orc dispatch 'pending demo' --config /abs/path/.orc/demo-pending/config.json --journal /abs/path/.orc --run-id demo-pending
 ```
+
+**Repo profile and precedence (`TASK-M4A-001`)**: the CLI discovers a profile only at `<resolved-journal-dir>/profile.json`--normally `<repo>/.orc/profile.json`. It first resolves the journal directory using `--journal` > `ORC_JOURNAL_DIR` > `./.orc`, then appends `profile.json`; it never searches cwd or ancestors. The profile is a plain JSON object with the same schema as `--config`. Effective precedence is `--config` (deep-merged) > per-run persisted `config.json` > profile > `{}`. Nested objects compose; non-object values replace. The `--max-attempts` flag retains its existing precedence over the merged config's `max_attempts`.
 
 **Config persistence and run-id-only resume**: on a run's first `dispatch`,
 the effective config is durably copied into that run's own directory,
@@ -569,7 +571,7 @@ usage: orc onboard [-h] [--path PATH] [--print-agents-block] [--force]
                     [--agents-file NAME] [--journal JOURNAL]
 ```
 
-Mechanically scaffolds an adopting repository (`TASK-M3D-001`) -- the
+Mechanically scaffolds an adopting repository (`TASK-M3D-001`, `TASK-M4A-001`) -- the
 hand-work `docs/product/adoption.md` (`PRODUCT-ADOPTION`) used to describe
 as a manual copy. Four independently idempotent steps, each reported
 honestly on its own line:
@@ -577,7 +579,8 @@ honestly on its own line:
 1. **gitignore** -- ensure a `.orc/` entry exists in `<path>/.gitignore`
    (create the file if absent, append the entry if missing, skip-with-note
    if already present). Append-only: an existing line is never rewritten.
-2. **skill install** -- write the orc-ledger skill's content to
+2. **repo-default profile** -- write an empty starter `<path>/.orc/profile.json`; an exact match skips, a mismatch skips-with-note, and `--force` overwrites. This is scaffolding only and never creates or writes a journal.
+3. **skill install** -- write the orc-ledger skill's content to
    `<path>/.agents/skills/orc-ledger/SKILL.md`, and link
    `<path>/.claude/skills/orc-ledger` to it (a relative symlink,
    `../../.agents/skills/orc-ledger`, resolving correctly from the link's
@@ -587,7 +590,7 @@ honestly on its own line:
    canonical origin `onboard` copies from; it is never a second,
    hand-maintained copy of the six-rule protocol embedded in this CLI's own
    source.
-3. **agents-onboarding block** -- a copy-pasteable `## Delivery ledger
+4. **agents-onboarding block** -- a copy-pasteable `## Delivery ledger
    (orc)` block (the same six-rule content step 2 installs, mechanically
    derived from it -- strip the YAML frontmatter and the H1 title, keep
    everything else verbatim) written into `<path>/<agents-file>` (default
@@ -595,7 +598,7 @@ honestly on its own line:
    compare it. `--print-agents-block` prints this block to stdout and
    performs no other step -- writes nothing at all -- for pasting into
    whatever agent-instructions file a repo already uses.
-4. **install verification** -- honestly reports: `orc` on `$PATH`
+5. **install verification** -- honestly reports: `orc` on `$PATH`
    (`shutil.which`) vs. this interpreter's own ability to import
    `orc_werk` (module form); the journal directory `--journal`/
    `$ORC_JOURNAL_DIR`/`./.orc` precedence would resolve to, anchored at
@@ -660,7 +663,7 @@ orc dispatch "bad" --config does-not-exist.json --journal ./.orc --run-id demo-b
 
 ## Config schema
 
-The `orc dispatch --config <path>` schema (including `execution`,
+The `orc dispatch --config <path>` and `.orc/profile.json` schema (including `execution`,
 `candidate`, `assurance`, `mirror`, `briefs`, `plan`, and `attempts`) is
 CLI-owned composition, not a canonical protocol shape. Run `orc
 config-schema` to print it. The command emits the module docstring of

@@ -9,6 +9,17 @@ normative contract.
 
 ## Config schema
 
+This same plain-JSON object schema is used by explicit ``--config`` files
+and the optional repo-default profile.  The profile is discovered only at
+``<resolved-journal-dir>/profile.json``: with the default journal directory
+that is ``<repo>/.orc/profile.json``; with ``--journal`` or
+``ORC_JOURNAL_DIR`` it is the selected directory's ``profile.json``.  No
+cwd/ancestor search is performed.  Effective precedence is explicit
+``--config`` (deep-merged) over a run's persisted ``config.json`` over the
+profile over ``{}``; nested JSON objects compose, while other values replace.
+The ``--max-attempts`` flag keeps its existing precedence over the resulting
+config's ``max_attempts``.
+
 ```json
 {
   "run_id": "optional-explicit-delivery-run-id",
@@ -645,15 +656,19 @@ def _validate_assurance_candidate_combo(assurance_cfg: Any, candidate_cfg: Any) 
         )
 
 
-def load_config(path: str) -> Mapping[str, Any]:
-    text = Path(path).read_text(encoding="utf-8")
+def _read_config_mapping(path: Path) -> Mapping[str, Any]:
     try:
-        data = json.loads(text)
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise validation_error(f"config file is not valid JSON: {path}", path=path) from exc
+        raise validation_error(f"config file is not valid JSON: {path}", path=str(path)) from exc
     if not isinstance(data, Mapping):
-        raise validation_error(f"config file must contain a JSON object: {path}", path=path)
+        raise validation_error(f"config file must contain a JSON object: {path}", path=str(path))
     _require_portable(data, path="<config>")
+    return data
+
+
+def validate_config(data: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Validate one effective dispatch config using the schema's existing gates."""
     _validate_top_level_keys(data)
     _validate_execution_config(data.get("execution"))
     _validate_candidate_config(data.get("candidate"))
@@ -672,6 +687,40 @@ def load_config(path: str) -> Mapping[str, Any]:
         assurance_adapter=assurance_adapter,
     )
     return data
+
+
+def load_config(path: str) -> Mapping[str, Any]:
+    return validate_config(_read_config_mapping(Path(path)))
+
+
+def load_config_overlay(path: str) -> Mapping[str, Any]:
+    """Load a JSON-object overlay; cross-field validation occurs after merging."""
+    return _read_config_mapping(Path(path))
+
+
+def load_repo_profile(journal_dir: Path) -> Optional[Mapping[str, Any]]:
+    """Load ``<resolved-journal-dir>/profile.json`` when present.
+
+    Thus the default journal ``<repo>/.orc`` discovers exactly
+    ``<repo>/.orc/profile.json``.  A custom journal directory discovers its
+    own sibling profile and never searches cwd or ancestor directories.
+    """
+    profile_path = journal_dir.resolve() / "profile.json"
+    if not profile_path.exists():
+        return None
+    return load_config(str(profile_path))
+
+
+def deep_merge_config(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Recursively merge JSON objects, with overlay values taking precedence."""
+    merged: dict[str, Any] = dict(base)
+    for key, value in overlay.items():
+        prior = merged.get(key)
+        if isinstance(prior, Mapping) and isinstance(value, Mapping):
+            merged[key] = deep_merge_config(prior, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _predicted_execution_id(*, delivery_run_id: str, work_id: str, attempt_number: int) -> str:
@@ -1081,5 +1130,9 @@ __all__ = [
     "build_real_assurance_script",
     "build_run_config",
     "build_scripted_adapters",
+    "deep_merge_config",
     "load_config",
+    "load_config_overlay",
+    "load_repo_profile",
+    "validate_config",
 ]

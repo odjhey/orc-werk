@@ -3,7 +3,7 @@ NAME] [--journal JOURNAL]` (`TASK-M3D-001`, `M3-HARDEN-THE-LOOP` Phase M3d):
 mechanically scaffolds an adopting repository -- the hand-work
 `docs/product/adoption.md` (`PRODUCT-ADOPTION`) currently documents as a
 manual copy ("Copy the `orc-ledger` project skill ... into the adopting
-repository"). Four steps, each independently idempotent and each reported
+repository"). Five steps, each independently idempotent and each reported
 honestly:
 
 1. **gitignore** -- ensure a `.orc/` entry exists in the target repo's
@@ -11,7 +11,10 @@ honestly:
    exists without it, skip-with-note if already present). Append-only:
    never rewrites a line that is already there, so this step alone is
    always safe to re-run without `--force`.
-2. **skill install** -- copy the orc-ledger skill's content into the
+2. **repo-default profile** -- write an empty starter at
+   `.orc/profile.json` under the same never-clobber/`--force` discipline.
+   This is scaffolding only; it never creates or writes a journal.
+3. **skill install** -- copy the orc-ledger skill's content into the
    target repo at `.agents/skills/orc-ledger/SKILL.md`, and link
    `.claude/skills/orc-ledger` to it (`../../.agents/skills/orc-ledger`,
    correctly relative to the symlink's own directory -- the issue #63
@@ -26,7 +29,7 @@ honestly:
    a relative symlink to it (see `src/orc_werk/skills/__init__.py`'s
    docstring for the full chain and why a real file, not a
    packaging-time-only symlink, was chosen for the packaged copy).
-3. **agents-onboarding block** -- a copy-pasteable `## Delivery ledger
+4. **agents-onboarding block** -- a copy-pasteable `## Delivery ledger
    (orc)` block for an `AGENTS.md`-style file (default target
    `AGENTS.md`, `--agents-file` to override), wrapped in HTML-comment
    markers so a re-run can detect and compare it. `agents_block_text`
@@ -37,7 +40,7 @@ honestly:
    prints this block to stdout ONLY and performs no other step, writes no
    file -- for pasting into whatever agent-instructions file a repo
    already uses instead of the default `AGENTS.md` target.
-4. **install verification** -- honestly reports what resolved: `orc` on
+5. **install verification** -- honestly reports what resolved: `orc` on
    `$PATH` (`shutil.which`) vs. this interpreter's own ability to import
    `orc_werk` (module form); the journal directory `--journal`/
    `$ORC_JOURNAL_DIR`/`./.orc` (`orc_werk.cli.journal_reading.
@@ -142,6 +145,8 @@ _SKILL_REL = Path(".agents") / "skills" / "orc-ledger" / "SKILL.md"
 _CLAUDE_SKILL_LINK_REL = Path(".claude") / "skills" / "orc-ledger"
 _CLAUDE_SKILL_LINK_TARGET = Path("..") / ".." / ".agents" / "skills" / "orc-ledger"
 DEFAULT_AGENTS_FILE = "AGENTS.md"
+_PROFILE_REL = Path(".orc") / "profile.json"
+_STARTER_PROFILE = "{}\n"
 
 
 # --- Step 1: gitignore --------------------------------------------------------
@@ -161,7 +166,28 @@ def _step_gitignore(target: Path) -> str:
     return f"gitignore: appended `{GITIGNORE_ENTRY}` entry to {hyperlink_path(path.resolve())}"
 
 
-# --- Step 2: skill install -----------------------------------------------------
+# --- Step 2: repo-default profile ---------------------------------------------
+
+
+def _step_profile(target: Path, *, force: bool) -> str:
+    path = target / _PROFILE_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        current = path.read_text(encoding="utf-8")
+        if current == _STARTER_PROFILE:
+            return f"profile: starter already present at {hyperlink_path(path.resolve())} -- skip"
+        if not force:
+            return (
+                f"profile: skip -- {hyperlink_path(path.resolve())} exists and differs from the starter "
+                "(operator-modified); rerun with --force to overwrite"
+            )
+        path.write_text(_STARTER_PROFILE, encoding="utf-8")
+        return f"profile: overwritten (--force) at {hyperlink_path(path.resolve())}"
+    path.write_text(_STARTER_PROFILE, encoding="utf-8")
+    return f"profile: created starter at {hyperlink_path(path.resolve())}"
+
+
+# --- Step 3: skill install -----------------------------------------------------
 
 
 def _install_skill_file(target: Path, *, canonical: str, force: bool) -> str:
@@ -230,7 +256,7 @@ def _step_skill(target: Path, *, force: bool) -> list[str]:
     ]
 
 
-# --- Step 3: agents-onboarding block -------------------------------------------
+# --- Step 4: agents-onboarding block -------------------------------------------
 
 
 def _step_agents_block(target: Path, *, agents_file: str, force: bool) -> str:
@@ -259,7 +285,7 @@ def _step_agents_block(target: Path, *, agents_file: str, force: bool) -> str:
     return f"agents-block: replaced (--force) in {hyperlink_path(path.resolve())}"
 
 
-# --- Step 4: install verification ----------------------------------------------
+# --- Step 5: install verification ----------------------------------------------
 
 
 def _verify(target: Path, *, journal_flag: Optional[str]) -> list[str]:
@@ -329,6 +355,7 @@ def cmd_onboard(args: argparse.Namespace) -> int:
 
     print(f"onboard: {hyperlink_path(target)}")
     print(_step_gitignore(target))
+    print(_step_profile(target, force=args.force))
     for line in _step_skill(target, force=args.force):
         print(line)
     print(_step_agents_block(target, agents_file=args.agents_file, force=args.force))
