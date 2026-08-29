@@ -576,7 +576,7 @@ class AcpExecution(ExecutionPort):
                 state=LIFECYCLE_STATE_SETTLED,
                 outcome="failed",
                 extensions=self._session_provenance(
-                    show, session_name, resume_ref=session_name, unobservable=True
+                    show, session_name, resume_ref=session_name
                 ),
             )
 
@@ -604,7 +604,6 @@ class AcpExecution(ExecutionPort):
         session_name: str,
         *,
         resume_ref: str,
-        unobservable: bool = False,
     ) -> dict[str, Any]:
         # execution-session/v1 (EXT-EXECUTION-SESSION-V1): acpxRecordId and
         # acpSessionId are confirmed always identical for Pi (spike); no
@@ -632,8 +631,6 @@ class AcpExecution(ExecutionPort):
             profile["effort"] = self._thought_level
         if profile:
             payload["profile"] = profile
-        if unobservable:
-            payload["_orcw_unobservable"] = True
         return {"execution-session/v1": payload}
 
     # -- send / cancel / resume ------------------------------------------

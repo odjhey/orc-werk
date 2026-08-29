@@ -116,7 +116,7 @@ class AcpExecutionUnobservabilityTest(unittest.TestCase):
         self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
         self.assertEqual(observed.outcome, "failed")
         provenance = observed.extensions["execution-session/v1"]
-        self.assertTrue(provenance.get("_orcw_unobservable"))
+        self.assertNotIn("_orcw_unobservable", provenance)
 
     # -- branch 2: result present -> settle using it, regardless of status --
 
