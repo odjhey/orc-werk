@@ -163,12 +163,7 @@ is exactly what you do":
   probes; findings ride the verdict entry's `extensions`; never
   self-assure.
 The `orc-ledger` skill stays the six-rule quickstart; these guides are the
-**depth** each role reaches for. Per Ruling 4: PACKAGED in `src/orc_werk/`
-(canonical origin, like the skill) and surfaced via a new `orc guide
-watchtower|shipper|verify` command (the `orc config-schema` pattern) —
-reachable in any repo by any agent that can run a CLI, harness-agnostic, no
-dangling path. The skill/agents-block cites the runnable `orc guide <role>`
-command. The verify-seat guide is the net-new, highest-value piece.
+**depth** each role reaches for. Per operator ruling (2026-08-30): `orc guide` is HELD dormant (see `TASK-M4C-001`). Role clarity is instead covered by three existing surfaces — the installed `orc-ledger` skill (durable principles), the per-project mode declaration (`TASK-M4A-004`), and `PLAYBOOK-AGENT-CLI` (full reference). The canonical command is pulled only if a proven gap remains.
 **Scope honesty:** the guide content is docs (distilled from the dense
 playbooks); the `orc guide` command is small new CLI code (reads a packaged
 doc and prints it, like config-schema).
@@ -196,23 +191,15 @@ cockpit. The whole milestone is small and mostly composition-layer/docs.
    project:<name> --status all`, reference-first; no new orc read command
    (respects the write-only boundary; a board-reading command stays dormant
    in the multi-repo registry).
-4. **Role guides: `orc guide <role>` command** — RULED (operator direction,
-   2026-08-30, supersedes the draft's reference-first recommendation).
-   Guides are PACKAGED (canonical origin in `src/orc_werk/`, like the skill)
-   and surfaced via a new `orc guide watchtower|shipper|verify` command
-   (the `orc config-schema` pattern): reachable in ANY repo by ANY agent
-   that can run a CLI (harness-agnostic — not Claude-Code-skill-specific),
-   zero duplication, zero drift, no dangling path (the #127 lesson: an
-   adopter-facing reference must RESOLVE — a runnable command does, a
-   `docs/…md` path does not). The dense playbooks stay the full normative
-   reference; these are the crisp actionable per-role distillations. The
-   skill/agents-block cites "run `orc guide <role>`" — a runnable reference.
-   The verify-seat guide is the genuinely-new content (that seat is a role
-   documented nowhere today) and the highest-value piece.
+4. **Role guides: `orc guide` HELD dormant** — RULED (operator, 2026-08-30, supersedes the earlier `orc guide` decision). The command sits in a possibly-redundant middle; role clarity is covered by the installed skill (principles) + the per-project mode declaration `TASK-M4A-004` (procedure) + `PLAYBOOK-AGENT-CLI` (reference). `orc guide` is dormant with a named trigger (`TASK-M4C-001`): agents demonstrably getting seat discipline wrong despite those three surfaces.
 5. **`project:<name>` source: explicit `mirror.project` config key** —
    RULED, set once in `.orc/profile.json` (ties M4A-001 and M4A-002).
 
 ## Explicitly NOT in M4 (dormant registry, triggers unchanged)
+
+- **`orc guide <role>` command** (`TASK-M4C-001`) — HELD dormant (operator,
+  2026-08-30); trigger: a proven role-clarity gap the installed skill + the
+  mode declaration + the playbook don't close.
 
 - **AcpAssurance** (#126) — dormant; trigger is a review no-mistakes can't
   do. Fully shaped, reviewed.
