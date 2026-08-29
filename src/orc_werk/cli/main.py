@@ -57,6 +57,7 @@ from orc_werk.cli.journal_reading import (
 from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint
 from orc_werk.cli.refs import cmd_refs
 from orc_werk.cli.report import cmd_report
+from orc_werk.cli.show import cmd_show
 from orc_werk.core.errors import CoreError, validation_error
 from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, WorkProjection
 from orc_werk.ports.capabilities import validate_capabilities
@@ -715,6 +716,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--since-seq", type=int, default=None, help="only show records with seq greater than SEQ"
     )
     history_parser.set_defaults(func=cmd_history)
+
+    show_parser = subparsers.add_parser(
+        "show",
+        help="the run narrative: per work, per attempt -- asked/executed/produced/judged, next",
+        description="Terminal narrative view of one run (TASK-M3C-001): for each work (or the one "
+        "named), per attempt -- ASKED (derived prompt provenance, briefs vs intent fallback, "
+        "issue #111), EXECUTED (provider/session/duration), PRODUCED (candidate identity), "
+        "JUDGED (verdict, findings summary, or inheritance basis per STATE-DELIVERY item 8), and "
+        "NEXT/DEEPER (resolve commands, reusing orc refs's builders). Pure composition of the "
+        "journal, this run's persisted dispatch config, and the times sidecar -- no new "
+        "recording, no full-payload dumps.",
+        epilog="examples:\n"
+        "  orc show my-run-id\n"
+        "  orc show my-run-id work-1\n"
+        "  orc show my-run-id --journal ./.orc\n\n"
+        "defaults: a bare run id resolves against --journal, $ORC_JOURNAL_DIR, or ./.orc; "
+        "omitting the work positional shows every work",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    show_parser.add_argument("run", help="journal path (dir or <run>.jsonl) or bare run id")
+    show_parser.add_argument("work", nargs="?", default=None, help="show only this work id (default: every work)")
+    show_parser.add_argument(
+        "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
+    show_parser.set_defaults(func=cmd_show)
 
     report_parser = subparsers.add_parser(
         "report",

@@ -298,6 +298,102 @@ layout" below):
 [0007] decision DEC-DISPATCH   {"attempt_number":1,"attribution":{"policy":"v0-deterministic"},"basis":[...],"work_id":"work-1"}
 ```
 
+### `orc show`
+
+```text
+usage: orc show [-h] [--journal JOURNAL] run [work]
+```
+
+The terminal narrative view (`TASK-M3C-001`): the operator's four-question
+review staircase's levels two ("this run in depth") and three ("briefs and
+hand-offs per turn") -- bare `orc` is level one, `orc refs --resolve`
+(`TASK-M3C-002`, adapter-native content) is level four. Pure composition of
+the journal, this run's persisted dispatch config, and the observed-at
+times sidecar -- no new recording, no full-payload dumps. For each work (or
+just the one named), per attempt:
+
+- **ASKED** -- the derived prompt provenance: `prompt = briefs.<work>
+  (persisted config)` when the run's persisted config has a `briefs`
+  entry for that work (the issue #82/#83 precedence rule -- a brief,
+  however short, always wins over the intent, the issue #111 "briefs
+  footgun" lesson), or `prompt = run intent (fallback)` otherwise; a
+  truncated preview of the actual text (`--limit`-style definitive count,
+  never dumped in full) with a pointer at where the full text lives (the
+  persisted config path for a brief, `orc status <run>` for the intent).
+  When `execution.adapter` is not `"acp"` (the default `"scripted"`), no
+  prompt is ever sent -- rendered honestly as `scripted execution -- no
+  prompt sent to the executor`, never guessed.
+- **EXECUTED** -- provider, `execution_id`, session/resume refs when the
+  attempt carries `execution-session/v1` provenance, duration (the times
+  sidecar's started->settled delta -- absent when the sidecar has no
+  entry, never fabricated), and outcome.
+- **PRODUCED** -- candidate id, fingerprint, and subject identity fields
+  (`head_sha`/`pr`/`repo_path`) as present.
+- **JUDGED** -- assurance id, verdict, `evidence_refs`, and a
+  `review-findings/v1` summary (count, plus id/severity/one-line summary
+  per finding, capped at 5 with a definitive count and an `orc history
+  <run> --limit 0` pointer for the rest -- never a full payload dump).
+  When an attempt re-observes a candidate whose fingerprint already has a
+  settled verdict in this work's lineage, no fresh assurance was ever
+  requested (`STATE-DELIVERY` item 8, verdict inheritance, the issue
+  #76/#115 story) -- rendered as `verdict inherited from attempt N's
+  settlement`, citing the inherited findings too, never presented as a
+  fresh judgment. An abandoned attempt (`DEC-ABANDON-ATTEMPT`,
+  `TASK-M3B-001`) renders who/why instead.
+- **NEXT/DEEPER** -- this attempt's own resolvable references (session,
+  transcript, evidence, candidate), reusing `orc refs`'s own row builders
+  and resolve-command derivation verbatim -- never a second, drifting
+  copy of that logic.
+
+A compact run header (intent first line, per-work state+attempts summary)
+precedes the per-work sections; each work ends with a state trailer
+(`now at <STATE> (attempts=N[, blocked_reason=...])`). The run-level
+`next:` affordance (the same shared mapping `status`/`dispatch` use) prints
+once, at the very end. Exit code mirrors `status`'s 0/1/3 delivery-state
+contract (`refs`/`report` stay unconditional 0, since they carry no
+per-work disposition of their own).
+
+| Flag | Default | Notes |
+|---|---|---|
+| `run` (positional) | required | journal path (dir or `<run>.jsonl`) or bare run id |
+| `work` (positional) | none | show only this work id; omit for every work |
+| `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
+
+```bash
+orc show my-run-id
+orc show my-run-id work-1
+orc show my-run-id --journal ./.orc
+```
+
+```text
+run: my-run-id
+intent: ship the widget
+works: work-1=ACCEPTED attempts=1
+work work-1:
+  attempt 1:
+  ASKED: prompt = briefs.work-1 (persisted config)
+    text: create the widget file and commit it
+  EXECUTED: provider=acpx-pi execution_id=acpx-pi:orcw-abc123:work-1
+    session: 01a0...
+    resume: orcw-abc123
+    duration: 41.529s (2026-08-29T00:48:54.006149Z -> 2026-08-29T00:49:35.535384Z)
+    outcome: completed
+  PRODUCED: candidate=cand-git-abc123 fingerprint=fp-abc123
+    head_sha: 9dccd6f...
+    repo_path: /abs/worktree
+  JUDGED: assurance=assure-xyz verdict=accepted
+  NEXT/DEEPER:
+    session      acpx-pi          01a0...  (resolve: acpx pi sessions history 01a0...)
+    candidate    -                {"head_sha":"9dccd6f...","repo_path":"/abs/worktree"}  (resolve: git -C /abs/worktree show 9dccd6f... --stat)
+  now at ACCEPTED (attempts=1)
+next:
+  - work(s) accepted: work-1 -- see the full run report: orc report my-run-id
+```
+
+An unknown run or work id is canonical `ERR-NOT-FOUND` with a `next` field
+naming the run's actual work ids (or `orc status <run>` when the run itself
+is missing).
+
 ### `orc refs`
 
 ```text
