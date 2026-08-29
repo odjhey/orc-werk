@@ -1,7 +1,7 @@
 ---
 id: TASK-M3B-001
 type: task-card
-status: draft
+status: current
 authority: normative
 description: Verdict inheritance for re-observed candidates + DEC-ABANDON-ATTEMPT operator recovery record, per the approved issue #76 ruling (also resolves issue #95).
 implements: []

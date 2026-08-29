@@ -1,7 +1,7 @@
 ---
 id: TASK-M3C-002
 type: task-card
-status: draft
+status: current
 authority: normative
 description: orc refs --resolve — shell out to the provider's own tooling to show referenced content inline; version-fragility documented, never silent.
 implements: []

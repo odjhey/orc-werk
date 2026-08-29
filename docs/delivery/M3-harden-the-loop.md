@@ -1,7 +1,7 @@
 ---
 id: M3-HARDEN-THE-LOOP
 type: milestone
-status: draft
+status: current
 authority: normative
 description: M3 — close the wedge class the adoption testing exposed, and make autonomous runs fast to review; most of the originally-proposed scope shipped ahead of the milestone.
 ---

@@ -1,7 +1,7 @@
 ---
 id: TASK-M3B-002
 type: task-card
-status: draft
+status: current
 authority: normative
 description: no-mistakes inspect-side identity guard — an already-bound divergent provider run must never settle this candidate's verdict (issue #92 scope extension).
 implements: []

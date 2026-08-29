@@ -1,7 +1,7 @@
 ---
 id: TASK-M3D-001
 type: task-card
-status: draft
+status: current
 authority: normative
 description: orc onboard — mechanical adopting-repo scaffold (gitignore, skill install, agents-block, install verification); one canonical skill origin.
 implements: []

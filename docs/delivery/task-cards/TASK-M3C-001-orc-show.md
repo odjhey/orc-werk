@@ -1,7 +1,7 @@
 ---
 id: TASK-M3C-001
 type: task-card
-status: draft
+status: current
 authority: normative
 description: orc show — terminal narrative view of a run (briefs, prompts-as-derived, executions, candidates, verdicts, refs), composing existing readers only.
 implements: []
