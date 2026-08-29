@@ -54,6 +54,7 @@ from orc_werk.cli.journal_reading import (
     _root_cause_for_work,
     resolve_journal_dir,
 )
+from orc_werk.cli.onboard import DEFAULT_AGENTS_FILE, cmd_onboard
 from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint
 from orc_werk.cli.refs import cmd_refs
 from orc_werk.cli.report import cmd_report
@@ -803,6 +804,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="output directory for --all (default: the journal directory)",
     )
     report_parser.set_defaults(func=cmd_report)
+
+    onboard_parser = subparsers.add_parser(
+        "onboard",
+        help="mechanically scaffold an adopting repo: gitignore, skill install, agents-block, install verification",
+        description="Scaffold an adopting repository (TASK-M3D-001): ensure a .orc/ .gitignore entry, "
+        "install the orc-ledger skill (content sourced from THIS installed package, one canonical "
+        "origin), write/print a copy-pasteable '## Delivery ledger (orc)' agents-onboarding block, "
+        "and honestly report install verification (orc on PATH vs module form, journal dir "
+        "resolution, optional bd presence). Idempotent re-run; never silently overwrites a file it "
+        "did not create -- an operator-modified target is skip-with-note unless --force.",
+        epilog="examples:\n"
+        "  orc onboard --path /path/to/adopting-repo\n"
+        "  orc onboard --path . --force              # re-run, overwriting operator-modified targets\n"
+        "  orc onboard --print-agents-block           # prints only, writes nothing\n\n"
+        "defaults: --path . ; --agents-file AGENTS.md ; --journal $ORC_JOURNAL_DIR or ./.orc "
+        "(verification report only -- onboard never creates a journal)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    onboard_parser.add_argument("--path", default=".", help="target repository directory (default: .)")
+    onboard_parser.add_argument(
+        "--print-agents-block",
+        action="store_true",
+        help="print the agents-onboarding block to stdout and exit; performs no other step, writes nothing",
+    )
+    onboard_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite/replace a target that already exists with different content (default: skip-with-note)",
+    )
+    onboard_parser.add_argument(
+        "--agents-file",
+        default=DEFAULT_AGENTS_FILE,
+        metavar="NAME",
+        help=f"agent-instructions file (relative to --path) to write the Delivery ledger block into (default: {DEFAULT_AGENTS_FILE})",
+    )
+    onboard_parser.add_argument(
+        "--journal",
+        default=None,
+        help="journal directory to report on in the verification step (default: $ORC_JOURNAL_DIR or ./.orc, anchored at --path)",
+    )
+    onboard_parser.set_defaults(func=cmd_onboard)
 
     return parser
 

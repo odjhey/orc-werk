@@ -18,3 +18,12 @@ orc = "orc_werk.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# TASK-M3D-001 `orc onboard`: the orc-ledger skill's single authored
+# copy lives at src/orc_werk/skills/orc-ledger/SKILL.md; this ships it
+# with the installed package so `onboard` copies it from the installed
+# package, never a second hand-maintained copy embedded in Python
+# source. `.agents/skills/orc-ledger/SKILL.md` is a relative symlink to
+# this exact file (see src/orc_werk/skills/__init__.py's docstring).
+"orc_werk.skills" = ["orc-ledger/SKILL.md"]
