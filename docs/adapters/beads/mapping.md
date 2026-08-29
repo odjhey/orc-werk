@@ -204,6 +204,8 @@ boundary is the `bd` CLI surface only, per `INV-014`.
 | `DEC-ACCEPT`/`FACT-WORK-COMPLETED` (state `ACCEPTED`) | `bd update <id> --set-metadata ...` then `bd close <id> --reason accepted` | Two calls: metadata first (`close` accepts no `--set-metadata` flag), then the close itself -- a write-only echo, never a trigger. |
 | `DEC-BLOCK`/`FACT-WORK-BLOCKED` (state `BLOCKED`) | `bd update <id> --status blocked --set-metadata blocked_reason=<reason> ...` | `bd`'s own builtin `blocked` status (`bd statuses`) is an exact-name match -- no synthesized status needed. Write-only echo, never a trigger; `close` is never called for a blocked Work. |
 
+Mirror reference resolution uses `bd list --status all` because `bd list` defaults to open/in-progress issues and would otherwise hide accepted runs whose issues the mirror closes.
+
 ## Status vocabulary (kernel state -> `bd`)
 
 | Kernel state (`docs/domain/state-machines/delivery.md`) | `bd` builtin status | `--set-metadata state=` | Notes |

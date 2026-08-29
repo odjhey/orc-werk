@@ -69,7 +69,7 @@ only when present -- absence is never fabricated (`CLAUDE.md` #3):
    config (`<journal-dir>/<run_id>/config.json`, issue #55 H2's
    `_persist_effective_config`) when both the file and its `mirror` key
    exist: one `mirror` row naming the run label + workspace (resolve:
-   `bd --json -C <workspace> list --label run:<run_id>`, matching
+   `bd --json -C <workspace> list --label run:<run_id> --status all`, matching
    `docs/adapters/beads/mapping.md`'s `--label run:<run_id>` convention).
    The kernel itself never journals mirror configuration (`mirror` is a
    CLI-owned config block, `CONTRACT-DURABILITY`'s "delegated work
@@ -660,7 +660,9 @@ def _mirror_row(directory: Path, run_id: str) -> Optional[RefRow]:
         kind="mirror",
         provider=adapter,
         value=f"label={label} workspace={workspace}",
-        resolve=ResolveCommand.of(["bd", "--json", "-C", workspace, "list", "--label", label]),
+        resolve=ResolveCommand.of(
+            ["bd", "--json", "-C", workspace, "list", "--label", label, "--status", "all"]
+        ),
     )
 
 
