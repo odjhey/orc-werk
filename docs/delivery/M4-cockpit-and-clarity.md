@@ -105,6 +105,21 @@ write-only boundary. `orc onboard`'s verification step notes the portfolio
 workspace. Update `PRODUCT-ADOPTION` (this is the multi-repo rung).
 **Scope honesty:** docs + convention formalization; no new orc read code.
 
+### `TASK-M4A-004` — mode-aware agents-block
+**The gap (operator, 2026-08-30):** onboarding agents in a repo that uses
+orc WITHOUT the acp/no-mistakes adapters still requires a hand-written
+preamble ("orc runs in scripted mode here; you do the work and record
+settlements by hand"). M4A-001's profile closes the *config* half (scripted
+becomes the default); this closes the *mode-declaration* half.
+**Shape:** `orc onboard` DERIVES the mode from `.orc/profile.json`'s adapter
+config (scripted/absent adapters → scripted mode; `acp`/`no-mistakes` →
+adapter-driven) and writes a mode declaration into the agents-block it
+already installs — generated, accurate, idempotent, pointing at
+`orc guide <role>`. Retires the hand-written preamble. Ties `TASK-M4A-001`
+(writes profile) to `TASK-M4C-001` (the guide).
+**Scope honesty:** CLI-layer scaffolding + docs; no adapter/core change; the
+mode is descriptive (derived from config), not a new runtime gate.
+
 ## Phase M4b — Clearer reporting
 
 Portfolio-level reporting is delivered by M4a (read the board). M4b is the
@@ -213,6 +228,9 @@ cockpit. The whole milestone is small and mostly composition-layer/docs.
 - A repo sets its execution/candidate/assurance/mirror defaults ONCE (the
   profile) and dispatches without re-specifying them; `--config` still
   overrides.
+- `orc onboard` writes a mode declaration derived from the profile, so a
+  scripted-only repo no longer needs a hand-written "scripted mode" preamble
+  (M4A-004).
 - The shared board answers "what's in flight in project X" via a
   `project:` label slice (`bd list --label project:X --status all`).
 - The single-dir index is state-aware and text/HTML orderings agree.
