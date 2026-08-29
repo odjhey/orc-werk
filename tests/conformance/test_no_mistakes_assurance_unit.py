@@ -171,7 +171,10 @@ class NoMistakesAssuranceVerdictMappingTest(unittest.TestCase):
     def test_unrecognized_assurance_id_is_requested_not_an_error(self) -> None:
         adapter = self._adapter()
         # Well-formed shape, but no such run id was ever created by this world.
-        fake_id = f"no-mistakes:fp-zzzzzzzzzzzzzzzzzzzzzzzz:STUB9999999999999999999999:{self._world.repo_path}"
+        fake_id = (
+            "no-mistakes:fp-zzzzzzzzzzzzzzzzzzzzzzzz:STUB9999999999999999999999:-:"
+            f"{self._world.repo_path}"
+        )
         observed = adapter.inspect(assurance_id=fake_id)
         self.assertEqual(observed.state, LIFECYCLE_STATE_REQUESTED)
 
@@ -282,6 +285,200 @@ class NoMistakesAssuranceVerdictMappingTest(unittest.TestCase):
         run2 = second.request(candidate=candidate, requirements={"intent": "x"}, idempotency_key="k-j")
         self.assertEqual(run1.id, run2.id)
         self.assertEqual(self._world.run_count(), 1)
+
+
+class NoMistakesInspectIdentityGuardTest(unittest.TestCase):
+    """`TASK-M3B-002` (issue #92 scope extension): `inspect()` must
+    positively re-confirm the bound run's identity against the candidate
+    before treating anything as this candidate's settlement (the xatu
+    incident shape, PR #98's audit-flagged follow-up gap). Per the
+    fix-round watchtower ruling (mapping doc "Identity guard"), the two
+    guard outcomes differ: a POSITIVELY-CONFIRMED divergence (both heads
+    known, mismatch) settles `inconclusive` with the divergence detail
+    in `evidence_refs` -- a permanently wrong binding, a judgment about
+    THIS assurance attempt, never an adoption of the foreign outcome
+    (the foreign `outcome: passed` is never mapped to `accepted`); an
+    UNCONFIRMABLE identity (no readable head) stays running/pending.
+    Threading design: the candidate's expected head rides the
+    (adapter-owned, opaque) `assurance_id` itself -- durable across a
+    fresh process/instance with zero in-memory state (INV-020,
+    CRASH-RECOVERY; see the "fresh process" tests below and the mapping
+    doc's "assurance_id shape" section for the full rationale)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._world = NoMistakesStubWorld(Path(self._tmp.name))
+
+    def _adapter(self) -> NoMistakesAssurance:
+        return NoMistakesAssurance(
+            repo_path=self._world.repo_path,
+            env=self._world.env(),
+            spawn_poll_timeout_s=2.0,
+            spawn_poll_interval_s=0.02,
+        )
+
+    def _candidate(self, fingerprint: str, *, head_sha: str) -> Candidate:
+        return Candidate(
+            id=f"cand-{fingerprint}",
+            work_id="w1",
+            execution_id=f"e-{fingerprint}",
+            subject_identity={"head_sha": head_sha},
+            fingerprint=fingerprint,
+        )
+
+    def _bind(self, adapter: NoMistakesAssurance, *, fingerprint: str, key: str, head_sha: str):
+        candidate = self._candidate(fingerprint, head_sha=head_sha)
+        run = adapter.request(candidate=candidate, requirements={"intent": "x"}, idempotency_key=key)
+        run_id = self._world.active_run_id()
+        assert run_id is not None
+        return run, run_id
+
+    # -- bound-then-divergent ------------------------------------------------
+
+    # NOTE: every head sha below is letter-repeated (never digit-repeated,
+    # e.g. "a"*40 not "1"*40) -- `parse_toon` tolerantly coerces an
+    # all-decimal-digit scalar to `int` (`toon.py`'s scalar coercion), which
+    # would silently turn a digit-only fake head into a non-`str` value and
+    # make `_observed_head`'s `isinstance(..., str)` check reject it
+    # regardless of this guard -- a test-fixture hazard, not a guard bug;
+    # real git object ids are not exercised by this failure mode since they
+    # are never all-decimal.
+
+    def test_bound_then_divergent_run_settles_inconclusive_never_adopts_foreign_outcome(self) -> None:
+        adapter = self._adapter()
+        run, run_id = self._bind(adapter, fingerprint="fp-divergent", key="k-divergent", head_sha="a" * 40)
+        # The bound run's own observed head has since diverged from the
+        # candidate it was bound to (a foreign/adopted pipeline reaching
+        # its own terminal outcome -- exactly the xatu incident shape) and
+        # reaches an otherwise-settleable terminal `outcome: passed`.
+        self._world.set_head_shape(run_id, head="b" * 40, emit_run_head=True, emit_branch_sync=True)
+        self._world.set_outcome(run_id, "passed")
+
+        observed = adapter.inspect(assurance_id=run.id)
+        # Settles INCONCLUSIVE (a judgment about this assurance attempt:
+        # the binding is permanently wrong) -- NEVER `accepted` from the
+        # foreign run's own passed outcome (P-004, INV-007..INV-010).
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.verdict, "inconclusive")
+        self.assertEqual(observed.candidate_fingerprint, "fp-divergent")
+        ref = observed.evidence_refs[0]
+        self.assertEqual(ref["candidate_expected_head"], "a" * 40)
+        self.assertEqual(ref["observed_head"], "b" * 40)
+        self.assertFalse(ref["identity_confirmed"])
+        self.assertEqual(ref["divergence"], "bound-run-identity-divergent")
+        self.assertEqual(ref["no_mistakes_run_id"], run_id)
+
+    def test_fresh_process_confirms_divergence_from_durable_assurance_id(self) -> None:
+        """CRASH-RECOVERY/INV-020: a FRESH process/instance, given only the
+        durable `assurance_id`, must reach the identical inconclusive-with-
+        divergence-evidence settlement -- the guard cannot depend on
+        in-process memory from request()."""
+        first = self._adapter()
+        run, run_id = self._bind(first, fingerprint="fp-crash-divergent", key="k-crash-divergent", head_sha="c" * 40)
+        self._world.set_head_shape(run_id, head="d" * 40, emit_run_head=True, emit_branch_sync=True)
+        self._world.set_outcome(run_id, "passed")
+
+        second = self._adapter()  # fresh instance, empty in-process caches
+        observed = second.inspect(assurance_id=run.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.verdict, "inconclusive")
+        self.assertEqual(observed.evidence_refs[0]["divergence"], "bound-run-identity-divergent")
+
+    # -- bound-then-unconfirmable ---------------------------------------------
+
+    def test_bound_then_unconfirmable_head_does_not_settle(self) -> None:
+        adapter = self._adapter()
+        run, run_id = self._bind(
+            adapter, fingerprint="fp-unconfirmable", key="k-unconfirmable", head_sha="e" * 40
+        )
+        # No readable head anywhere in the observed status (issue #92's
+        # live no-branch_sync/no-readable-head shape).
+        self._world.set_head_shape(run_id, head=None, emit_run_head=False, emit_branch_sync=False)
+        self._world.set_outcome(run_id, "passed")
+
+        observed = adapter.inspect(assurance_id=run.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
+        self.assertIsNone(observed.verdict)
+        ref = observed.evidence_refs[0]
+        self.assertEqual(ref["candidate_expected_head"], "e" * 40)
+        self.assertIsNone(ref["observed_head"])
+        self.assertFalse(ref["identity_confirmed"])
+
+    def test_fresh_process_confirms_unconfirmable_from_durable_assurance_id(self) -> None:
+        first = self._adapter()
+        run, run_id = self._bind(
+            first, fingerprint="fp-crash-unconfirmable", key="k-crash-unconfirmable", head_sha="f" * 40
+        )
+        self._world.set_head_shape(run_id, head=None, emit_run_head=False, emit_branch_sync=False)
+        self._world.set_outcome(run_id, "passed")
+
+        second = self._adapter()
+        observed = second.inspect(assurance_id=run.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
+
+    # -- matching-identity regression ------------------------------------------
+
+    def test_matching_identity_still_settles(self) -> None:
+        """A correctly-bound run (observed head still equal to the
+        candidate's expected head) must settle exactly as before this
+        guard existed -- the guard must never block the ordinary case."""
+        adapter = self._adapter()
+        run, run_id = self._bind(adapter, fingerprint="fp-matching", key="k-matching", head_sha="ab" * 20)
+        self._world.set_head_shape(run_id, head="ab" * 20, emit_run_head=True, emit_branch_sync=True)
+        self._world.set_outcome(run_id, "passed")
+
+        observed = adapter.inspect(assurance_id=run.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.verdict, "accepted")
+
+    def test_fresh_process_confirms_matching_identity_still_settles(self) -> None:
+        first = self._adapter()
+        run, run_id = self._bind(
+            first, fingerprint="fp-crash-matching", key="k-crash-matching", head_sha="cd" * 20
+        )
+        self._world.set_head_shape(run_id, head="cd" * 20, emit_run_head=True, emit_branch_sync=True)
+        self._world.set_outcome(run_id, "passed")
+
+        second = self._adapter()
+        observed = second.inspect(assurance_id=run.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.verdict, "accepted")
+
+    # -- breaking format change (documented, not silently tolerated) --------
+
+    def test_pre_task_four_part_assurance_id_no_longer_parses(self) -> None:
+        """`assurance_id` gained a mandatory expected-head segment so the
+        guard above has a durable candidate identity to confirm against
+        even from a fresh process -- a pre-TASK-M3B-002, 4-field
+        assurance_id (no expected_head) is no longer a recognizable
+        reference (mapping doc "assurance_id shape" / "Limitations"), not
+        silently reinterpreted."""
+        adapter = self._adapter()
+        legacy_id = (
+            f"no-mistakes:fp-aaaaaaaaaaaaaaaaaaaaaaaa:STUB0000000000000000000001:{self._world.repo_path}"
+        )
+        with self.assertRaises(CoreError) as ctx:
+            adapter.inspect(assurance_id=legacy_id)
+        self.assertEqual(ctx.exception.to_canonical()["error"], "ERR-NOT-FOUND")
+
+    def test_legacy_id_with_colon_bearing_repo_path_never_misparses(self) -> None:
+        """Fix-round finding 2: a LEGACY 4-field id whose repo_path itself
+        contains ':' has the same colon count as a well-formed 5-field id
+        -- without the expected_head shape validation (exactly 40
+        lowercase hex or the literal '-'), the path's first segment would
+        silently land in the expected_head slot and the remainder in
+        repo_path: a wrong head bound to a wrong path. It must instead be
+        the legible legacy-format failure (ERR-NOT-FOUND), never a
+        binding."""
+        adapter = self._adapter()
+        legacy_colon_path_id = (
+            "no-mistakes:fp-aaaaaaaaaaaaaaaaaaaaaaaa:STUB0000000000000000000001:"
+            "/mnt/volumes:archive/repos/xatu"
+        )
+        with self.assertRaises(CoreError) as ctx:
+            adapter.inspect(assurance_id=legacy_colon_path_id)
+        self.assertEqual(ctx.exception.to_canonical()["error"], "ERR-NOT-FOUND")
 
 
 class ParseToonTest(unittest.TestCase):

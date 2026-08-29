@@ -112,8 +112,12 @@ class _StubNoMistakesAssuranceHarness(AssurancePort):
         return self._real.inspect(assurance_id=assurance_id)
 
     def _apply_settlement(self, assurance_id: str, entry: Mapping[str, Any]) -> None:
-        # assurance_id shape: "no-mistakes:<fingerprint>:<native_run_id>:<repo_path>"
-        # (see assurance.py's _assurance_id/_parse_assurance_id).
+        # assurance_id shape (TASK-M3B-002 bump):
+        # "no-mistakes:<fingerprint>:<native_run_id>:<expected_head>:<repo_path>"
+        # (see assurance.py's _assurance_id/_parse_assurance_id). A
+        # maxsplit=3 split still isolates native_run_id at index 2
+        # regardless of that later bump -- only the tail (everything past
+        # the 3rd colon) shape changed.
         parts = assurance_id.split(":", 3)
         native_run_id = parts[2]
         verdict = entry.get("verdict")
