@@ -17,7 +17,10 @@ A Decision records what orchestration policy chose and why.
 | `DEC-REQUEST-ASSURANCE` | RequestAssurance | Evaluate one exact Candidate. |
 | `DEC-ACCEPT` | Accept | Commit Work completion after required assurance succeeds. |
 | `DEC-BLOCK` | Block | Stop autonomous progress pending changed state/input/authority. |
+| `DEC-ABANDON-ATTEMPT` | AbandonAttempt | Consume an attempt's unresolved candidate-observation conflict or unsettleable Assurance, settling that attempt as failed so ordinary retry/block machinery proceeds. |
 | `DEC-ESCALATE` | Escalate | Request human or higher-policy attention. |
 | `DEC-CANCEL` | Cancel | Intentionally terminate the Work/DeliveryRun. |
 
 Every Decision MUST satisfy `INV-011` and `INV-012`.
+
+`DEC-ABANDON-ATTEMPT` (`TASK-M3B-001`, issues #76/#95) is the one Decision in this registry an *operator* attributes rather than v0 policy (`attribution` names the operator, not `V0_POLICY_ATTRIBUTION`) — legal exactly when `STATE-DELIVERY` mechanical fact sequencing item 9 applies: an attempt's candidate observation is in irrecoverable conflict (a re-observed candidate identity that verdict inheritance, item 8, cannot resolve) or its current Assurance is unsettleable by any seat (issue #95's adapter-owned in-flight case). It is paired with `FACT-ATTEMPT-ABANDONED` (`PROTOCOL-FACTS`), never with a `FACT-ASSURE-SETTLED` — an abandon settles the *attempt*, not the candidate's verdict, so `INV-003`/`INV-009` (rejected/inconclusive assurance is not acceptance; execution settlement is not acceptance) are never at stake and no assurance evidence is fabricated (`INV-003`). `basis` (`INV-012`) cites the conflicting `FACT-CANDIDATE-OBSERVED` or the unsettled `FACT-ASSURE-STARTED`; `data` carries the operator's stated reason. Recorded through the CLI operator surface documented in `docs/playbooks/cli-usage.md`, never through the ship/verify agent observation path (`docs/playbooks/agent-cli-usage.md`) — abandoning an attempt is an operator power, not an observation.
