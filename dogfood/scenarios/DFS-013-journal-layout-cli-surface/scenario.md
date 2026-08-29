@@ -167,9 +167,11 @@ PY
    subsequent write for `dfs-013-new` is under
    `.orc/dfs-013-new/journal.jsonl`, never a new flat journal.
 4. Each precedence dispatch exits `3`. The only matching journal paths are
-   `default-case/.orc/default-run/journal.jsonl`,
-   `env-root/env-run/journal.jsonl`, and
-   `flag-root/flag-run/journal.jsonl`. No `env-case/.orc`, `flag-case/.orc`,
+   `env-root/env-run/journal.jsonl`,
+   `flag-root/flag-run/journal.jsonl`,
+   `session/.orc/dfs-013-new/journal.jsonl`,
+   `session/.orc/dfs-013-resume/journal.jsonl`, and
+   `session/default-case/.orc/default-run/journal.jsonl`. No `env-case/.orc`, `flag-case/.orc`,
    or `losing-env-root` is created: explicit `--journal` beats the environment,
    which beats `./.orc`.
 5. All three captured outputs print `escape_bytes=0`; the assertion passes.
