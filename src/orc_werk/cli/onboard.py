@@ -76,6 +76,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+from orc_werk.cli.config import load_repo_profile
 from orc_werk.cli.hyperlink import hyperlink_path
 from orc_werk.cli.journal_reading import ORC_JOURNAL_DIR_ENV, resolve_journal_dir
 from orc_werk.core.errors import validation_error
@@ -99,7 +100,12 @@ def packaged_skill_text() -> str:
     )
 
 
-def agents_block_text(skill_text: Optional[str] = None) -> str:
+def agents_block_text(
+    skill_text: Optional[str] = None,
+    *,
+    profile: Optional[dict] = None,
+    scripted_default: bool = True,
+) -> str:
     """Derive the copy-pasteable `## Delivery ledger (orc)` block from the
     packaged `SKILL.md` content: strip the YAML frontmatter, drop the `#
     Working with the orc delivery ledger` H1 title, and keep every other
@@ -127,7 +133,32 @@ def agents_block_text(skill_text: Optional[str] = None) -> str:
     while lines and not lines[0].strip():
         lines = lines[1:]
     body = "\n".join(lines).rstrip("\n")
-    return f"## Delivery ledger (orc)\n\n{body}\n"
+    execution = profile.get("execution") or {} if profile is not None else {}
+    assurance = profile.get("assurance") or {} if profile is not None else {}
+    adapter_driven = execution.get("adapter", "scripted") == "acp" or assurance.get(
+        "adapter", "scripted"
+    ) != "scripted"
+    if adapter_driven:
+        mode = "ADAPTER-DRIVEN MODE"
+        action = (
+            "orc spawns/drives the seat via the configured adapter; you configure "
+            "rather than perform."
+        )
+    else:
+        mode = "SCRIPTED MODE (scripted default)" if scripted_default else "SCRIPTED MODE"
+        action = (
+            "orc records and advances state; it does not spawn or drive agents; "
+            "you the agent do the work and record the settlement/verdict by hand "
+            "(do the work by hand)."
+        )
+    declaration = (
+        "### MODE DECLARATION\n\n"
+        f"**{mode}.** {action}\n\n"
+        "Dispatch configs default via profile `.orc/profile.json`; no adapter blocks need "
+        "to be specified. The seat discipline and recording protocol are in the "
+        "delivery-ledger rules below (the installed `orc-ledger` skill)."
+    )
+    return f"## Delivery ledger (orc)\n\n{declaration}\n\n{body}\n"
 
 
 BLOCK_BEGIN = "<!-- BEGIN ORC-LEDGER AGENTS BLOCK (orc onboard, TASK-M3D-001) -->"
@@ -259,8 +290,15 @@ def _step_skill(target: Path, *, force: bool) -> list[str]:
 # --- Step 4: agents-onboarding block -------------------------------------------
 
 
-def _step_agents_block(target: Path, *, agents_file: str, force: bool) -> str:
-    wrapped = _wrapped_block(agents_block_text())
+def _step_agents_block(
+    target: Path,
+    *,
+    agents_file: str,
+    force: bool,
+    profile: Optional[dict],
+    scripted_default: bool,
+) -> str:
+    wrapped = _wrapped_block(agents_block_text(profile=profile, scripted_default=scripted_default))
     path = target / agents_file
     if not path.exists():
         path.write_text(wrapped, encoding="utf-8")
@@ -331,14 +369,19 @@ def _verify(target: Path, *, journal_flag: Optional[str]) -> list[str]:
 
 
 def cmd_onboard(args: argparse.Namespace) -> int:
+    target = Path(args.path or ".")
     if args.print_agents_block:
-        # Prints only, writes nothing (the task card's third
-        # non-negotiable) -- every other step (gitignore, skill install,
-        # verification) is skipped entirely for this invocation.
-        print(_wrapped_block(agents_block_text()), end="")
+        # Prints only, writes nothing -- derive the declaration from the
+        # target profile when present, but perform no scaffold step.
+        profile = load_repo_profile(target / ".orc")
+        print(
+            _wrapped_block(
+                agents_block_text(profile=dict(profile) if profile is not None else None)
+            ),
+            end="",
+        )
         return 0
 
-    target = Path(args.path or ".")
     if not target.exists():
         raise validation_error(
             f"--path does not exist: {args.path}",
@@ -353,12 +396,23 @@ def cmd_onboard(args: argparse.Namespace) -> int:
         )
     target = target.resolve()
 
+    profile_was_absent = not (target / _PROFILE_REL).exists()
+
     print(f"onboard: {hyperlink_path(target)}")
     print(_step_gitignore(target))
     print(_step_profile(target, force=args.force))
+    profile = load_repo_profile(target / ".orc")
     for line in _step_skill(target, force=args.force):
         print(line)
-    print(_step_agents_block(target, agents_file=args.agents_file, force=args.force))
+    print(
+        _step_agents_block(
+            target,
+            agents_file=args.agents_file,
+            force=args.force,
+            profile=dict(profile) if profile is not None else None,
+            scripted_default=profile_was_absent or profile == {},
+        )
+    )
     for line in _verify(target, journal_flag=args.journal):
         print(line)
 
