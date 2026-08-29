@@ -102,6 +102,32 @@ correctness surface, not polish.
   ruling (2026-08-29); dev-only, one card when pulled, zero core impact
   (`CLAUDE.md` rule 8 unaffected). Not scheduled to a phase; pulled when
   someone wants it.
+  - **Port-durability reframe (operator direction, 2026-08-29):** these
+    are Python-only test tooling and are *discarded* at a language port
+    (Go or otherwise) — `mutmut` runs and `hypothesis` strategy files do
+    not cross the boundary, consistent with `P-009` (Python is the
+    disposable reference impl, not the product). Therefore do NOT invest
+    in them as standing infrastructure. IF pulled, pull them as a
+    **one-shot pre-port spec-hardening sweep**: run them hard against the
+    reference impl to surface untested invariants and contract gaps while
+    they are cheap to fix, with a HARD rule that every finding graduates
+    into the language-neutral layer — a `CONF-*` conformance requirement
+    or an `SCN-*` scenario — not merely a green Python test. The tooling
+    dies at the port; the conformance/scenario suite it fattened is what
+    a future Go impl inherits and must pass (`DELIVERY-STANCE`'s
+    "regressions graduate into tests/scenarios" rule, applied at the
+    contract layer). Properties `hypothesis` proves important (e.g.
+    paginate-then-concat-via-cursor equals the full list) are truths
+    about the *contract*, expressible as conformance requirements a Go
+    port re-expresses in its own property tool against the same bar.
+  - **The genuinely port-durable testing investment** (worth doing
+    regardless of the hardening tail): a language-neutral **conformance
+    kit** — portable JSON fixtures (golden journals, specimen replay
+    inputs) plus expected-projection assertions a non-Python
+    implementation can run without reading Python. Being done ad hoc
+    already (the `TASK-M3B-001` specimen fixtures, golden scenario
+    journals); formalizing it is the investment that pays at the port,
+    exactly where `mutmut`/`hypothesis` do not.
 
 ## Explicitly NOT in M3 (dormant registry, triggers unchanged)
 
