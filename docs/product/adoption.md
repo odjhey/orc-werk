@@ -54,6 +54,8 @@ The rungs above describe capability; this is the literal install path for each:
 
 For both the rung-1 checkout/module path and rung-2 package install, `orc version` reports which install form is actually running, including checkout git identity when available.
 
+The distributed `orc-ledger` skill is versioned: its installed frontmatter names the version, and the `CHANGELOG.md` installed alongside it explains what changed and why. Re-running `orc onboard` automatically upgrades a stale, unmodified copy while preserving an operator-modified copy unless `--force` is explicit; the verification report prints the installed skill version. Maintainers ship every skill behavior change with a version bump and changelog rationale, and the test suite enforces that discipline.
+
 ## 3. Tailor-fitting (the customization surfaces)
 
 Orc Werk is customized by *where* you plug into it, not by forking it. The surfaces below are listed in the order most adopters touch them.

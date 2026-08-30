@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import stat
@@ -22,6 +23,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from orc_werk.cli.onboard import (
     BLOCK_BEGIN,
@@ -29,6 +31,7 @@ from orc_werk.cli.onboard import (
     GITIGNORE_ENTRY,
     agents_block_text,
     cmd_onboard,
+    packaged_skill_changelog_text,
     packaged_skill_text,
 )
 from orc_werk.core.errors import CoreError
@@ -141,6 +144,7 @@ class CanonicalOriginTest(unittest.TestCase):
             self.assertIn(section, block)
         # the YAML frontmatter and the H1 title are gone
         self.assertNotIn("name: orc-ledger", block)
+        self.assertNotIn("version: 1", block)
         self.assertNotIn("# Working with the orc delivery ledger", block)
         # but the ledger's own intro paragraph (context-free content) survives
         self.assertIn("This repository tracks delivery through orc", block)
@@ -177,6 +181,8 @@ class OnboardScaffoldTest(unittest.TestCase):
 
         skill_path = self.target / ".agents" / "skills" / "orc-ledger" / "SKILL.md"
         self.assertEqual(skill_path.read_text(encoding="utf-8"), packaged_skill_text())
+        changelog_path = self.target / ".agents" / "skills" / "orc-ledger" / "CHANGELOG.md"
+        self.assertEqual(changelog_path.read_text(encoding="utf-8"), packaged_skill_changelog_text())
 
         # skill installed and RESOLVABLE: readable at the .claude/skills
         # discovery path a fresh Claude Code session would use.
@@ -195,6 +201,7 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertIn("skill: linked", output)
         self.assertIn("agents-block: created", output)
         self.assertIn("verification:", output)
+        self.assertIn("installed orc-ledger skill version: v1", output)
         self.assertIn("next:", output)
 
     def test_scripted_profile_declares_work_doer_mode_and_retires_preamble(self):
@@ -254,7 +261,8 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertEqual(agents_before.count(BLOCK_BEGIN), 1)
         self.assertIn("-- skip", output)
         self.assertIn("already present", output)
-        self.assertIn("already installed and matches the package source", output)
+        self.assertIn("skill: v1 already installed -- skip", output)
+        self.assertIn("skill changelog: already installed", output)
         self.assertIn("already links to the installed skill", output)
         self.assertIn("already present and up to date", output)
 
@@ -288,6 +296,33 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertNotEqual(replaced, modified)
         self.assertIn("This repository tracks delivery", replaced)
         self.assertIn("replaced (--force)", output)
+
+    def test_stale_known_skill_is_upgraded_without_force(self):
+        old_skill = "---\nname: orc-ledger\nversion: 1\ndescription: old\n---\n\n# Old\n"
+        new_skill = old_skill.replace("version: 1", "version: 2").replace("# Old", "# New")
+        old_hash = hashlib.sha256(old_skill.encode("utf-8")).hexdigest()
+        new_hash = hashlib.sha256(new_skill.encode("utf-8")).hexdigest()
+        changelog = (
+            f"## v2 -- 2026-08-30\n- Changed for a reason.\ncontent-sha256: {new_hash}\n\n"
+            f"## v1 -- 2026-08-29\n- Initial.\ncontent-sha256: {old_hash}\n"
+        )
+        skill_path = self.target / ".agents" / "skills" / "orc-ledger" / "SKILL.md"
+        skill_path.parent.mkdir(parents=True)
+        skill_path.write_text(old_skill, encoding="utf-8")
+        # Patch the exact globals used by the imported cmd_onboard function;
+        # another scenario module may reload the CLI module during a full run.
+        with mock.patch.dict(
+            cmd_onboard.__globals__,
+            {
+                "packaged_skill_text": lambda: new_skill,
+                "packaged_skill_changelog_text": lambda: changelog,
+            },
+        ):
+            exit_code, output = _onboard(path=str(self.target))
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(skill_path.read_text(encoding="utf-8"), new_skill)
+        self.assertEqual((skill_path.parent / "CHANGELOG.md").read_text(encoding="utf-8"), changelog)
+        self.assertIn("skill: upgraded v1 -> v2 (see .agents/skills/orc-ledger/CHANGELOG.md)", output)
 
     def test_operator_modified_skill_file_is_skipped_then_replaced_with_force(self):
         _onboard(path=str(self.target))
