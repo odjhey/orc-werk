@@ -68,8 +68,8 @@ class CliValidateTest(unittest.TestCase):
             journal.mkdir()
             (journal / "profile.json").write_text(
                 json.dumps({
-                    "execution": {"adapter": "acp", "agent": "pi", "cwd": str(root)},
-                    "candidate": {"adapter": "git", "repo_path": str(root)},
+                    "execution": {"adapter": "acp", "agent": "pi", "model": "model-x"},
+                    "candidate": {"adapter": "git"},
                     "mirror": {"adapter": "beads", "workspace": "/tmp/beads"},
                 }),
                 encoding="utf-8",
