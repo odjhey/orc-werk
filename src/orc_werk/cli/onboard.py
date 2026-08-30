@@ -69,9 +69,11 @@ a directory) -- every raise carries `next` guidance (issue #94).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.resources
 import importlib.util
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -85,6 +87,12 @@ from orc_werk.core.errors import validation_error
 
 _SKILL_PACKAGE = "orc_werk.skills"
 _SKILL_RESOURCE = ("orc-ledger", "SKILL.md")
+_CHANGELOG_RESOURCE = ("orc-ledger", "CHANGELOG.md")
+_VERSION_RE = re.compile(r"^version: ([0-9]+)$", re.MULTILINE)
+_CHANGELOG_ENTRY_RE = re.compile(
+    r"^## v([0-9]+) -- [0-9]{4}-[0-9]{2}-[0-9]{2}$.*?^content-sha256: ([0-9a-f]{64})$",
+    re.MULTILINE | re.DOTALL,
+)
 
 
 def packaged_skill_text() -> str:
@@ -98,6 +106,26 @@ def packaged_skill_text() -> str:
         .joinpath(*_SKILL_RESOURCE)
         .read_text(encoding="utf-8")
     )
+
+
+def packaged_skill_changelog_text() -> str:
+    """The hash registry and release notes packaged beside ``SKILL.md``."""
+    return (
+        importlib.resources.files(_SKILL_PACKAGE)
+        .joinpath(*_CHANGELOG_RESOURCE)
+        .read_text(encoding="utf-8")
+    )
+
+
+def _skill_version(skill_text: str) -> int:
+    match = _VERSION_RE.search(skill_text)
+    if match is None:
+        raise ValueError("orc-ledger SKILL.md has no integer frontmatter version")
+    return int(match.group(1))
+
+
+def _changelog_registry(changelog_text: str) -> dict[str, int]:
+    return {digest: int(version) for version, digest in _CHANGELOG_ENTRY_RE.findall(changelog_text)}
 
 
 def agents_block_text(
@@ -173,6 +201,7 @@ def _wrapped_block(block: str) -> str:
 
 GITIGNORE_ENTRY = ".orc/"
 _SKILL_REL = Path(".agents") / "skills" / "orc-ledger" / "SKILL.md"
+_CHANGELOG_REL = Path(".agents") / "skills" / "orc-ledger" / "CHANGELOG.md"
 _CLAUDE_SKILL_LINK_REL = Path(".claude") / "skills" / "orc-ledger"
 _CLAUDE_SKILL_LINK_TARGET = Path("..") / ".." / ".agents" / "skills" / "orc-ledger"
 DEFAULT_AGENTS_FILE = "AGENTS.md"
@@ -221,31 +250,71 @@ def _step_profile(target: Path, *, force: bool) -> str:
 # --- Step 3: skill install -----------------------------------------------------
 
 
-def _install_skill_file(target: Path, *, canonical: str, force: bool) -> str:
+def _install_skill_file(
+    target: Path, *, canonical: str, changelog: str, force: bool
+) -> tuple[str, bool]:
+    """Install the skill, returning its note and whether CHANGELOG must follow.
+
+    A byte hash recorded in the canonical changelog proves that a differing
+    file is an untouched prior release. Only that proof permits an automatic
+    replacement; unknown content retains the existing never-clobber behavior.
+    """
     path = target / _SKILL_REL
     path.parent.mkdir(parents=True, exist_ok=True)
+    new_version = _skill_version(canonical)
     if path.exists() and not path.is_symlink():
-        current = path.read_text(encoding="utf-8")
-        if current == canonical:
-            return f"skill: already installed and matches the package source at {hyperlink_path(path.resolve())} -- skip"
+        current_bytes = path.read_bytes()
+        canonical_bytes = canonical.encode("utf-8")
+        if current_bytes == canonical_bytes:
+            return f"skill: v{new_version} already installed -- skip", False
+        old_hash = hashlib.sha256(current_bytes).hexdigest()
+        old_version = _changelog_registry(changelog).get(old_hash)
+        if old_version is not None and old_version < new_version:
+            path.write_bytes(canonical_bytes)
+            return (
+                f"skill: upgraded v{old_version} -> v{new_version} "
+                "(see .agents/skills/orc-ledger/CHANGELOG.md)",
+                True,
+            )
         if not force:
             return (
                 f"skill: skip -- {hyperlink_path(path.resolve())} exists and differs from the package "
-                "source (operator-modified); rerun with --force to overwrite"
+                "source (operator-modified); rerun with --force to overwrite",
+                False,
             )
-        path.write_text(canonical, encoding="utf-8")
-        return f"skill: overwritten (--force) at {hyperlink_path(path.resolve())}"
+        path.write_bytes(canonical_bytes)
+        return f"skill: overwritten (--force) at {hyperlink_path(path.resolve())}", True
     if path.is_symlink() and not path.exists():
-        # A dangling symlink left over from something else: never silently
-        # replace without --force either.
         if not force:
             return (
                 f"skill: skip -- {hyperlink_path(path)} is a dangling symlink (operator-modified); "
-                "rerun with --force to replace it"
+                "rerun with --force to replace it",
+                False,
             )
         path.unlink()
     path.write_text(canonical, encoding="utf-8")
-    return f"skill: installed at {hyperlink_path(path.resolve())}"
+    return f"skill: installed at {hyperlink_path(path.resolve())}", True
+
+
+def _install_skill_changelog(target: Path, *, canonical: str, force: bool) -> str:
+    path = target / _CHANGELOG_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and not path.is_symlink():
+        if path.read_text(encoding="utf-8") == canonical:
+            return f"skill changelog: already installed at {hyperlink_path(path.resolve())} -- skip"
+        if not force:
+            return (
+                f"skill changelog: skip -- {hyperlink_path(path.resolve())} differs from the package "
+                "source (operator-modified); rerun with --force to overwrite"
+            )
+        path.write_text(canonical, encoding="utf-8")
+        return f"skill changelog: overwritten (--force) at {hyperlink_path(path.resolve())}"
+    if path.is_symlink() and not path.exists():
+        if not force:
+            return f"skill changelog: skip -- {hyperlink_path(path)} is a dangling symlink (operator-modified); rerun with --force to replace it"
+        path.unlink()
+    path.write_text(canonical, encoding="utf-8")
+    return f"skill changelog: installed at {hyperlink_path(path.resolve())}"
 
 
 def _install_skill_link(target: Path, *, force: bool) -> str:
@@ -281,10 +350,14 @@ def _install_skill_link(target: Path, *, force: bool) -> str:
 
 def _step_skill(target: Path, *, force: bool) -> list[str]:
     canonical = packaged_skill_text()
-    return [
-        _install_skill_file(target, canonical=canonical, force=force),
-        _install_skill_link(target, force=force),
-    ]
+    changelog = packaged_skill_changelog_text()
+    skill_note, replace_changelog = _install_skill_file(
+        target, canonical=canonical, changelog=changelog, force=force
+    )
+    changelog_note = _install_skill_changelog(
+        target, canonical=changelog, force=force or replace_changelog
+    )
+    return [skill_note, changelog_note, _install_skill_link(target, force=force)]
 
 
 # --- Step 4: agents-onboarding block -------------------------------------------
@@ -328,6 +401,13 @@ def _step_agents_block(
 
 def _verify(target: Path, *, journal_flag: Optional[str]) -> list[str]:
     lines = ["verification:"]
+
+    installed_skill = target / _SKILL_REL
+    try:
+        installed_version = f"v{_skill_version(installed_skill.read_text(encoding='utf-8'))}"
+    except (OSError, UnicodeError, ValueError):
+        installed_version = "unknown"
+    lines.append(f"  installed orc-ledger skill version: {installed_version}")
 
     orc_on_path = shutil.which("orc")
     if orc_on_path:
@@ -429,5 +509,6 @@ __all__ = [
     "GITIGNORE_ENTRY",
     "agents_block_text",
     "cmd_onboard",
+    "packaged_skill_changelog_text",
     "packaged_skill_text",
 ]
