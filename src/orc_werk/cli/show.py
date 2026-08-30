@@ -103,7 +103,7 @@ from orc_werk.core.facts import (
     FACT_EXEC_STARTED,
     FACT_WORK_CREATED,
 )
-from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, DeliveryProjection, WorkProjection
+from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, STATE_CANCELLED, DeliveryProjection, WorkProjection
 
 # Read-only presentation exit-code mirror of `status`'s contract
 # (`docs/playbooks/cli-usage.md`): `show` presents per-work state the same
@@ -525,7 +525,9 @@ def _render_work(
 
 def _summarize_states(projection: DeliveryProjection) -> tuple[bool, bool]:
     any_blocked = any(wp.state == STATE_BLOCKED for wp in projection.works.values())
-    any_non_accepted = any(wp.state != STATE_ACCEPTED for wp in projection.works.values())
+    any_non_accepted = any(
+        wp.state not in (STATE_ACCEPTED, STATE_CANCELLED) for wp in projection.works.values()
+    )
     return any_blocked, any_non_accepted
 
 

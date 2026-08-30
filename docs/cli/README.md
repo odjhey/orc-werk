@@ -247,6 +247,18 @@ orc --limit 0
 orc --state active
 ```
 
+### `orc cancel`
+
+```bash
+orc cancel <run-id> --work <work-id> --reason "<why>" [--journal <dir>]
+```
+
+Operator-only terminal closure. The command records attributed `DEC-CANCEL`
+and `FACT-WORK-CANCELLED` without a port Effect, then prints
+`state=CANCELLED`. It is legal from `READY`, `EXECUTING`, or `ASSURING` and
+conflicts from any terminal state. Both `--work` and `--reason` are required;
+the operator identity defaults to `$USER`/`whoami`.
+
 ### `orc status`
 
 ```text

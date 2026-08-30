@@ -365,6 +365,47 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def cmd_cancel(args: argparse.Namespace) -> int:
+    directory, run_id = _resolve_journal(args.target, args.journal)
+    _require_journal_file(directory, run_id, target=args.target)
+    if not args.reason:
+        raise validation_error(
+            "orc cancel requires --reason",
+            next_steps=[f'orc cancel {run_id} --work {args.work} --reason "<why>"'],
+        )
+    journal = JSONLJournal(directory)
+    history = journal.history(delivery_run_id=run_id)
+    intent_text = _intent_text(history) or ""
+    profile = load_repo_profile(directory) or {}
+    persisted_path = layout.config_path(directory, run_id)
+    persisted = load_config(str(persisted_path)) if persisted_path.exists() else {}
+    config = validate_config(deep_merge_config(profile, persisted))
+    run_config = build_run_config(config, max_attempts_override=None)
+    work_graph = MemoryWorkGraph()
+    execution_adapter = (config.get("execution") or {}).get("adapter", "scripted")
+    candidate_adapter = (config.get("candidate") or {}).get("adapter", "scripted")
+    if execution_adapter == "scripted" and candidate_adapter == "scripted":
+        execution, candidate, assurance = build_scripted_adapters(config, delivery_run_id=run_id)
+    else:
+        execution, candidate, assurance = build_dispatch_ports(
+            config, delivery_run_id=run_id, intent_text=intent_text, journal=journal
+        )
+    orchestrator = Orchestrator(
+        delivery_run_id=run_id,
+        journal=journal,
+        work_graph=work_graph,
+        execution=execution,
+        candidate=candidate,
+        assurance=assurance,
+        config=run_config,
+    )
+    by = os.environ.get("USER") or getpass.getuser()
+    orchestrator.cancel_work(work_id=args.work, reason=args.reason, by=by)
+    state = orchestrator.projection().works[args.work].state
+    print(f"cancelled work {args.work} in run {run_id}: state={state}")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     directory, run_id = _resolve_journal(args.target, args.journal)
     _require_journal_file(directory, run_id, target=args.target)
@@ -702,6 +743,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="operator identity for --abandon-work (default: $USER)",
     )
     dispatch_parser.set_defaults(func=cmd_dispatch)
+
+    cancel_parser = subparsers.add_parser(
+        "cancel",
+        help="operator-only terminal closure of non-terminal Work",
+        description="Record DEC-CANCEL and FACT-WORK-CANCELLED as a journal-only terminal closure.",
+        epilog='example:\n  orc cancel my-run-id --work work-1 --reason "operator closed healed specimen"',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    cancel_parser.add_argument("target", help="journal path (dir or <run>.jsonl) or bare run id")
+    cancel_parser.add_argument("--work", required=True, metavar="WORK_ID", help="work id to cancel")
+    cancel_parser.add_argument("--reason", default=None, metavar="TEXT", help="required free-form reason")
+    cancel_parser.add_argument(
+        "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
+    cancel_parser.set_defaults(func=cmd_cancel)
 
     status_parser = subparsers.add_parser(
         "status",

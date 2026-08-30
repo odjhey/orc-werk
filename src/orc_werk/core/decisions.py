@@ -1,9 +1,8 @@
 """Canonical Decisions (PROTOCOL-DECISIONS).
 
 A Decision is an attributable orchestration choice. IDs mirror
-`docs/protocol/decisions.md` verbatim. `DEC-ESCALATE` and `DEC-CANCEL` are
-declared (reserved) but MUST NOT be produced by v0/M0 policy
-(STATE-DELIVERY "Reserved states and decisions").
+`docs/protocol/decisions.md` verbatim. `DEC-ESCALATE` remains reserved;
+operator-reachable `DEC-CANCEL` MUST NOT be produced by v0/M0 policy.
 
 Every Decision satisfies INV-011 (attributable) and INV-012 (cites basis):
 `attribution` names what made the choice, `basis` is a tuple of portable
@@ -28,7 +27,7 @@ DEC_BLOCK = "DEC-BLOCK"
 # by `orc_werk.core.policy.decide`.
 DEC_ABANDON_ATTEMPT = "DEC-ABANDON-ATTEMPT"
 
-# Reserved: declared per PROTOCOL-DECISIONS, unreachable in v0/M0 (STATE-DELIVERY).
+# DEC-ESCALATE remains reserved. DEC-CANCEL is operator-reachable only.
 DEC_ESCALATE = "DEC-ESCALATE"
 DEC_CANCEL = "DEC-CANCEL"
 
@@ -50,11 +49,9 @@ PRODUCIBLE_DECISION_IDS = frozenset(
     {DEC_DISPATCH, DEC_RETRY, DEC_REQUEST_ASSURANCE, DEC_ACCEPT, DEC_BLOCK}
 )
 
-# Reachable in v0/M0 but recorded outside `decide()`, by the CLI operator
-# surface (`docs/playbooks/cli-usage.md`) via `Orchestrator.abandon_attempt`
-# -- never by v0 policy's deterministic lookup, and never by the ship/verify
-# agent observation path (`docs/playbooks/agent-cli-usage.md`).
-OPERATOR_DECISION_IDS = frozenset({DEC_ABANDON_ATTEMPT})
+# Reachable in v0/M0 but recorded outside `decide()`, by CLI operator
+# surfaces -- never by deterministic policy or the ship/verify agent path.
+OPERATOR_DECISION_IDS = frozenset({DEC_ABANDON_ATTEMPT, DEC_CANCEL})
 
 # v0 policy attribution is a fixed, deterministic identity (no operator/LLM
 # judgment in M0 -- see docs/product/thesis.md / M-000 "out of scope: LLM

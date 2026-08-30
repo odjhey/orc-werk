@@ -64,6 +64,7 @@ from orc_werk.core.errors import CoreError, not_found_error, validation_error
 from orc_werk.core.state import (
     STATE_ACCEPTED,
     STATE_ASSURING,
+    STATE_CANCELLED,
     STATE_BLOCKED,
     STATE_EXECUTING,
     STATE_READY,
@@ -443,7 +444,7 @@ def _summarize_states(projection: DeliveryProjection) -> tuple[bool, bool]:
     for wp in projection.works.values():
         if wp.state == STATE_BLOCKED:
             any_blocked = True
-        if wp.state != STATE_ACCEPTED:
+        if wp.state not in (STATE_ACCEPTED, STATE_CANCELLED):
             any_non_accepted = True
     return any_blocked, any_non_accepted
 

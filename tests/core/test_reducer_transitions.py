@@ -218,8 +218,8 @@ class AssuringInconclusiveTest(unittest.TestCase):
 
 
 class ReservedUnreachableTest(unittest.TestCase):
-    """FAILED/CANCELLED/DEC-ESCALATE/DEC-CANCEL/FX-NOTIFY-OPERATOR are declared but
-    unreachable by v0/M0 reducer/policy (STATE-DELIVERY "Reserved states and decisions")."""
+    """FAILED/DEC-ESCALATE/FX-NOTIFY-OPERATOR remain reserved; policy never
+    emits operator-only DEC-CANCEL."""
 
     def test_reducer_never_produces_reserved_states(self) -> None:
         all_states_seen = set()
@@ -231,15 +231,74 @@ class ReservedUnreachableTest(unittest.TestCase):
             for wp in proj.works.values():
                 all_states_seen.add(wp.state)
         self.assertNotIn(STATE_FAILED, all_states_seen)
-        self.assertNotIn(STATE_CANCELLED, all_states_seen)
 
-    def test_fact_work_cancelled_is_rejected(self) -> None:
+    def test_fact_work_cancelled_is_reachable(self) -> None:
         facts = fixtures.created_and_ready(delivery_run_id=DRID, work_id="w1")
-        with self.assertRaises(CoreError):
-            reduce(
-                facts + [make_fact(FACT_WORK_CANCELLED, delivery_run_id=DRID, work_id="w1")],
+        projection = reduce(
+            facts
+            + [
+                make_fact(
+                    FACT_WORK_CANCELLED,
+                    delivery_run_id=DRID,
+                    work_id="w1",
+                    reason="operator closure",
+                )
+            ],
+            delivery_run_id=DRID,
+        )
+        self.assertEqual(projection.works["w1"].state, STATE_CANCELLED)
+        self.assertTrue(projection.works["w1"].cancelled_confirmed)
+        self.assertEqual(projection.works["w1"].cancelled_reason, "operator closure")
+
+    def test_cancel_from_executing_and_assuring_is_clean_terminal(self) -> None:
+        paths = (
+            fixtures.dispatched(delivery_run_id=DRID, work_id="w1", execution_id="e1"),
+            fixtures.assuring(
                 delivery_run_id=DRID,
+                work_id="w1",
+                execution_id="e1",
+                candidate_id="c1",
+                fingerprint="fp1",
+                assurance_id="a1",
+            ),
+        )
+        for facts in paths:
+            cancelled = make_fact(
+                FACT_WORK_CANCELLED,
+                delivery_run_id=DRID,
+                work_id="w1",
+                reason="stop",
             )
+            first = reduce(facts + [cancelled], delivery_run_id=DRID)
+            replay = reduce(facts + [cancelled], delivery_run_id=DRID)
+            wp = first.works["w1"]
+            self.assertEqual(first.to_dict(), replay.to_dict())
+            self.assertEqual(wp.state, STATE_CANCELLED)
+            self.assertIsNone(wp.current_execution_id)
+            self.assertIsNone(wp.current_assurance_id)
+            self.assertFalse(wp.assurance_started_for_current)
+
+    def test_cancel_from_terminal_or_twice_conflicts(self) -> None:
+        terminal_paths = (
+            fixtures.happy_path_facts(delivery_run_id=DRID, work_id="w1"),
+            fixtures.attempt_budget_exhausted_facts(
+                delivery_run_id=DRID, work_id="w1", max_attempts=3
+            ),
+        )
+        cancelled = make_fact(
+            FACT_WORK_CANCELLED,
+            delivery_run_id=DRID,
+            work_id="w1",
+            reason="stop",
+        )
+        for facts in terminal_paths:
+            with self.assertRaises(CoreError) as caught:
+                reduce(facts + [cancelled], delivery_run_id=DRID, max_attempts=3)
+            self.assertEqual(caught.exception.error["error"], "ERR-CONFLICT")
+        ready = fixtures.created_and_ready(delivery_run_id=DRID, work_id="w1")
+        with self.assertRaises(CoreError) as caught:
+            reduce(ready + [cancelled, cancelled], delivery_run_id=DRID)
+        self.assertEqual(caught.exception.error["error"], "ERR-CONFLICT")
 
     def test_exec_settled_cancelled_has_no_transition_row(self) -> None:
         facts = fixtures.dispatched(delivery_run_id=DRID, work_id="w1", execution_id="e1")

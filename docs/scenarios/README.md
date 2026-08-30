@@ -20,3 +20,4 @@ The pure core must pass these scenarios with scripted/in-memory adapters before 
 8. [`SCN-008`](SCN-008-replay-budget.md) replay under the run's own retry budget
 9. [`SCN-009`](SCN-009-verdict-inheritance.md) verdict inheritance on candidate re-observation
 10. [`SCN-010`](SCN-010-abandon-attempt.md) abandoned-attempt recovery
+11. [`SCN-011`](SCN-011-cancel-work.md) operator cancellation
