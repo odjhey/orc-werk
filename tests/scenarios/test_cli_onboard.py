@@ -331,6 +331,20 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertEqual(profile.read_text(encoding="utf-8"), "{}\n")
         self.assertIn("profile: overwritten (--force)", output)
 
+    def test_agents_block_mode_mismatch_is_named_without_force(self):
+        _onboard(path=str(self.target), agents_block="slim")
+        agents_path = self.target / "AGENTS.md"
+        slim = agents_path.read_text(encoding="utf-8")
+
+        exit_code, output = _onboard(path=str(self.target), agents_block="full")
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(agents_path.read_text(encoding="utf-8"), slim, "must not replace without --force")
+        self.assertIn("mode mismatch: requested full", output)
+        self.assertIn("canonical slim block", output)
+        self.assertNotIn("operator-modified", output)
+        self.assertIn("--agents-block full --force", output)
+
     def test_operator_modified_agents_block_is_skipped_then_replaced_with_force(self):
         _onboard(path=str(self.target))
         agents_path = self.target / "AGENTS.md"
@@ -363,6 +377,9 @@ class OnboardScaffoldTest(unittest.TestCase):
         skill_path = self.target / ".agents" / "skills" / "orc-ledger" / "SKILL.md"
         skill_path.parent.mkdir(parents=True)
         skill_path.write_text(old_skill, encoding="utf-8")
+        changelog_path = skill_path.parent / "CHANGELOG.md"
+        old_changelog = "previous packaged changelog\n"
+        changelog_path.write_text(old_changelog, encoding="utf-8")
         # Patch the exact globals used by the imported cmd_onboard function;
         # another scenario module may reload the CLI module during a full run.
         with mock.patch.dict(
@@ -375,8 +392,12 @@ class OnboardScaffoldTest(unittest.TestCase):
             exit_code, output = _onboard(path=str(self.target))
         self.assertEqual(exit_code, 0)
         self.assertEqual(skill_path.read_text(encoding="utf-8"), new_skill)
-        self.assertEqual((skill_path.parent / "CHANGELOG.md").read_text(encoding="utf-8"), changelog)
+        self.assertEqual(changelog_path.read_text(encoding="utf-8"), changelog)
+        self.assertNotEqual(changelog_path.read_text(encoding="utf-8"), old_changelog)
         self.assertIn("skill: upgraded v1 -> v2 (see .agents/skills/orc-ledger/CHANGELOG.md)", output)
+        self.assertIn("skill changelog: refreshed for skill upgrade v1 -> v2", output)
+        changelog_note = next(line for line in output.splitlines() if "skill changelog:" in line)
+        self.assertNotIn("--force", changelog_note)
 
     def test_operator_modified_skill_file_is_skipped_then_replaced_with_force(self):
         _onboard(path=str(self.target))
