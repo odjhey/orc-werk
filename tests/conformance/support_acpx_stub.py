@@ -220,15 +220,17 @@ _STUB_SOURCE = textwrap.dedent(
         if rec is None or rec.get("closed"):
             _emit({"action": "status_snapshot", "status": "no-session", "summary": "no active session"})
         if rec.get("force_daemon_dead") or rec.get("daemon_dead"):
-            _emit({
+            snapshot = {
                 "action": "status_snapshot",
                 "status": "dead",
-                "pidAlive": rec.get("pid_alive"),
                 "hasLease": rec.get("has_lease"),
                 "exitCode": rec.get("last_agent_exit_code"),
                 "signal": rec.get("last_agent_exit_signal"),
                 "summary": "queue owner unavailable",
-            })
+            }
+            if not rec.get("omit_pid_alive"):
+                snapshot["pidAlive"] = rec.get("pid_alive")
+            _emit(snapshot)
         _emit({
             "action": "status_snapshot",
             "status": "alive",
@@ -392,13 +394,19 @@ class AcpxStubWorld:
         self._save(session_name, rec)
 
     def set_dead_status(
-        self, session_name: str, *, pid_alive: Any, has_lease: bool = True
+        self,
+        session_name: str,
+        *,
+        pid_alive: Any = None,
+        has_lease: bool = True,
+        omit_pid_alive: bool = False,
     ) -> None:
-        """Make status emit the acpx dead snapshot with explicit owner health."""
+        """Make status emit an acpx dead snapshot with configurable owner health."""
         rec = self.session_record(session_name)
         assert rec is not None, f"session {session_name!r} does not exist yet"
         rec["daemon_dead"] = True
         rec["pid_alive"] = pid_alive
+        rec["omit_pid_alive"] = omit_pid_alive
         rec["has_lease"] = has_lease
         self._save(session_name, rec)
 

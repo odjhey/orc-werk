@@ -55,7 +55,7 @@ Exactly the spike's "Determining unobservability" procedure, implemented in `Acp
 
 **Deliberately excluded from the "dead" determination**: `acpx pi status`'s `"no-session"` value. Empirically (this task's own probing, not just the spike), a brand-new session returns `"no-session"` from `pi status` in the narrow window before its queue owner has actually spawned — treating that as "dead" would misclassify a perfectly healthy, just-started turn as unobservable. A literal `"dead"` also describes a held lease whose IPC socket did not answer the current probe; it counts only with the `pidAlive == false` corroboration above. This is a conservative choice (favor reporting `running` over a false `failed`) consistent with footgun 6 and the ruling's "never a timeout" spirit: when genuinely ambiguous, wait for another observation rather than guess.
 
-At fix time, acpx 0.13.1's JSON output was re-probed via `acpx --format json pi status`: public fields use camelCase, but the installed CLI's `status_snapshot` omitted internal health fields `pidAlive` and `hasLease`. Such a payload is intentionally ambiguous under this rule; a future acpx version may expose `pidAlive`, which the adapter parses using that observed camelCase spelling.
+At fix time, acpx 0.13.1's JSON output was re-probed via `acpx --format json pi status`: public fields use camelCase, but the installed CLI's `status_snapshot` omitted internal health fields `pidAlive` and `hasLease`. Such a payload is intentionally ambiguous under this rule; a future acpx version may expose `pidAlive`, which the adapter parses using that observed camelCase spelling. On the installed acpx, which omits `pidAlive`, a SIGKILLed queue owner records no exit evidence, so genuine owner-death rests `EXECUTING` indefinitely per the delivery state machine's documented unobservability stance — recovery is an operator decision, never a guessed settlement.
 
 The true "daemon died with a turn genuinely outstanding" branch is not reproducible against live `acpx` on demand (the spike's own open question #2) — it is regression-tested exclusively via the stub-`acpx` harness (`tests/conformance/support_acpx_stub.py`, `AcpxStubWorld.mark_daemon_dead`), per the task card's acceptance item.
 
@@ -110,7 +110,10 @@ Emitted on every settled `inspect()` observation's `extensions`:
 - `transcript_ref`: `eventLog.active_path` — the stable, independently-readable stream file path. Ref-only, never dereferenced/inlined by this adapter (`EXT-EXECUTION-SESSION-V1-SEMANTICS`'s "never inlined" rule).
 - `profile.model`: `sessions show`'s `acpx.current_model_id`, when present.
 - `profile.effort`: the adapter's own pinned `thought_level` value (e.g. `"low"`), when pinning is enabled.
-- Unobservability-determined `failed` settlements add an `unobservability` object to this same payload containing the portable JSON evidence that discriminated the observation: the observed `lastAgentExitCode`/`lastAgentExitSignal` and, when queried, the status snapshot's `status`, `pidAlive`, and `exitCode`/`signal` fields. This is journal diagnostics for the adapter's settlement decision, not a new extension or a canonical field. The former undifferentiated `_orcw_unobservable` boolean remains removed.
+
+## `acp-settlement/v1` diagnostics
+
+Unobservability-determined `failed` settlements emit the registered adapter-local `acp-settlement/v1` extension as a sibling of `execution-session/v1`. Its `unobservability` object contains the portable JSON evidence that discriminated the observation: the observed `lastAgentExitCode`/`lastAgentExitSignal` and, when queried, the status snapshot's `status`, `pidAlive`, and `exitCode`/`signal` fields. Keeping diagnostics out of the published session-provenance schema is the issue #45 remedy: this evidence is journal diagnostics for the adapter's settlement decision, never a canonical field or an override of canonical outcome. The former undifferentiated `_orcw_unobservable` boolean remains removed.
 
 ## Capability honesty
 

@@ -576,7 +576,7 @@ class AcpExecution(ExecutionPort):
             extensions = self._session_provenance(
                 show, session_name, resume_ref=session_name
             )
-            extensions["execution-session/v1"]["unobservability"] = death_evidence
+            extensions["acp-settlement/v1"] = {"unobservability": death_evidence}
             return ExecutionObservation(
                 state=LIFECYCLE_STATE_SETTLED,
                 outcome="failed",

@@ -117,7 +117,9 @@ class AcpExecutionUnobservabilityTest(unittest.TestCase):
         self.assertEqual(observed.outcome, "failed")
         provenance = observed.extensions["execution-session/v1"]
         self.assertNotIn("_orcw_unobservable", provenance)
-        self.assertEqual(provenance["unobservability"]["lastAgentExitCode"], 137)
+        self.assertNotIn("unobservability", provenance)
+        evidence = observed.extensions["acp-settlement/v1"]["unobservability"]
+        self.assertEqual(evidence["lastAgentExitCode"], 137)
 
     def test_startup_window_dead_with_live_owner_runs_then_completes(self) -> None:
         ref, session_name = self._start(
@@ -149,7 +151,7 @@ class AcpExecutionUnobservabilityTest(unittest.TestCase):
         observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
         self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
         self.assertEqual(observed.outcome, "failed")
-        evidence = observed.extensions["execution-session/v1"]["unobservability"]
+        evidence = observed.extensions["acp-settlement/v1"]["unobservability"]
         self.assertEqual(evidence["status"], "dead")
         self.assertIs(evidence["pidAlive"], False)
 
@@ -162,8 +164,20 @@ class AcpExecutionUnobservabilityTest(unittest.TestCase):
         observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
         self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
         self.assertEqual(observed.outcome, "failed")
-        evidence = observed.extensions["execution-session/v1"]["unobservability"]
+        evidence = observed.extensions["acp-settlement/v1"]["unobservability"]
         self.assertEqual(evidence["lastAgentExitCode"], 9)
+
+    def test_dead_status_omitting_pid_alive_stays_running(self) -> None:
+        ref, session_name = self._start(
+            work_id="dead-no-pid", idempotency_key="dead-no-pid", states=["running"]
+        )
+        # Production-realistic acpx 0.13.1 shape: dead status, no pidAlive
+        # key, no stopReason, and null exit evidence.
+        self._world.set_dead_status(session_name, omit_pid_alive=True)
+
+        observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
+        self.assertIsNone(observed.outcome)
 
     def test_zero_exit_and_dead_with_live_owner_stays_running(self) -> None:
         ref, session_name = self._start(
