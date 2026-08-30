@@ -111,6 +111,22 @@ demo-run-1: states=ACCEPTED:1 | work-1=ACCEPTED attempts=1
 orc status <run-id> for next-step guidance on one run; orc report --index for the full unpaginated HTML index over /abs/path/.orc.
 ```
 
+### `orc version`
+
+```text
+usage: orc version [-h]
+```
+
+Prints the package version, the resolved directory from which `orc_werk` was imported, and the checkout's short git commit when that source is inside a git worktree. A modified worktree adds `+dirty`; a package install without git metadata reports `git: not a checkout` (and an unavailable git executable is reported honestly). The command is read-only, creates no journal, and exits `0`.
+
+```bash
+orc version
+```
+
+```text
+orc 0.1.0 (source /abs/path/src/orc_werk, git 2168b1a+dirty)
+```
+
 ### `orc config-schema`
 
 ```text

@@ -19,10 +19,13 @@ from __future__ import annotations
 import argparse
 import getpass
 import hashlib
+import importlib.metadata
 import json
 import os
 import shlex
+import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -164,6 +167,69 @@ def _persist_effective_config(path: Path, config: Mapping[str, Any]) -> None:
         path.write_text(json.dumps(dict(config), sort_keys=True, indent=2) + "\n", encoding="utf-8")
     except OSError:
         pass
+
+
+def _package_version(package_dir: Path) -> str:
+    """Return installed metadata first, then a source-checkout fallback."""
+    try:
+        return importlib.metadata.version("orc-werk")
+    except Exception:  # noqa: BLE001 -- identity reporting must always degrade
+        pass
+
+    try:
+        # Source layout is <repo>/src/orc_werk. Keep the fallback local to
+        # that shape so a wheel cannot borrow an unrelated ancestor's
+        # pyproject version.
+        for parent in (package_dir, *package_dir.parents[:2]):
+            pyproject = parent / "pyproject.toml"
+            if pyproject.is_file():
+                project = tomllib.loads(pyproject.read_text(encoding="utf-8")).get("project", {})
+                version = project.get("version")
+                if isinstance(version, str):
+                    return version
+    except Exception:  # noqa: BLE001 -- malformed/unreadable source metadata degrades
+        pass
+    return "unknown (not installed)"
+
+
+def _git_identity(package_dir: Path) -> str:
+    """Describe the checkout containing package_dir, without requiring git."""
+    command = ["git", "-C", str(package_dir)]
+    try:
+        sha = subprocess.run(
+            [*command, "rev-parse", "--short", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:  # noqa: BLE001 -- absent/broken git must not break a wheel
+        return "git unavailable"
+    if sha.returncode != 0 or not sha.stdout.strip():
+        return "git: not a checkout"
+    try:
+        status = subprocess.run(
+            [*command, "status", "--porcelain"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:  # noqa: BLE001 -- the known commit remains honest
+        return f"git {sha.stdout.strip()}"
+    dirty = "+dirty" if status.returncode == 0 and status.stdout else ""
+    return f"git {sha.stdout.strip()}{dirty}"
+
+
+def _version_report(package_dir: Optional[Path] = None) -> str:
+    source = (package_dir or Path(__file__).resolve().parent.parent).resolve()
+    return f"orc {_package_version(source)} (source {source}, {_git_identity(source)})"
+
+
+def cmd_version(_args: argparse.Namespace) -> int:
+    """Print package and source-checkout identity without touching the ledger."""
+    print(_version_report())
+    return 0
 
 
 def cmd_config_schema(_args: argparse.Namespace) -> int:
@@ -793,6 +859,13 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    version_parser = subparsers.add_parser(
+        "version",
+        help="print package and source-checkout identity",
+        description="Print the installed package version, imported source path, and git identity when available.",
+    )
+    version_parser.set_defaults(func=cmd_version)
 
     config_schema_parser = subparsers.add_parser(
         "config-schema",
