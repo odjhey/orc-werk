@@ -448,6 +448,23 @@ def _summarize_states(projection: DeliveryProjection) -> tuple[bool, bool]:
     return any_blocked, any_non_accepted
 
 
+def _index_state_rollup(projection: DeliveryProjection) -> tuple[str, bool]:
+    """Compact shared state summary for the text and HTML run indexes."""
+    counts: dict[str, int] = {}
+    for wp in projection.works.values():
+        counts[wp.state] = counts.get(wp.state, 0) + 1
+    summary = ",".join(f"{state}:{counts[state]}" for state in sorted(counts)) or "none"
+    any_blocked, any_non_accepted = _summarize_states(projection)
+    flags = []
+    if any_blocked:
+        flags.append("blocked")
+    if any(is_pending(wp) for wp in projection.works.values()):
+        flags.append("pending")
+    if flags:
+        summary += f" flags={','.join(flags)}"
+    return summary, any_blocked or any_non_accepted
+
+
 # ---------------------------------------------------------------------------
 # Rendering: run report
 # ---------------------------------------------------------------------------
@@ -724,13 +741,17 @@ def _render_index_row(
     run_id: str, history: Sequence[Mapping[str, Any]], projection: DeliveryProjection, *, href: str
 ) -> str:
     intent_text = _intent_text(history) or ""
+    rollup, _active = _index_state_rollup(projection)
     if projection.works:
-        chips = " ".join(_state_chip(wid, wp) for wid, wp in sorted(projection.works.items()))
+        chips = (
+            f"<strong>states={html.escape(rollup)}</strong><br>"
+            + " ".join(_state_chip(wid, wp) for wid, wp in sorted(projection.works.items()))
+        )
         attempts = ", ".join(
             f"{html.escape(wid)}: {wp.attempt_number}" for wid, wp in sorted(projection.works.items())
         )
     else:
-        chips = '<span class="muted">(no work)</span>'
+        chips = f'<strong>states={html.escape(rollup)}</strong><br><span class="muted">(no work)</span>'
         attempts = "-"
     return (
         "<tr>"
@@ -764,6 +785,18 @@ def _render_index_table(rows: Sequence[str], *, empty_message: str) -> str:
         '<div class="scroll"><table class="index-table"><thead><tr>'
         "<th>run</th><th>intent</th><th>works</th><th>attempts</th><th>report</th>"
         "</tr></thead><tbody>" + "\n".join(rows) + "</tbody></table></div>"
+    )
+
+
+def ordered_run_entries(directory: Path) -> list[tuple[str, Path]]:
+    """Discover journals newest-first by mtime, with run id as tiebreak."""
+    return sorted(
+        (
+            (run_id, layout.journal_path(directory, run_id))
+            for run_id in _available_run_ids(directory)
+        ),
+        key=lambda entry: (entry[1].stat().st_mtime, entry[0]),
+        reverse=True,
     )
 
 
@@ -809,7 +842,9 @@ def render_index(
         )
     journal = JSONLJournal(directory)
     scoped = run_ids is not None
-    ids = list(run_ids) if scoped else discover_run_ids(directory)
+    # `--all` supplies a scoped discovery order which is itself part of that
+    # surface. Only an unscoped `--index` adopts the shared activity order.
+    ids = list(run_ids) if scoped else [run_id for run_id, _path in ordered_run_entries(directory)]
     rows = []
     for run_id in ids:
         if flat_hrefs:

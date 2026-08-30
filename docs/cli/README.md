@@ -90,7 +90,8 @@ default location.
 ### `orc` (bare, no arguments)
 
 Prints a live text index of the default journal directory -- run id,
-per-work state, attempts, pending flags, one line per run,
+a per-run state-count rollup with explicit blocked/pending flags, plus
+per-work state, attempts, and pending detail, one line per run,
 most-recently-active first (truncated to the last 30 with a definitive
 `... showing last N of M runs` hint). An empty/missing journal dir prints a
 definitive `0 runs in <abs dir>` plus a dispatch affordance. `orc --help`
@@ -104,8 +105,8 @@ ORC_JOURNAL_DIR=./.orc orc   # explicit
 
 ```text
 2 runs in /abs/path/.orc:
-demo-pending: work-1=ACCEPTED attempts=1
-demo-run-1: work-1=ACCEPTED attempts=1
+demo-pending: states=EXECUTING:1 flags=pending | work-1=EXECUTING attempts=1 pending=execution-outcome
+demo-run-1: states=ACCEPTED:1 | work-1=ACCEPTED attempts=1
 orc status <run-id> for next-step guidance on one run; orc report --index for the full unpaginated HTML index over /abs/path/.orc.
 ```
 
@@ -225,13 +226,15 @@ adapters' own mapping docs: `docs/adapters/acp/mapping.md`,
 ### Bare `orc` run index
 
 ```text
-usage: orc [--limit LIMIT] [--before RUN_ID]
+usage: orc [--limit LIMIT] [--before RUN_ID] [--state active]
 ```
 
 The content-first invocation lists the most-recently-active runs in the
 default journal directory. It shows 30 by default; `--limit N` bounds the
 listing, `--limit 0` shows all runs, and `--before RUN_ID` selects runs
-older than that cursor in index order. A truncated listing names
+older than that cursor in index order. `--state active` includes runs with
+blocked or other non-accepted work; omitting it lists every run. An invalid
+state filter is canonical `ERR-VALIDATION`. A truncated listing names
 `orc --limit 0` and prints an exact next-(older)-page command;
 `orc report --index` is the secondary HTML view.
 The journal directory resolves from `ORC_JOURNAL_DIR`, then `./.orc`.
@@ -241,6 +244,7 @@ orc
 orc --limit 10
 orc --limit 10 --before oldest-run-id-from-the-current-page
 orc --limit 0
+orc --state active
 ```
 
 ### `orc status`
@@ -530,7 +534,9 @@ usage: orc report [-h] [--index] [--all] [--match MATCH] [--journal JOURNAL]
 ```
 
 Renders a self-contained HTML run report, or a local index page over a
-journal directory's runs (`TASK-M1-008`).
+journal directory's runs (`TASK-M1-008`). The unscoped HTML index uses the
+same most-recently-active-first journal-mtime order and per-run state rollup
+as bare `orc`; a scoped `--all` index preserves its caller-provided match order.
 
 | Flag | Default | Notes |
 |---|---|---|

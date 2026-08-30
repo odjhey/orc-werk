@@ -114,8 +114,12 @@ class BareIndexTest(unittest.TestCase):
             result = _run_cli(tmp_dir)
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
             self.assertIn("2 runs in", result.stdout)
-            self.assertIn("accepted-run: work-1=ACCEPTED attempts=1", result.stdout)
-            self.assertIn("pending-run: work-1=EXECUTING attempts=1 pending=execution-outcome", result.stdout)
+            self.assertIn("accepted-run: states=ACCEPTED:1 | work-1=ACCEPTED attempts=1", result.stdout)
+            self.assertIn(
+                "pending-run: states=EXECUTING:1 flags=pending | "
+                "work-1=EXECUTING attempts=1 pending=execution-outcome",
+                result.stdout,
+            )
 
     def test_index_truncates_with_definitive_exact_count_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -171,8 +175,46 @@ class BareIndexTest(unittest.TestCase):
             self.assertEqual(second_ids, ["run-3", "run-2", "run-1"])
             third_line = next(line for line in second.stdout.splitlines() if line.startswith("next (older) page:"))
             third = _run_cli(tmp_dir, *shlex.split(third_line.removeprefix("next (older) page: orc ")))
-            self.assertEqual([line for line in third.stdout.splitlines() if line.startswith("run-")], ["run-0: (no work recorded yet)"])
+            self.assertEqual(
+                [line for line in third.stdout.splitlines() if line.startswith("run-")],
+                ["run-0: states=none (no work recorded yet)"],
+            )
             self.assertNotIn("next (older) page:", third.stdout)
+
+    def test_state_filter_keeps_only_non_terminal_or_blocked_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            configs = {
+                "accepted": {
+                    "run_id": "accepted",
+                    "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "a"}, "assurance": {"verdict": "accepted"}}]},
+                },
+                "pending": {"run_id": "pending", "attempts": {}},
+                "blocked": {
+                    "run_id": "blocked",
+                    "max_attempts": 1,
+                    "attempts": {"work-1": [{"outcome": "failed"}]},
+                },
+            }
+            for run_id, config in configs.items():
+                path = tmp_dir / f"{run_id}.json"
+                path.write_text(json.dumps(config), encoding="utf-8")
+                _run_cli(tmp_dir, "dispatch", run_id, "--config", str(path))
+
+            result = _run_cli(tmp_dir, "--state", "active", "--limit", "0")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            run_lines = [line for line in result.stdout.splitlines() if line.startswith(tuple(configs))]
+            self.assertTrue(any(line.startswith("pending:") for line in run_lines))
+            self.assertTrue(any(line.startswith("blocked:") for line in run_lines))
+            self.assertFalse(any(line.startswith("accepted:") for line in run_lines))
+            self.assertIn("flags=pending", result.stdout)
+            self.assertIn("flags=blocked", result.stdout)
+
+    def test_invalid_state_filter_is_canonical_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _run_cli(Path(tmp), "--state", "mystery")
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(json.loads(result.stderr)["error"], "ERR-VALIDATION")
 
     def test_index_bad_cursor_is_canonical_validation_with_next(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
