@@ -117,6 +117,64 @@ class AcpExecutionUnobservabilityTest(unittest.TestCase):
         self.assertEqual(observed.outcome, "failed")
         provenance = observed.extensions["execution-session/v1"]
         self.assertNotIn("_orcw_unobservable", provenance)
+        self.assertEqual(provenance["unobservability"]["lastAgentExitCode"], 137)
+
+    def test_startup_window_dead_with_live_owner_runs_then_completes(self) -> None:
+        ref, session_name = self._start(
+            work_id="startup", idempotency_key="startup-window", states=["running"]
+        )
+        # Exact false-fail signature from #157: no result frame, null exit,
+        # and acpx's dead status while the lease-owning process is alive.
+        self._world.set_dead_status(session_name, pid_alive=True, has_lease=True)
+
+        fresh = AcpExecution(env=self._world.env())
+        observed = fresh.inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
+        self.assertIsNone(observed.outcome)
+
+        self._world.append_stream(
+            session_name,
+            {"jsonrpc": "2.0", "id": 10, "result": {"stopReason": "end_turn"}},
+        )
+        completed = fresh.inspect(execution_id=ref.id)
+        self.assertEqual(completed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(completed.outcome, "completed")
+
+    def test_dead_with_owner_process_gone_settles_failed(self) -> None:
+        ref, session_name = self._start(
+            work_id="dead-pid", idempotency_key="dead-pid", states=["running"]
+        )
+        self._world.set_dead_status(session_name, pid_alive=False, has_lease=True)
+
+        observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "failed")
+        evidence = observed.extensions["execution-session/v1"]["unobservability"]
+        self.assertEqual(evidence["status"], "dead")
+        self.assertIs(evidence["pidAlive"], False)
+
+    def test_nonzero_agent_exit_code_settles_failed(self) -> None:
+        ref, session_name = self._start(
+            work_id="dead-exit", idempotency_key="dead-exit", states=["running"]
+        )
+        self._world.set_agent_exit(session_name, exit_code=9)
+
+        observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "failed")
+        evidence = observed.extensions["execution-session/v1"]["unobservability"]
+        self.assertEqual(evidence["lastAgentExitCode"], 9)
+
+    def test_zero_exit_and_dead_with_live_owner_stays_running(self) -> None:
+        ref, session_name = self._start(
+            work_id="zero-exit", idempotency_key="zero-exit", states=["running"]
+        )
+        self._world.set_agent_exit(session_name, exit_code=0)
+        self._world.set_dead_status(session_name, pid_alive=True, has_lease=True)
+
+        observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
+        self.assertIsNone(observed.outcome)
 
     # -- branch 2: result present -> settle using it, regardless of status --
 

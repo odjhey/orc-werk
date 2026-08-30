@@ -131,6 +131,9 @@ _STUB_SOURCE = textwrap.dedent(
                 "daemon_dead": False,
                 "force_daemon_dead": False,
                 "last_agent_exit_code": None,
+                "last_agent_exit_signal": None,
+                "pid_alive": True,
+                "has_lease": True,
                 "closed": False,
                 # Issue #57 cross-process idempotency signal: null/empty
                 # until the first prompt is queued, matching real acpx's
@@ -188,7 +191,7 @@ _STUB_SOURCE = textwrap.dedent(
                 rec["turns_materialized"] += 1
                 rec["current_turn_show_calls"] = 0
         _save(name, rec)
-        last_exit_code = 1 if rec.get("force_daemon_dead") else rec.get("last_agent_exit_code")
+        last_exit_code = rec.get("last_agent_exit_code")
         _emit(
             {
                 "schema": "acpx.session.v1",
@@ -198,6 +201,7 @@ _STUB_SOURCE = textwrap.dedent(
                 "closed": rec["closed"],
                 "eventLog": {"active_path": str(_stream_path(name))},
                 "lastAgentExitCode": last_exit_code,
+                "lastAgentExitSignal": rec.get("last_agent_exit_signal"),
                 "acpx": {
                     "current_model_id": rec["current_model_id"],
                     "available_models": rec["available_models"],
@@ -216,8 +220,22 @@ _STUB_SOURCE = textwrap.dedent(
         if rec is None or rec.get("closed"):
             _emit({"action": "status_snapshot", "status": "no-session", "summary": "no active session"})
         if rec.get("force_daemon_dead") or rec.get("daemon_dead"):
-            _emit({"action": "status_snapshot", "status": "dead", "summary": "daemon exited"})
-        _emit({"action": "status_snapshot", "status": "alive", "summary": "queue owner healthy"})
+            _emit({
+                "action": "status_snapshot",
+                "status": "dead",
+                "pidAlive": rec.get("pid_alive"),
+                "hasLease": rec.get("has_lease"),
+                "exitCode": rec.get("last_agent_exit_code"),
+                "signal": rec.get("last_agent_exit_signal"),
+                "summary": "queue owner unavailable",
+            })
+        _emit({
+            "action": "status_snapshot",
+            "status": "alive",
+            "pidAlive": rec.get("pid_alive"),
+            "hasLease": rec.get("has_lease"),
+            "summary": "queue owner healthy",
+        })
 
 
     def cmd_cancel(name):
@@ -373,6 +391,27 @@ class AcpxStubWorld:
         rec["script"][index] = dict(entry)
         self._save(session_name, rec)
 
+    def set_dead_status(
+        self, session_name: str, *, pid_alive: Any, has_lease: bool = True
+    ) -> None:
+        """Make status emit the acpx dead snapshot with explicit owner health."""
+        rec = self.session_record(session_name)
+        assert rec is not None, f"session {session_name!r} does not exist yet"
+        rec["daemon_dead"] = True
+        rec["pid_alive"] = pid_alive
+        rec["has_lease"] = has_lease
+        self._save(session_name, rec)
+
+    def set_agent_exit(
+        self, session_name: str, *, exit_code: Optional[int], signal: Optional[str] = None
+    ) -> None:
+        """Record sessions show's durable agent-exit evidence."""
+        rec = self.session_record(session_name)
+        assert rec is not None, f"session {session_name!r} does not exist yet"
+        rec["last_agent_exit_code"] = exit_code
+        rec["last_agent_exit_signal"] = signal
+        self._save(session_name, rec)
+
     def mark_daemon_dead(self, session_name: str, *, exit_code: int = 1) -> None:
         """Directly force a session's daemon into the "confirmed dead,
         nothing more will ever be recorded" state -- the deterministic
@@ -381,6 +420,7 @@ class AcpxStubWorld:
         rec = self.session_record(session_name)
         assert rec is not None, f"session {session_name!r} does not exist yet"
         rec["force_daemon_dead"] = True
+        rec["pid_alive"] = False
         rec["last_agent_exit_code"] = exit_code
         self._save(session_name, rec)
 
