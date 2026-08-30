@@ -253,6 +253,10 @@ class CandidateRowsUnitTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].resolve, ResolveCommand.none())
 
+    def test_candidate_branch_is_preserved_when_present(self) -> None:
+        rows = _candidate_rows(self._history({"head_sha": "abc123", "branch": "feature/verdict"}))
+        self.assertEqual(json.loads(rows[0].value), {"head_sha": "abc123", "branch": "feature/verdict"})
+
     def test_pr_alone_yields_gh_resolve_display_but_not_executable(self) -> None:
         # issue #94 folded item / PR #104 verifier recommendation:
         # `gh pr view <pr>` is surfaced whenever the candidate carries `pr`,
@@ -424,6 +428,7 @@ class RefsEvidenceAndCandidateCliTest(unittest.TestCase):
             out = result.stdout
 
             self.assertIn("evidence-plain-string", out)
+            self.assertIn("verdict=accepted", out)
             self.assertIn("(resolve: -)", out)  # the plain-string evidence row
             self.assertIn("no-mistakes axi logs --run r1 --step review --full", out)
             self.assertIn("git -C /abs/some-repo show abc123def456 --stat", out)
