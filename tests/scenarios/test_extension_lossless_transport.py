@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from orc_werk.adapters.jsonl.journal import JSONLJournal
@@ -35,8 +36,10 @@ from orc_werk.adapters.scripted.assurance import ScriptedAssurance
 from orc_werk.adapters.scripted.candidate import ScriptedCandidate, fingerprint_of
 from orc_werk.adapters.scripted.execution import ScriptedExecution
 from orc_werk.app import Orchestrator, RunConfig, default_single_work_plan
+from orc_werk.core.facts import FACT_ASSURE_SETTLED
 from orc_werk.core.state import STATE_ACCEPTED
 
+from tests.core import fixtures
 from tests.scenarios.support import predicted_execution_id
 
 DRID = "ext-transport"
@@ -95,6 +98,58 @@ class ConfigExecutionExtensionTransportTest(unittest.TestCase):
         history = self._dispatch_history(None)
         settled = next(record for record in history if record["id"] == "FACT-EXEC-SETTLED")
         self.assertEqual(settled.get("extensions", {}), {})
+
+
+class AssuranceContextProjectionTest(unittest.TestCase):
+    """SCN-012 / CONF-EXT-003/006/007: a real settled Fact specimen."""
+
+    def test_base_round_trips_losslessly_and_never_changes_projection(self) -> None:
+        payload = {
+            "assurance-context/v1": {
+                "base": {
+                    "identity": "base-immutable-012345",
+                    "ref": "master",
+                    "relation": "merge-base",
+                    "derivation_ref": "opaque://derive/base",
+                    "trial_merge": "clean",
+                }
+            }
+        }
+        plain_facts = fixtures.happy_path_facts(delivery_run_id=DRID, work_id=WORK_ID)
+        contextual_facts = [
+            replace(fact, extensions=payload) if fact.id == FACT_ASSURE_SETTLED else fact
+            for fact in plain_facts
+        ]
+
+        with tempfile.TemporaryDirectory() as plain_tmp, tempfile.TemporaryDirectory() as context_tmp:
+            plain_journal = JSONLJournal(Path(plain_tmp))
+            context_journal = JSONLJournal(Path(context_tmp))
+            for fact in plain_facts:
+                plain_journal.append_fact(fact)
+            for fact in contextual_facts:
+                context_journal.append_fact(fact)
+
+            contextual_projection = context_journal.load_projection(delivery_run_id=DRID)
+            plain_projection = plain_journal.load_projection(delivery_run_id=DRID)
+            contextual_work = contextual_projection.works[WORK_ID]
+            plain_work = plain_projection.works[WORK_ID]
+            # The projection may retain opaque extensions for lossless
+            # inspection; every canonical delivery-state/verdict field is
+            # nevertheless identical (CONF-EXT-006/007).
+            self.assertEqual(contextual_work.state, plain_work.state)
+            self.assertEqual(contextual_work.completed_confirmed, plain_work.completed_confirmed)
+            self.assertEqual(contextual_work.current_candidate_id, plain_work.current_candidate_id)
+            self.assertEqual(contextual_work.current_candidate_fingerprint(), plain_work.current_candidate_fingerprint())
+            self.assertEqual(
+                contextual_work.assurances[-1]["verdict"],
+                plain_work.assurances[-1]["verdict"],
+            )
+            settled = next(
+                record
+                for record in context_journal.history(delivery_run_id=DRID)
+                if record["id"] == FACT_ASSURE_SETTLED
+            )
+            self.assertEqual(settled["extensions"], payload)
 
 
 class ExtensionLosslessTransportTest(unittest.TestCase):

@@ -36,7 +36,7 @@ Every real adapter must pass the same conformance requirements as its in-memory 
 - `CONF-ASSURE-004`: inconclusive remains distinct from rejected/accepted.
 
 ### Extensions
-See [extension conformance](extensions.md) for `CONF-EXT-001` through `CONF-EXT-006`.
+See [extension conformance](extensions.md) for `CONF-EXT-001` through `CONF-EXT-007`.
 
 ### Journal
 - `CONF-JOURNAL-001`: append order is deterministic.

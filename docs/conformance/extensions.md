@@ -33,3 +33,7 @@ A provider advertising `CAP-ASSURE-STRUCTURED-FINDINGS` for `review-findings/v1`
 ## CONF-EXT-006 — Core ignorance
 
 Core reducer/state-machine tests prove that changing an extension payload while keeping canonical facts identical does not change generic core transitions or decisions under a policy that does not explicitly consume that extension.
+
+## CONF-EXT-007 — Assurance audit-base opacity
+
+A component transporting `assurance-context/v1` preserves the verifier-attested base canonically unchanged through `FACT-ASSURE-SETTLED.extensions` and journal round-trip. The base never changes canonical projection, verdict binding, transitions, or Decisions when present, absent, or changed. See `SCN-012`.

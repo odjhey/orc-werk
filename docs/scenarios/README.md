@@ -21,3 +21,4 @@ The pure core must pass these scenarios with scripted/in-memory adapters before 
 9. [`SCN-009`](SCN-009-verdict-inheritance.md) verdict inheritance on candidate re-observation
 10. [`SCN-010`](SCN-010-abandon-attempt.md) abandoned-attempt recovery
 11. [`SCN-011`](SCN-011-cancel-work.md) operator cancellation
+12. [`SCN-012`](SCN-012-assurance-audit-base.md) assurance audit base

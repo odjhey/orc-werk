@@ -42,6 +42,7 @@ from orc_werk.cli.refs import (
     RESOLVE_OUTPUT_CAP_BYTES,
     RefRow,
     ResolveCommand,
+    _assurance_context_rows,
     _candidate_rows,
     _command_field,
     _evidence_ref_rows,
@@ -169,6 +170,71 @@ class EvidenceRefRowsUnitTest(unittest.TestCase):
     def test_absent_evidence_refs_yields_no_rows(self) -> None:
         history = [{"kind": "fact", "id": "FACT-ASSURE-SETTLED", "data": {"assurance_id": "a1", "verdict": "accepted"}}]
         self.assertEqual(_evidence_ref_rows(history), [])
+
+
+class AssuranceContextRowsUnitTest(unittest.TestCase):
+    def test_recorded_base_surfaces_identity_and_ref(self) -> None:
+        base = {"identity": "base-sha-immutable", "ref": "master", "relation": "merge-base"}
+        history = [{
+            "kind": "fact",
+            "id": "FACT-ASSURE-SETTLED",
+            "data": {"verdict": "accepted"},
+            "extensions": {"assurance-context/v1": {"base": base}},
+        }]
+        rows = _assurance_context_rows(history)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].kind, "base")
+        self.assertEqual(json.loads(rows[0].value), base)
+        self.assertEqual(rows[0].verdict, "accepted")
+        self.assertEqual(rows[0].resolve, ResolveCommand.none())
+
+    def test_absent_extension_yields_no_false_base_row(self) -> None:
+        history = [{
+            "kind": "fact",
+            "id": "FACT-ASSURE-SETTLED",
+            "data": {"verdict": "accepted"},
+            "extensions": {"review-findings/v1": {"findings": []}},
+        }]
+        self.assertEqual(_assurance_context_rows(history), [])
+
+
+class AssuranceContextCliTest(unittest.TestCase):
+    def _dispatch_and_refs(self, directory: Path, run_id: str, extensions: dict | None) -> str:
+        assurance = {"verdict": "accepted"}
+        if extensions is not None:
+            assurance["extensions"] = extensions
+        config = {
+            "attempts": {
+                "work-1": [{
+                    "outcome": "completed",
+                    "candidate": {"label": "C1"},
+                    "assurance": assurance,
+                }]
+            }
+        }
+        path = directory / f"{run_id}.json"
+        path.write_text(json.dumps(config), encoding="utf-8")
+        dispatched = _run_cli(directory, "dispatch", "audit base", "--config", str(path), "--run-id", run_id)
+        self.assertEqual(dispatched.returncode, 0, msg=dispatched.stdout + dispatched.stderr)
+        rendered = _run_cli(directory, "refs", run_id)
+        self.assertEqual(rendered.returncode, 0, msg=rendered.stdout + rendered.stderr)
+        return rendered.stdout
+
+    def test_refs_surfaces_base_and_absence_renders_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            with_base = self._dispatch_and_refs(
+                directory,
+                "with-base",
+                {"assurance-context/v1": {"base": {"identity": "deadbeef-immutable", "ref": "master"}}},
+            )
+            self.assertIn("base", with_base)
+            self.assertIn("deadbeef-immutable", with_base)
+            self.assertIn('"ref":"master"', with_base)
+
+            without_base = self._dispatch_and_refs(directory, "without-base", None)
+            self.assertNotIn("deadbeef-immutable", without_base)
+            self.assertNotRegex(without_base, r"(?m)^\[\d+\] base\s")
 
 
 class ExecutionSessionRowsUnitTest(unittest.TestCase):
