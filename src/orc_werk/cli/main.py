@@ -172,6 +172,37 @@ def cmd_config_schema(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Validate and preview a dispatch config without constructing run machinery."""
+    config = load_config(args.config)
+
+    plan = config.get("plan")
+    if isinstance(plan, Mapping):
+        works = [str(work.get("work_id")) for work in plan.get("works", ()) if isinstance(work, Mapping)]
+    else:
+        works = ["work-1 (default)"]
+    print(f"PASS: {args.config}")
+    print(f"plan works: {', '.join(works) if works else '(none)'}")
+    print(
+        "adapters: "
+        f"execution={(config.get('execution') or {}).get('adapter', 'scripted')} "
+        f"candidate={(config.get('candidate') or {}).get('adapter', 'scripted')} "
+        f"assurance={(config.get('assurance') or {}).get('adapter', 'scripted')}"
+    )
+    for work_id, entries in (config.get("attempts") or {}).items():
+        for index, entry in enumerate(entries):
+            print(f"attempts.{work_id}[{index}]: keys=[{', '.join(sorted(entry))}]")
+            assurance = entry.get("assurance")
+            if isinstance(assurance, Mapping):
+                verdict = assurance.get("verdict", "(absent)")
+                extensions = assurance.get("extensions") or {}
+                print(
+                    f"attempts.{work_id}[{index}].assurance: verdict={verdict}, "
+                    f"extensions=[{', '.join(sorted(extensions))}]"
+                )
+    return 0
+
+
 def cmd_dispatch(args: argparse.Namespace) -> int:
     journal_dir = resolve_journal_dir(args.journal)
     existing_run_ids = set(layout.discover_run_ids(journal_dir))
@@ -732,6 +763,18 @@ def build_parser() -> argparse.ArgumentParser:
         description="Print the canonical dispatch config reference.",
     )
     config_schema_parser.set_defaults(func=cmd_config_schema)
+
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="validate and preview a dispatch config without journaling",
+        description="Validate a portable JSON dispatch config with the same schema checks used "
+        "by dispatch, then preview the plan, adapters, and attempt entries. Read-only: creates "
+        "no journal, ports, or orchestrator.",
+        epilog="example:\n  orc validate ./.orc/my-run/config.json",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    validate_parser.add_argument("config", help="path to a portable JSON dispatch config")
+    validate_parser.set_defaults(func=cmd_validate)
 
     dispatch_parser = subparsers.add_parser(
         "dispatch",
