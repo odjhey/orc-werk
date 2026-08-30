@@ -234,8 +234,9 @@ def render_next_block(
                     f"  - work {work_id} rests at a candidate-observation conflict "
                     "verdict inheritance could not resolve (STATE-DELIVERY item 9): "
                     "operator-only -- orc dispatch --run-id "
-                    f"{run_id} --journal {journal_dir} --abandon-work {work_id} "
-                    '--abandon-reason "<why>"'
+                    f"{run_id} --journal {journal_dir} --config "
+                    f"{config_path or journal_dir / run_id / 'config.json'} "
+                    f"--abandon-work {work_id} --abandon-reason \"<why>\""
                 )
         elif key == "pending-execution":
             lines.append(f"  - record the execution outcome for work(s): {ids_text}")
@@ -271,8 +272,9 @@ def render_next_block(
                     f"  - work {work_id}'s bound assurance is {wp.current_assurance_id} "
                     f"(candidate head {head_text}); if it stays pending unexpectedly "
                     "long, operator recovery is: orc dispatch --run-id "
-                    f"{run_id} --journal {journal_dir} --abandon-work {work_id} "
-                    '--abandon-reason "<why>"'
+                    f"{run_id} --journal {journal_dir} --config "
+                    f"{config_path or journal_dir / run_id / 'config.json'} "
+                    f"--abandon-work {work_id} --abandon-reason \"<why>\""
                 )
         elif key.startswith("blocked-"):
             reason = key[len("blocked-") :]

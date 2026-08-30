@@ -75,9 +75,9 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
                 "--abandon-by",
                 "test-operator",
             )
-            # Attempt 1 of 3 abandoned -- budget remains: back to EXECUTING
-            # pending for attempt 2 (a fresh dispatch was journaled in the
-            # same invocation), so this still exits pending (3), not an error.
+            # Attempt 1 of 3 abandoned -- budget remains, but this journal-only
+            # invocation stops at READY. The real-config dispatch below owns
+            # opening attempt 2.
             self.assertEqual(dispatch2.returncode, 3, msg=dispatch2.stdout + dispatch2.stderr)
 
             journal = JSONLJournal(tmp_dir / ".orc")
@@ -89,6 +89,10 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
             facts = [r for r in history if r["kind"] == "fact" and r["id"] == FACT_ATTEMPT_ABANDONED]
             self.assertEqual(len(facts), 1)
             self.assertEqual(facts[0]["data"]["reason"], "adapter session orphaned")
+            starts = [r for r in history if r["kind"] == "effect" and r["id"] == "FX-START-EXECUTION"]
+            self.assertEqual(len(starts), 1, "abandon must not mint attempt 2 through stub ports")
+            self.assertIn("now READY", dispatch2.stdout)
+            self.assertIn("next attempt starts on the next dispatch", dispatch2.stdout)
             # No verdict was ever fabricated for attempt 1's candidate (INV-003).
             settled = [r for r in history if r["kind"] == "fact" and r["id"] == "FACT-ASSURE-SETTLED"]
             self.assertEqual(settled, [])
@@ -101,6 +105,30 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
             dispatch3 = _run_cli(tmp_dir, "dispatch", "--run-id", "abandon-cli", "--config", str(config_path))
             self.assertEqual(dispatch3.returncode, 0, msg=dispatch3.stdout + dispatch3.stderr)
             self.assertIn("state=ACCEPTED", dispatch3.stdout)
+            resumed = journal.history(delivery_run_id="abandon-cli")
+            starts = [r for r in resumed if r["kind"] == "effect" and r["id"] == "FX-START-EXECUTION"]
+            self.assertEqual(len(starts), 2)
+
+    def test_budget_exhausted_abandon_rests_blocked_without_next_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "cfg.json"
+            config_path.write_text(json.dumps({
+                "run_id": "abandon-exhausted",
+                "max_attempts": 1,
+                "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "A"}}]},
+            }), encoding="utf-8")
+            initial = _run_cli(root, "dispatch", "exhaust abandon", "--config", str(config_path))
+            self.assertEqual(initial.returncode, 3, msg=initial.stdout + initial.stderr)
+            abandoned = _run_cli(
+                root, "dispatch", "--run-id", "abandon-exhausted",
+                "--abandon-work", "work-1", "--abandon-reason", "unsettleable",
+            )
+            self.assertEqual(abandoned.returncode, 1, msg=abandoned.stdout + abandoned.stderr)
+            self.assertIn("now BLOCKED", abandoned.stdout)
+            history = JSONLJournal(root / ".orc").history(delivery_run_id="abandon-exhausted")
+            starts = [r for r in history if r["kind"] == "effect" and r["id"] == "FX-START-EXECUTION"]
+            self.assertEqual(len(starts), 1)
 
     def test_abandon_briefed_acp_run_does_not_construct_provider_ports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -151,6 +179,35 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
 
 
 class AbandonIllegalCliTest(unittest.TestCase):
+    def test_unknown_abandon_work_is_canonical_not_found(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps({"run_id": "abandon-unknown"}), encoding="utf-8")
+            _run_cli(tmp_dir, "dispatch", "x", "--config", str(config_path))
+
+            result = _run_cli(
+                tmp_dir,
+                "dispatch",
+                "--run-id",
+                "abandon-unknown",
+                "--abandon-work",
+                "mistyped-work",
+                "--abandon-reason",
+                "unsettleable",
+            )
+
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            payload = json.loads(result.stderr)
+            self.assertEqual(payload["error"], "ERR-NOT-FOUND")
+            self.assertEqual(
+                payload["message"],
+                "no such work in run 'abandon-unknown': 'mistyped-work'",
+            )
+            self.assertEqual(payload["next"], ["orc status abandon-unknown"])
+            self.assertNotIn("KeyError", result.stderr)
+            self.assertNotIn("ERR-PERMANENT", result.stderr)
+
     def test_missing_abandon_reason_is_validation_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
@@ -229,6 +286,52 @@ class CandidateConflictAffordanceTest(unittest.TestCase):
         self.assertIn("operator-only", text)
         self.assertIn(f"--abandon-work work-1", text)
         self.assertIn("--abandon-reason", text)
+        self.assertIn("--config /tmp/.orc/affordance-conflict/config.json", text)
+
+
+class CandidateDivergenceWarningTest(unittest.TestCase):
+    def _dispatch_bound(self, root: Path, candidate: dict) -> tuple[Path, subprocess.CompletedProcess]:
+        path = root / "cfg.json"
+        path.write_text(json.dumps({
+            "run_id": "divergence-run",
+            "attempts": {"work-1": [{"outcome": "completed", "candidate": candidate}]},
+        }), encoding="utf-8")
+        result = _run_cli(root, "dispatch", "bind candidate", "--config", str(path))
+        self.assertEqual(result.returncode, 3, msg=result.stdout + result.stderr)
+        return path, result
+
+    def test_changed_bound_candidate_warns_without_changing_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path, _ = self._dispatch_bound(root, {"head_sha": "sha-A"})
+            path.write_text(json.dumps({
+                "run_id": "divergence-run",
+                "attempts": {"work-1": [{"outcome": "completed", "candidate": {"head_sha": "sha-B"}}]},
+            }), encoding="utf-8")
+            result = _run_cli(root, "dispatch", "--run-id", "divergence-run", "--config", str(path))
+            self.assertEqual(result.returncode, 3, msg=result.stdout + result.stderr)
+            self.assertIn("warning: config candidate (sha-B)", result.stderr)
+            self.assertIn("bound attempt-1 candidate (sha-A)", result.stderr)
+            self.assertIn("--abandon-work work-1", result.stderr)
+            self.assertIn('--abandon-reason "<why>"', result.stderr)
+
+    def test_matching_candidate_and_unbound_candidate_do_not_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path, _ = self._dispatch_bound(root, {"head_sha": "sha-A"})
+            matching = _run_cli(root, "dispatch", "--run-id", "divergence-run", "--config", str(path))
+            self.assertNotIn("warning: config candidate", matching.stderr)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "cfg.json"
+            path.write_text(json.dumps({
+                "run_id": "unbound-run",
+                "attempts": {"work-1": [{"candidate": {"head_sha": "sha-B"}}]},
+            }), encoding="utf-8")
+            unbound = _run_cli(root, "dispatch", "unbound candidate", "--config", str(path))
+            self.assertEqual(unbound.returncode, 3, msg=unbound.stdout + unbound.stderr)
+            self.assertNotIn("warning: config candidate", unbound.stderr)
 
 
 if __name__ == "__main__":
