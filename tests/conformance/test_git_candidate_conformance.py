@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from orc_werk.adapters.git import GitDiffCandidate
 from orc_werk.core.errors import CoreError
@@ -109,6 +110,76 @@ class GitDiffCandidateConformanceTest(unittest.TestCase):
         self.assertEqual(current.work_id, "w1")
         identified = self.adapter.identify(execution_id="e1")
         self.assertEqual(current.fingerprint, identified.fingerprint)
+
+    # -- post-settlement identification confirms a quiescent ref. --
+
+    def test_race_marker_does_not_change_bound_subject_fingerprint(self) -> None:
+        first = self.adapter.identify(execution_id="before").subject_identity["head_sha"]
+        (self.repo / "b.txt").write_text("tail-end write")
+        _git(["add", "."], cwd=self.repo)
+        _git(["commit", "-q", "-m", "agent final commit"], cwd=self.repo)
+        later = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=self.repo, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        reads = iter([first, later, later])
+
+        class AdvancingHeadCandidate(GitDiffCandidate):
+            def __init__(self, *, repo_path: str) -> None:
+                super().__init__(repo_path=repo_path)
+                self._settle_wait = lambda _seconds: None
+
+            def _git(self, args: list[str], *, cwd: Path) -> str | None:
+                if args[:2] == ["rev-parse", "--verify"]:
+                    return next(reads)
+                return super()._git(args, cwd=cwd)
+
+        adapter = AdvancingHeadCandidate(repo_path=str(self.repo))
+
+        with mock.patch("sys.stderr") as stderr:
+            candidate = adapter.identify(execution_id="race")
+
+        self.assertEqual(candidate.subject_identity["head_sha"], later)
+        clean = self.adapter.current(work_id="clean-observation")
+        self.assertNotIn("extensions", clean.subject_identity)
+        self.assertEqual(candidate.fingerprint, clean.fingerprint)
+        marker = candidate.subject_identity["extensions"]["git-candidate-identification/v1"]
+        self.assertTrue(marker["worktree_advanced"])
+        self.assertEqual(marker["initial_head"], first)
+        self.assertEqual(marker["bound_head"], later)
+        self.assertIn(f"({first}..{later}); bound {later}", "".join(call.args[0] for call in stderr.write.call_args_list))
+
+    def test_identify_retries_while_index_lock_is_present(self) -> None:
+        locks = iter([True, False])
+        waits: list[float] = []
+        adapter = GitDiffCandidate(
+            repo_path=str(self.repo),
+            lock_present=lambda _repo: next(locks),
+            settle_wait=waits.append,
+        )
+        expected = self.adapter.current(work_id="w").subject_identity["head_sha"]
+
+        candidate = adapter.identify(execution_id="locked")
+
+        self.assertEqual(candidate.subject_identity["head_sha"], expected)
+        self.assertEqual(len(waits), 2)
+        self.assertNotIn("extensions", candidate.subject_identity)
+
+    def test_stable_identification_retains_common_path_shape_and_identity(self) -> None:
+        waits: list[float] = []
+        adapter = GitDiffCandidate(repo_path=str(self.repo), settle_wait=waits.append)
+        current = adapter.current(work_id="stable")
+        identified = adapter.identify(execution_id="stable")
+
+        self.assertEqual(identified.subject_identity, current.subject_identity)
+        self.assertEqual(identified.fingerprint, current.fingerprint)
+        self.assertEqual(len(waits), 1)
+        self.assertNotIn("extensions", identified.subject_identity)
+
+    def test_race_marker_is_absent_when_repeated_reads_are_stable(self) -> None:
+        adapter = GitDiffCandidate(repo_path=str(self.repo), settle_wait=lambda _seconds: None)
+        candidate = adapter.identify(execution_id="stable")
+        self.assertNotIn("extensions", candidate.subject_identity)
 
     # -- subject_identity shape / rationale. --
 
