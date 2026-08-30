@@ -79,8 +79,13 @@ Source: `mattpocock/skills` writing-for-agents.
 - **A missing seam is itself a finding.** If no correct seam exists to write the
   regression test that would catch the bug, that absence is the finding — flag
   the architecture rather than write a shallow, false-confidence test.
+- **Verify a fix on both sides.** A fix claim needs the baseline to reproduce
+  the symptom twice (with state reset between attempts) *and* the patched build
+  to clear it twice under the same state check. No twice-reproduced baseline
+  means there is no baseline — do not claim the fix works. When verification
+  contradicts expectation, suspect the observation method before the system.
 
-Source: `mattpocock/skills` diagnosing-bugs.
+Source: `mattpocock/skills` diagnosing-bugs; `cursor/plugins` pstack benny.
 
 ## 3. Verifying work
 
@@ -96,8 +101,21 @@ identity derivation, run-the-claims, hunt tautological tests, mutation smoke).
   speculative generality, shotgun surgery, and the like) that the verifier
   applies even when the repo docs are silent — a portable checklist of judgment
   calls, distinct from tooling-enforced lint.
+- **Name the one safety fact, and grade the evidence.** Most scary changes are
+  safe because of a *single* fact; identify it and spend the effort proving that
+  fact rather than enumerating maybes. Grade every load-bearing claim on the
+  evidence ladder — asserted → cited at file:line → failure path walked → ran
+  the real code → reproduced in the running system — say where each claim
+  stopped, and mark anything below "ran the real code" as unproven. A green
+  gate is an *input* to a verdict, never the verdict.
+- **Publish dismissals; cap the musts.** Triage findings into act-on and
+  dismissed, and ship the dismissed list *with one-line rationales* — it is the
+  operator's override channel, not noise. More than a handful of must-fix
+  findings means the filter failed. One asymmetry: a lone security or
+  correctness finding earns extra scrutiny, never the consensus discount.
 
-Source: `mattpocock/skills` code-review.
+Source: `mattpocock/skills` code-review; `cursor/plugins` pstack blast-radius,
+interrogate.
 
 ## 4. Generating a design for a contested decision
 
@@ -114,8 +132,15 @@ before you price.
   menu. Then consequence-price the recommendation (options, named costs,
   mitigations) for the operator per `PLAYBOOK-WATCHTOWER`. The operator wants a
   strong read they can veto, not a survey.
+- **Graft from the losers; read divergence as a brief smell.** Mine the losing
+  candidates for one or two portable ideas and fold them into the winner by
+  hand, keeping the rejection notes — they are the highest-signal part of the
+  record. Wild divergence across candidates means the framing was
+  under-specified: reframe and regenerate, never average. Convergence means
+  ship the consensus and skip the graft.
 
-Source: `mattpocock/skills` design-it-twice. Compose with our fan-out habit.
+Source: `mattpocock/skills` design-it-twice; `cursor/plugins` pstack arena.
+Compose with our fan-out habit.
 
 ## 5. Artifacts and records
 
@@ -147,9 +172,20 @@ Source: `mattpocock/skills` design-it-twice. Compose with our fan-out habit.
 - **Stamp provenance on a captured item.** A backlog entry, deferred-decision, or
   finding carries where it came from — repo, session, date — so it stays
   traceable months later.
+- **Encode a lesson at the strongest rung available.** When several mechanisms
+  would enforce a lesson, pick the strongest: unrepresentable state, then a
+  CI-failing check, then a canonical helper, then a runtime check, and prose
+  last — because agents template off whatever guard the surrounding code shows,
+  so a weak guard becomes the next copy's pattern. Capturing without routing,
+  and fixing without generalizing, are the named failure modes.
+- **Audit the trail against the transcript at hand-off.** Before handing off,
+  reconcile the recorded decision trail with what actually happened: cut
+  aspirational entries, add unlogged pivots — fix the log, not the story. The
+  record's truthfulness is itself a deliverable.
 
 Sources: `mattpocock/skills` to-spec, ADR-0002, changesets; `davidondrej/skills`
-handoff, save-idea; our own reference-first doctrine.
+handoff, save-idea; `cursor/plugins` pstack encode-lessons-in-structure,
+show-me-your-work; our own reference-first doctrine.
 
 ## Relationship to the other docs
 
