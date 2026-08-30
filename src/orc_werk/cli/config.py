@@ -732,7 +732,13 @@ def load_repo_profile(journal_dir: Path) -> Optional[Mapping[str, Any]]:
     profile_path = journal_dir.resolve() / "profile.json"
     if not profile_path.exists():
         return None
-    return load_config(str(profile_path))
+    # A repo profile is a partial overlay, not an independently runnable
+    # dispatch config.  Keep portable-object and top-level typo checks here,
+    # but defer adapter-conditional completeness to validate_config after the
+    # profile is composed with persisted and per-run layers.
+    profile = _read_config_mapping(profile_path)
+    _validate_top_level_keys(profile)
+    return profile
 
 
 def deep_merge_config(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> Mapping[str, Any]:

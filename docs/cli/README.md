@@ -144,31 +144,36 @@ orc config-schema
 ### `orc validate`
 
 ```text
-usage: orc validate [-h] config
+usage: orc validate [-h] [--journal JOURNAL] [--no-profile] config
 ```
 
-Validates one portable JSON dispatch config using the same schema validator
-as `dispatch`, without creating a journal, ports, or an orchestrator. A valid
-config exits `0` and prints a would-ingest preview: plan work ids, selected
-execution/candidate/assurance adapters, every attempt entry's keys, and any
-scripted assurance verdict and extension ids. This is the read-only check to
-run after editing a persisted run config and before re-dispatching it.
+Composes one portable JSON dispatch config over the repo profile and applies
+the same deep-merge precedence and schema validator as `dispatch`. The journal
+directory, used only to locate `profile.json`, resolves via `--journal` >
+`ORC_JOURNAL_DIR` > `./.orc`. Pass `--no-profile` to deliberately validate the
+file alone. A valid config exits `0` and prints a would-ingest preview: the
+contributing layers, plan work ids, selected execution/candidate/assurance
+adapters, every attempt entry's keys, and any scripted assurance verdict and
+extension ids. This is the read-only check to run after editing a per-run
+config and before dispatching it.
 
 ```bash
 orc validate ./.orc/demo-pending/config.json
+orc validate run.json --journal ./.orc --no-profile  # standalone file check
 ```
 
 ```text
-PASS: ./.orc/demo-pending/config.json
+PASS: run.json
+layers: profile: /abs/path/.orc/profile.json (candidate, execution) + config: run.json
 plan works: work-1 (default)
-adapters: execution=scripted candidate=scripted assurance=scripted
-attempts.work-1[0]: keys=[assurance, candidate, outcome]
-attempts.work-1[0].assurance: verdict=accepted, extensions=[review-findings/v1]
+adapters: execution=acp candidate=git assurance=scripted
 ```
 
-Invalid JSON or an unknown/malformed config key exits `2` and prints the
-canonical `ERR-VALIDATION` JSON, including the offending config path. The
-command never reads or writes `.orc/` run state.
+When no profile is present, validation is identical to standalone behavior
+and the layer note names only the config. Invalid JSON or an unknown/malformed
+composed config key exits `2` and prints canonical `ERR-VALIDATION` JSON,
+including the offending config path. The command reads a profile when present
+but never writes run state or creates the journal directory.
 
 ### `orc dispatch`
 
@@ -661,8 +666,9 @@ honestly on its own line:
    (create the file if absent, append the entry if missing, skip-with-note
    if already present). Append-only: an existing line is never rewritten.
 2. **repo-default profile** -- write an empty starter `<path>/.orc/profile.json`; an exact match skips, a mismatch skips-with-note, and `--force` overwrites. This is scaffolding only and never creates or writes a journal.
-3. **skill install** -- write the orc-ledger skill's content to
-   `<path>/.agents/skills/orc-ledger/SKILL.md`, and link
+3. **skill install** -- write the versioned orc-ledger skill and its release
+   history to `<path>/.agents/skills/orc-ledger/SKILL.md` and the adjacent
+   `CHANGELOG.md`, and link
    `<path>/.claude/skills/orc-ledger` to it (a relative symlink,
    `../../.agents/skills/orc-ledger`, resolving correctly from the link's
    own directory -- the issue #63 lesson) so Claude Code's project-skill
@@ -685,8 +691,8 @@ honestly on its own line:
    depth surface. `--print-agents-block` prints this block to stdout and
    performs no other step -- writes nothing at all -- for pasting into
    whatever agent-instructions file a repo already uses.
-5. **install verification** -- honestly reports: `orc` on `$PATH`
-   (`shutil.which`) vs. this interpreter's own ability to import
+5. **install verification** -- honestly reports the installed orc-ledger
+   skill version; `orc` on `$PATH` (`shutil.which`) vs. this interpreter's own ability to import
    `orc_werk` (module form); the journal directory `--journal`/
    `$ORC_JOURNAL_DIR`/`./.orc` precedence would resolve to, anchored at
    `--path`; and the optional `bd` binary's presence (Beads mirror,
@@ -722,11 +728,13 @@ orc onboard --print-agents-block           # prints only, writes nothing
 Keep that repository's journal local through `ORC_JOURNAL_DIR` or the local `./.orc` default. The shared workspace is only the write-only mirror destination; read the portfolio with `bd`'s own CLI. See `PLAYBOOK-PORTFOLIO-COCKPIT` for the sanctioned read-back commands and boundary.
 
 **Idempotent and non-destructive by construction**: every step compares
-what it would write against what is already there. An exact match is a
-`skip` note (no write). A target that already exists with *different*
-content -- the skill file, the `.claude/skills` link, or the agents-block
-markers -- is `skip-with-note` by default (never a hard failure) unless
-`--force` is given, which overwrites/replaces it in place, also reported.
+what it would write against what is already there. An exact skill match is
+reported with its version and skipped. A differing skill whose content hash
+is recorded as a prior release in the packaged changelog is a clean stale
+copy, so `orc onboard` upgrades it and its changelog automatically. An
+unknown hash is operator-modified and remains `skip-with-note` by default
+(never a hard failure) unless `--force` is given. The same never-clobber rule
+applies to the `.claude/skills` link, changelog, and agents-block markers.
 Errors (`--path` missing or not a directory) are canonical `ERR-VALIDATION`
 with `next` guidance (issue #94), exit `2`; every other exit is `0`.
 

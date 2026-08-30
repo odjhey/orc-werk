@@ -26,4 +26,4 @@ where = ["src"]
 # package, never a second hand-maintained copy embedded in Python
 # source. `.agents/skills/orc-ledger/SKILL.md` is a relative symlink to
 # this exact file (see src/orc_werk/skills/__init__.py's docstring).
-"orc_werk.skills" = ["orc-ledger/SKILL.md"]
+"orc_werk.skills" = ["orc-ledger/SKILL.md", "orc-ledger/CHANGELOG.md"]
