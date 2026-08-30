@@ -179,6 +179,35 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
 
 
 class AbandonIllegalCliTest(unittest.TestCase):
+    def test_unknown_abandon_work_is_canonical_not_found(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps({"run_id": "abandon-unknown"}), encoding="utf-8")
+            _run_cli(tmp_dir, "dispatch", "x", "--config", str(config_path))
+
+            result = _run_cli(
+                tmp_dir,
+                "dispatch",
+                "--run-id",
+                "abandon-unknown",
+                "--abandon-work",
+                "mistyped-work",
+                "--abandon-reason",
+                "unsettleable",
+            )
+
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            payload = json.loads(result.stderr)
+            self.assertEqual(payload["error"], "ERR-NOT-FOUND")
+            self.assertEqual(
+                payload["message"],
+                "no such work in run 'abandon-unknown': 'mistyped-work'",
+            )
+            self.assertEqual(payload["next"], ["orc status abandon-unknown"])
+            self.assertNotIn("KeyError", result.stderr)
+            self.assertNotIn("ERR-PERMANENT", result.stderr)
+
     def test_missing_abandon_reason_is_validation_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)

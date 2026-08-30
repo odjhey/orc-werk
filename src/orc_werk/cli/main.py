@@ -440,7 +440,8 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 ],
             )
         by = args.abandon_by or os.environ.get("USER") or getpass.getuser()
-        abandoned_attempt = orchestrator.projection().works[args.abandon_work].attempt_number
+        wp = orchestrator.projection().works.get(args.abandon_work)
+        abandoned_attempt = wp.attempt_number if wp else None
         orchestrator.abandon_attempt(work_id=args.abandon_work, reason=args.abandon_reason, by=by)
 
     # Snapshot the durable boundary so the output below can identify only
