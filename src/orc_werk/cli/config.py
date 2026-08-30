@@ -158,7 +158,9 @@ run/work state into a shared `bd` database
   itself carries no brief/description field -- `CONTRACT-DURABILITY`'s
   multi-work-brief row stays outside core) keyed by `work_id`. Each entry
   feeds both that work's ACP execution prompt and its Beads mirror issue
-  description. A work with no entry falls back to the run's own intent text
+  description. When `briefs[work]` is set, that entry -- not the run intent
+  text -- is the prompt sent to the executor for that work. A work with no
+  entry falls back to the run's own intent text
   for both uses -- never an empty prompt/description when the run-level
   intent text is available (see the mapping doc's brief-fallback note).
 - A degraded mirror (one or more `bd` invocations failed) is NEVER a
@@ -172,6 +174,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
@@ -851,6 +854,13 @@ class _IntentPromptExecution(ExecutionPort):
     def _filled_request(self, request: Mapping[str, Any], *, work_id: Optional[str] = None) -> dict[str, Any]:
         filled = dict(request)
         if not filled.get("prompt"):
+            brief = self._briefs.get(work_id)
+            if brief:
+                print(
+                    f"note: work '{work_id}' prompt = its briefs entry; "
+                    "the run intent text is NOT sent to the executor for this work.",
+                    file=sys.stderr,
+                )
             filled["prompt"] = self._briefs.get(work_id, self._intent_text)
         if self._model is not None and "model" not in filled:
             filled["model"] = self._model

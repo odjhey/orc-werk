@@ -18,11 +18,13 @@ Two groups of coverage:
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -223,16 +225,23 @@ class AcpPromptWiringTest(unittest.TestCase):
             )
         return execution, inner
 
-    def test_multi_work_briefs_supply_distinct_prompts(self) -> None:
+    def test_multi_work_briefs_supply_distinct_prompts_and_visible_stderr_notes(self) -> None:
         execution, inner = self._build(briefs={"a": "brief a", "b": "brief b"})
+        stdout = io.StringIO()
+        stderr = io.StringIO()
 
-        execution.start(work_id="a", execution_request={}, idempotency_key="ka")
-        execution.start(work_id="b", execution_request={}, idempotency_key="kb")
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            execution.start(work_id="a", execution_request={}, idempotency_key="ka")
+            execution.start(work_id="b", execution_request={}, idempotency_key="kb")
 
         self.assertEqual(
             [start["execution_request"]["prompt"] for start in inner.starts],
             ["brief a", "brief b"],
         )
+        for work_id in ("a", "b"):
+            self.assertIn(f"note: work '{work_id}' prompt = its briefs entry", stderr.getvalue())
+        self.assertIn("run intent text is NOT sent to the executor", stderr.getvalue())
+        self.assertNotIn("prompt = its briefs entry", stdout.getvalue())
 
     def test_absent_brief_entry_falls_back_to_intent(self) -> None:
         execution, inner = self._build(briefs={"a": "brief a"})
@@ -241,12 +250,15 @@ class AcpPromptWiringTest(unittest.TestCase):
 
         self.assertEqual(inner.starts[0]["execution_request"]["prompt"], "run intent")
 
-    def test_single_work_without_briefs_is_unchanged(self) -> None:
+    def test_single_work_without_briefs_is_unchanged_and_emits_no_note(self) -> None:
         execution, inner = self._build()
+        stderr = io.StringIO()
 
-        execution.start(work_id="work-1", execution_request={}, idempotency_key="k1")
+        with redirect_stderr(stderr):
+            execution.start(work_id="work-1", execution_request={}, idempotency_key="k1")
 
         self.assertEqual(inner.starts[0]["execution_request"]["prompt"], "run intent")
+        self.assertNotIn("prompt = its briefs entry", stderr.getvalue())
 
 
 class AcpWiringSmokeTest(unittest.TestCase):
