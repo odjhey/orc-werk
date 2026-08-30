@@ -48,9 +48,9 @@ Design summary (full rationale: `docs/adapters/acp/mapping.md`):
   source for the field this adapter needs.
 - Unobservability (the task card's ruling) is a deterministic check, never
   a timeout: reconnect via `sessions show`/stream-tail first; settle
-  `failed` only when the daemon is confirmed dead (`lastAgentExitCode`
-  populated as an actual int, or `acpx pi status`'s `status` field reading
-  literally `"dead"`) with no recorded result for the outstanding turn.
+  `failed` only when daemon death is corroborated (a nonzero
+  `lastAgentExitCode`, an exit signal, or status `"dead"` together with
+  `pidAlive == false`) with no recorded result for the outstanding turn.
 """
 
 from __future__ import annotations
@@ -566,37 +566,60 @@ class AcpExecution(ExecutionPort):
                 extensions=self._session_provenance(show, session_name, resume_ref=session_name),
             )
 
-        if self._daemon_confirmed_dead(show, session_name):
+        death_evidence = self._daemon_confirmed_dead(show, session_name)
+        if death_evidence is not None:
             # The task card's abandonment ruling: settle failed ONLY on a
             # deterministic unobservability signal, never a timeout. This
             # is an honest observation of a lost outcome, not a
             # fabrication (STATE-DELIVERY mechanical fact sequencing item
             # 6's normalization family).
+            extensions = self._session_provenance(
+                show, session_name, resume_ref=session_name
+            )
+            extensions["acp-settlement/v1"] = {"unobservability": death_evidence}
             return ExecutionObservation(
                 state=LIFECYCLE_STATE_SETTLED,
                 outcome="failed",
-                extensions=self._session_provenance(
-                    show, session_name, resume_ref=session_name
-                ),
+                extensions=extensions,
             )
 
         return ExecutionObservation(state=LIFECYCLE_STATE_RUNNING)
 
-    def _daemon_confirmed_dead(self, show: Mapping[str, Any], session_name: str) -> bool:
-        # Primary signal: sessions show's own durable session record.
+    def _daemon_confirmed_dead(
+        self, show: Mapping[str, Any], session_name: str
+    ) -> Optional[dict[str, Any]]:
+        # Primary signal: sessions show's own durable session record. Exit
+        # zero is idle in acpx's resolveStatusState, not evidence of death.
         last_exit_code = show.get("lastAgentExitCode")
-        if isinstance(last_exit_code, int):
-            return True
-        # Secondary, corroborating signal: acpx's own liveness snapshot.
-        # "no-session" is deliberately NOT treated as dead here -- it is
-        # also returned for a brand-new session before its queue owner has
-        # spawned, which would make a fresh in-flight turn look dead. Only
-        # a literal "dead" status counts (never a timeout, per the ruling).
+        last_exit_signal = show.get("lastAgentExitSignal")
+        show_evidence = {
+            "lastAgentExitCode": last_exit_code,
+            "lastAgentExitSignal": last_exit_signal,
+        }
+        if type(last_exit_code) is int and last_exit_code != 0:
+            return show_evidence
+        if last_exit_signal is not None:
+            return show_evidence
+
+        # acpx 0.13.1's public JSON keys are camelCase. Direct probing at
+        # fix time found that status_snapshot omits its internal pidAlive
+        # and hasLease fields; missing/unparseable pidAlive therefore stays
+        # ambiguous. If a compatible CLI exposes pidAlive, only literal
+        # false corroborates literal dead. A lone dead can mean the lease
+        # owner is alive but its startup/busy IPC socket did not answer.
         try:
             status = self._run(["status", "-s", session_name])
         except _AcpxInvocationError:
-            return False
-        return status.get("status") == "dead"
+            return None
+        if status.get("status") != "dead" or status.get("pidAlive") is not False:
+            return None
+        return {
+            **show_evidence,
+            "status": status.get("status"),
+            "pidAlive": status.get("pidAlive"),
+            "exitCode": status.get("exitCode"),
+            "signal": status.get("signal"),
+        }
 
     def _session_provenance(
         self,

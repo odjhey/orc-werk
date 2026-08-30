@@ -17,6 +17,7 @@ All extensions MUST satisfy `CONTRACT-EXTENSIONS`.
 - `EXT-REVIEW-FINDINGS-V1` — structured code-review findings under `review-findings/v1`
 - `EXT-EXECUTION-SESSION-V1` — durable provider session/resume provenance under `execution-session/v1`
 - `EXT-ASSURANCE-CONTEXT-V1` — audit base/provenance under `assurance-context/v1`
+- `EXT-ACP-SETTLEMENT-V1` — ACP adapter-local settlement diagnostics under `acp-settlement/v1`
 
 ## Superseded extensions
 
