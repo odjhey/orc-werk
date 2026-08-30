@@ -64,7 +64,8 @@ An attempt entry's `assurance` object accepts exactly these keys:
 - `extensions` (optional): a versioned-extension map transported opaquely
   under `CONTRACT-EXTENSIONS`. Per `PLAYBOOK-AGENT-CLI` section 4, a
   verifier records substantive findings here as
-  `{"review-findings/v1": {...}}`.
+  `{"review-findings/v1": {...}}`; `{"assurance-context/v1": {...}}` is
+  also accepted for verifier-attested audit-base provenance.
 
 - `plan` is an optional `PORT-WORK-001` multi-work plan (needed to exercise
   a fan-in run like `SCN-005` from the CLI); defaults to

@@ -33,7 +33,8 @@ only when present -- absence is never fabricated (`CLAUDE.md` #3):
    <transcript_ref>` -- `EXT-EXECUTION-SESSION-V1-SCHEMA`'s ref-only rule
    guarantees this is an opaque reference the schema documents as
    typically an absolute path, so `cat` works from any cwd).
-2. `FACT-ASSURE-SETTLED`'s `evidence_refs` (`docs/protocol/facts.md`,
+2. `FACT-ASSURE-SETTLED`'s `evidence_refs` and optional
+   `assurance-context/v1` extension (`docs/protocol/facts.md`,
    `PROTOCOL-FACTS`): one `evidence` row per entry, value rendered
    verbatim. When an entry is a structured (mapping) reference carrying an
    explicit command-ish field -- literally named `command`, or any key
@@ -107,6 +108,7 @@ FACT_EXEC_SETTLED = "FACT-EXEC-SETTLED"
 FACT_ASSURE_SETTLED = "FACT-ASSURE-SETTLED"
 FX_IDENTIFY_CANDIDATE = "FX-IDENTIFY-CANDIDATE"
 EXECUTION_SESSION_V1 = "execution-session/v1"
+ASSURANCE_CONTEXT_V1 = "assurance-context/v1"
 
 # `--resolve`/`--resolve-all` execution bounds (TASK-M3C-002).
 RESOLVE_TIMEOUT_S = 30.0
@@ -574,6 +576,41 @@ def _evidence_ref_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
     return rows
 
 
+def _assurance_context_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
+    """Surface verifier-attested audit bases without interpreting or
+    validating them.  The extension remains opaque provenance; this
+    read-only projection only makes its recorded identity/ref legible."""
+    rows: list[RefRow] = []
+    for record in history:
+        if record.get("kind") != "fact" or record.get("id") != FACT_ASSURE_SETTLED:
+            continue
+        extensions = record.get("extensions") or {}
+        if not isinstance(extensions, Mapping):
+            continue
+        payload = extensions.get(ASSURANCE_CONTEXT_V1)
+        if not isinstance(payload, Mapping):
+            continue
+        base = payload.get("base")
+        if not isinstance(base, Mapping) or not isinstance(base.get("identity"), str):
+            continue
+        # Render the full recorded base so identity/ref are visible and
+        # optional opaque provenance is not silently hidden or rewritten.
+        rows.append(
+            RefRow(
+                kind="base",
+                provider="-",
+                value=_display(base),
+                resolve=ResolveCommand.none(),
+                verdict=(
+                    record.get("data", {}).get("verdict")
+                    if isinstance(record.get("data", {}).get("verdict"), str)
+                    else None
+                ),
+            )
+        )
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Source 3: candidate subject_identity (FX-IDENTIFY-CANDIDATE effect data)
 # ---------------------------------------------------------------------------
@@ -694,12 +731,13 @@ def _mirror_row(directory: Path, run_id: str) -> Optional[RefRow]:
 
 def collect_refs(directory: Path, run_id: str, history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
     """Every resolvable reference row for one run, in source order
-    (execution-session -> evidence_refs -> candidate identity -> mirror).
+    (execution-session -> assurance evidence/base -> candidate identity -> mirror).
     Pure: reads `history` (already loaded by the caller) plus this run's
     persisted config file; never writes anything."""
     rows: list[RefRow] = []
     rows.extend(_execution_session_rows(history))
     rows.extend(_evidence_ref_rows(history))
+    rows.extend(_assurance_context_rows(history))
     rows.extend(_candidate_rows(history))
     mirror_row = _mirror_row(directory, run_id)
     if mirror_row is not None:
