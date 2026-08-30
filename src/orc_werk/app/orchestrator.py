@@ -47,7 +47,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from orc_werk.core.decisions import DEC_ABANDON_ATTEMPT, make_decision
+from orc_werk.core.decisions import DEC_ABANDON_ATTEMPT, DEC_CANCEL, make_decision
 from orc_werk.core.effects import (
     FX_BLOCK_WORK,
     FX_CLAIM_WORK,
@@ -69,6 +69,7 @@ from orc_werk.core.facts import (
     FACT_EXEC_STARTED,
     FACT_INTENT_SUBMITTED,
     FACT_WORK_BLOCKED,
+    FACT_WORK_CANCELLED,
     FACT_WORK_CLAIMED,
     FACT_WORK_COMPLETED,
     FACT_WORK_CREATED,
@@ -78,12 +79,13 @@ from orc_werk.core.facts import (
 from orc_werk.core.idempotency import idempotency_key as derive_idempotency_key
 from orc_werk.core.models import Candidate
 from orc_werk.core.policy import decide
-from orc_werk.core.reducer import DEFAULT_MAX_ATTEMPTS, reduce
+from orc_werk.core.reducer import DEFAULT_MAX_ATTEMPTS, apply_fact, reduce
 from orc_werk.core.serialization import KIND_EFFECT, KIND_FACT, fact_from_envelope
 from orc_werk.core.state import (
     STATE_ACCEPTED,
     STATE_ASSURING,
     STATE_BLOCKED,
+    STATE_CANCELLED,
     STATE_EXECUTING,
     STATE_READY,
     DeliveryProjection,
@@ -136,6 +138,8 @@ def _is_confirmed_terminal(wp: WorkProjection) -> bool:
         return wp.completed_confirmed
     if wp.state == STATE_BLOCKED:
         return wp.blocked_confirmed
+    if wp.state == STATE_CANCELLED:
+        return wp.cancelled_confirmed
     return False
 
 
@@ -661,6 +665,51 @@ class Orchestrator:
                 reason=reason,
             )
         )
+
+    def cancel_work(self, *, work_id: str, reason: str, by: str) -> None:
+        """Operator-only terminal closure (`STATE-DELIVERY` item 10).
+
+        Records `DEC-CANCEL` and `FACT-WORK-CANCELLED` without dispatching a
+        port Effect. The reducer preflight supplies the canonical conflict
+        for terminal Work before either record is appended.
+        """
+        projection = self.projection()
+        wp = projection.works.get(work_id)
+        if wp is None:
+            raise not_found_error(
+                f"no such work in run {self.delivery_run_id!r}: {work_id!r}",
+                work_id=work_id,
+                next_steps=[f"orc status {self.delivery_run_id}"],
+            )
+        fact = make_fact(
+            FACT_WORK_CANCELLED,
+            delivery_run_id=self.delivery_run_id,
+            work_id=work_id,
+            reason=reason,
+        )
+        apply_fact(wp, fact, max_attempts=self.config.max_attempts)
+        history = self.journal.history(delivery_run_id=self.delivery_run_id)
+        basis_record = next(
+            (
+                record
+                for record in reversed(history)
+                if record.get("kind") == KIND_FACT
+                and record.get("data", {}).get("work_id") == work_id
+            ),
+            None,
+        )
+        basis = [dict(basis_record)] if basis_record is not None else [wp.to_dict()]
+        self.journal.append_decision(
+            make_decision(
+                DEC_CANCEL,
+                delivery_run_id=self.delivery_run_id,
+                work_id=work_id,
+                attribution={"operator": by},
+                basis=basis,
+                data={"reason": reason},
+            )
+        )
+        self.journal.append_fact(fact)
 
     # -- phase 3: policy decisions --------------------------------------------
 

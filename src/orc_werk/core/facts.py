@@ -1,9 +1,8 @@
 """Canonical Facts (PROTOCOL-FACTS).
 
 A Fact is an immutable canonical observation. IDs and required data fields
-mirror `docs/protocol/facts.md` verbatim. `FACT-WORK-CANCELLED` is declared
-(reserved) but MUST NOT be produced by v0/M0 reducer/policy code
-(STATE-DELIVERY "Reserved states and decisions").
+mirror `docs/protocol/facts.md` verbatim. `FACT-WORK-CANCELLED` is reachable
+through the v0/M0 operator surface, never produced by deterministic policy.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ FACT_WORK_BLOCKED = "FACT-WORK-BLOCKED"
 # (STATE-DELIVERY mechanical fact sequencing item 9). Reachable in v0/M0.
 FACT_ATTEMPT_ABANDONED = "FACT-ATTEMPT-ABANDONED"
 
-# Reserved: declared per PROTOCOL-FACTS, unreachable in v0/M0 (STATE-DELIVERY).
+# Operator-driven terminal closure (STATE-DELIVERY item 10).
 FACT_WORK_CANCELLED = "FACT-WORK-CANCELLED"
 
 # Required data fields per docs/protocol/facts.md, verbatim.
@@ -45,13 +44,13 @@ REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     FACT_WORK_COMPLETED: ("work_id",),
     FACT_WORK_BLOCKED: ("work_id", "reason"),
     FACT_ATTEMPT_ABANDONED: ("work_id", "reason"),
-    FACT_WORK_CANCELLED: ("work_id",),
+    FACT_WORK_CANCELLED: ("work_id", "reason"),
 }
 
 ALL_FACT_IDS = frozenset(REQUIRED_FIELDS)
 
-# Producible by v0/M0 reducer/policy; excludes FACT-WORK-CANCELLED.
-PRODUCIBLE_FACT_IDS = ALL_FACT_IDS - {FACT_WORK_CANCELLED}
+# Producible by v0/M0 reducer/policy/operator surfaces.
+PRODUCIBLE_FACT_IDS = ALL_FACT_IDS
 
 EXEC_OUTCOMES = frozenset({"completed", "failed", "cancelled"})
 ASSURANCE_VERDICTS = frozenset({"accepted", "rejected", "inconclusive"})

@@ -46,8 +46,10 @@ from orc_werk.core.state import (
     STATE_ACCEPTED,
     STATE_ASSURING,
     STATE_BLOCKED,
+    STATE_CANCELLED,
     STATE_EXECUTING,
     STATE_READY,
+    TERMINAL_STATES,
     DeliveryProjection,
     WorkProjection,
     replace_projection,
@@ -457,10 +459,26 @@ def apply_fact(
         )
 
     if fact.id == FACT_WORK_CANCELLED:
-        # Reserved: declared per PROTOCOL-FACTS, no v0/M0 transition row.
-        raise validation_error(
-            "FACT-WORK-CANCELLED has no v0/M0 transition row (STATE-DELIVERY reserved)",
-            work_id=projection.work_id,
+        # STATE-DELIVERY item 10: operator-driven, one-step transition and
+        # confirmation from any non-terminal state. Journal-only, never a
+        # verdict and never retry-budget arithmetic.
+        if projection.state in TERMINAL_STATES:
+            raise conflict_error(
+                f"cannot cancel terminal work {projection.work_id!r} in state {projection.state!r}",
+                work_id=projection.work_id,
+                state=projection.state,
+            )
+        return replace_projection(
+            projection,
+            state=STATE_CANCELLED,
+            cancelled_reason=fact.field("reason"),
+            cancelled_confirmed=True,
+            current_execution_id=None,
+            current_candidate_id=None,
+            current_assurance_id=None,
+            assurance_started_for_current=False,
+            candidate_conflict=None,
+            trigger_facts=(),
         )
 
     raise validation_error(f"unhandled fact id: {fact.id!r}")

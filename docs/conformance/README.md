@@ -42,3 +42,4 @@ See [extension conformance](extensions.md) for `CONF-EXT-001` through `CONF-EXT-
 - `CONF-JOURNAL-001`: append order is deterministic.
 - `CONF-JOURNAL-002`: history is immutable/append-preserving.
 - `CONF-JOURNAL-003`: replay reconstructs the same canonical projection, folding under the run's own durably recorded retry budget (`FX-CREATE-WORK` effect record `data.max_attempts`, `PORT-JOURNAL-005`) rather than an adapter default — including when the run's terminal state is `BLOCKED` (retry-budget exhaustion) and when replaying a legacy journal that predates the recorded budget (falls back to the reducer's schema default). See `SCN-008`.
+- `CONF-JOURNAL-004`: replay of operator cancellation deterministically reconstructs a clean, confirmed terminal `CANCELLED` projection; cancellation is rejected from every terminal state and never emits a port Effect or fabricates an assurance verdict. See `SCN-011`.

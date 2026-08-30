@@ -16,6 +16,8 @@ You are recording **observations** into a durable delivery ledger — nothing mo
 
 You **never record a decision**. `DEC-*` records (`DEC-DISPATCH`, `DEC-REQUEST-ASSURANCE`, `DEC-ACCEPT`, `DEC-RETRY`, `DEC-BLOCK`, ...) are kernel policy, attributed per `INV-011`. Nothing in your CLI usage should be read as, or attempt to be, a decision. You submit inputs (settlements, candidates, verdicts); the kernel decides.
 
+`DEC-CANCEL`/`FACT-WORK-CANCELLED` (`SCN-011`, `orc cancel`) is an operator-only terminal closure and is never recorded by a ship/verify agent. Agents must not close Work without acceptance or fabricate a verdict to imitate cancellation; hand deliberate closure to the operator.
+
 `DEC-ABANDON-ATTEMPT` (`TASK-M3B-001`, `--abandon-work`/`--abandon-reason`/`--abandon-by` on `orc dispatch`, `PLAYBOOK-CLI-USAGE`) is likewise not something you record as a ship/verify agent: it is an operator power, exercised when a run's own state cannot resolve a stuck attempt on its own (an irrecoverable candidate-observation conflict, or an assurance you have out-of-band reason to believe will never settle). If your run looks stuck for either reason, stop and hand it to the operator rather than working around it — recording your own outcome to force past a conflicted/unsettleable resting point is exactly the fabrication `DEC-ABANDON-ATTEMPT` exists to avoid.
 
 ## 2. Role separation (MUST) — no self-assurance, ever

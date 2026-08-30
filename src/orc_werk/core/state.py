@@ -20,16 +20,18 @@ STATE_ASSURING = "ASSURING"
 STATE_ACCEPTED = "ACCEPTED"
 STATE_BLOCKED = "BLOCKED"
 
-# Reserved: declared, not reachable by v0/M0 reducer/policy.
+# FAILED remains reserved; CANCELLED is operator-reachable in v0/M0.
 STATE_FAILED = "FAILED"
 STATE_CANCELLED = "CANCELLED"
 
 ALL_STATES = frozenset(
     {STATE_READY, STATE_EXECUTING, STATE_ASSURING, STATE_ACCEPTED, STATE_BLOCKED, STATE_FAILED, STATE_CANCELLED}
 )
-TERMINAL_STATES = frozenset({STATE_ACCEPTED, STATE_BLOCKED})
-# Reachable by v0/M0 reducer/policy; FAILED/CANCELLED excluded (STATE-DELIVERY).
-V0_REACHABLE_STATES = frozenset({STATE_READY, STATE_EXECUTING, STATE_ASSURING, STATE_ACCEPTED, STATE_BLOCKED})
+TERMINAL_STATES = frozenset({STATE_ACCEPTED, STATE_BLOCKED, STATE_CANCELLED})
+# Reachable by v0/M0 reducer/operator surface; only FAILED is excluded.
+V0_REACHABLE_STATES = frozenset(
+    {STATE_READY, STATE_EXECUTING, STATE_ASSURING, STATE_ACCEPTED, STATE_BLOCKED, STATE_CANCELLED}
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,8 @@ class WorkProjection:
     blocked_reason: Optional[str] = None
     blocked_confirmed: bool = False
     completed_confirmed: bool = False
+    cancelled_reason: Optional[str] = None
+    cancelled_confirmed: bool = False
 
     # STATE-DELIVERY mechanical fact sequencing item 9 (TASK-M3B-001): set
     # when a re-observed candidate_id cannot be resolved by verdict
@@ -95,6 +99,8 @@ class WorkProjection:
             "blocked_reason": self.blocked_reason,
             "blocked_confirmed": self.blocked_confirmed,
             "completed_confirmed": self.completed_confirmed,
+            "cancelled_reason": self.cancelled_reason,
+            "cancelled_confirmed": self.cancelled_confirmed,
             "candidate_conflict": dict(self.candidate_conflict) if self.candidate_conflict else None,
         }
 
