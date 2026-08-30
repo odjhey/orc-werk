@@ -29,6 +29,7 @@ import unittest
 from pathlib import Path
 
 from orc_werk.adapters.jsonl import layout
+from orc_werk.cli.report import render_index
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
@@ -346,6 +347,45 @@ class IndexReadOnlyTest(unittest.TestCase):
             # new-layout run's link is relative into its own subdirectory.
             self.assertIn("idx-run-a/report.html", index_html)
             self.assertIn("idx-run-b/report.html", index_html)
+
+    def test_text_and_html_indexes_share_activity_order_rollup_and_scoped_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            configs = {
+                "older-accepted": {
+                    "run_id": "older-accepted",
+                    "attempts": {"work-1": [{"outcome": "completed", "candidate": {"x": 1}, "assurance": {"verdict": "accepted"}}]},
+                },
+                "newest-active": {"run_id": "newest-active", "attempts": {}},
+            }
+            for run_id, config in configs.items():
+                path = tmp_dir / f"{run_id}.json"
+                path.write_text(json.dumps(config), encoding="utf-8")
+                dispatch = _run_cli(tmp_dir, "dispatch", run_id, "--config", str(path))
+                self.assertIn(dispatch.returncode, (0, 3), msg=dispatch.stdout + dispatch.stderr)
+
+            import os
+
+            journal_dir = tmp_dir / ".orc"
+            os.utime(layout.journal_path(journal_dir, "older-accepted"), (100, 100))
+            os.utime(layout.journal_path(journal_dir, "newest-active"), (200, 200))
+
+            text = _run_cli(tmp_dir, "--limit", "0")
+            html_result = _run_cli(tmp_dir, "report", "--index")
+            self.assertEqual(text.returncode, 0, msg=text.stdout + text.stderr)
+            self.assertEqual(html_result.returncode, 0, msg=html_result.stdout + html_result.stderr)
+            index_html = (journal_dir / "index.html").read_text(encoding="utf-8")
+            self.assertLess(text.stdout.index("newest-active:"), text.stdout.index("older-accepted:"))
+            self.assertLess(index_html.index("newest-active"), index_html.index("older-accepted"))
+            self.assertIn("states=EXECUTING:1 flags=pending", text.stdout)
+            self.assertIn("states=EXECUTING:1 flags=pending", index_html)
+
+            scoped = render_index(
+                journal_dir,
+                run_ids=["older-accepted", "newest-active"],
+                flat_hrefs=True,
+            )
+            self.assertLess(scoped.index("older-accepted"), scoped.index("newest-active"))
 
     def test_index_with_positional_run_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

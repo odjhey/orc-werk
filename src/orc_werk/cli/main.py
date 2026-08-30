@@ -62,7 +62,7 @@ from orc_werk.cli.journal_reading import (
 from orc_werk.cli.onboard import DEFAULT_AGENTS_FILE, cmd_onboard
 from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint, window_before
 from orc_werk.cli.refs import cmd_refs
-from orc_werk.cli.report import cmd_report
+from orc_werk.cli.report import _index_state_rollup, cmd_report, ordered_run_entries
 from orc_werk.cli.show import cmd_show
 from orc_werk.core.errors import CoreError, validation_error
 from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, WorkProjection
@@ -474,10 +474,11 @@ def _index_work_summary(work_id: str, wp: WorkProjection) -> str:
 
 
 def _index_run_line(run_id: str, projection) -> str:
+    rollup, _active = _index_state_rollup(projection)
     if not projection.works:
-        return f"{run_id}: (no work recorded yet)"
+        return f"{run_id}: states={rollup} (no work recorded yet)"
     summary = ", ".join(_index_work_summary(wid, projection.works[wid]) for wid in sorted(projection.works))
-    return f"{run_id}: {summary}"
+    return f"{run_id}: states={rollup} | {summary}"
 
 
 def cmd_index(
@@ -485,6 +486,7 @@ def cmd_index(
     *,
     limit: int = DEFAULT_LIMIT,
     before: str | None = None,
+    state: str | None = None,
 ) -> int:
     """`orc` with no arguments (issue #43 item 1, "content first" -- axi
     #8): a live text index of the default journal dir instead of an
@@ -501,6 +503,12 @@ def cmd_index(
     # Validate before the empty-state fast return so an invalid bound is
     # rejected consistently even when there are no runs to list.
     paginate((), limit=limit)
+    if state not in (None, "active"):
+        raise validation_error(
+            f"unsupported index state filter: {state}",
+            state=state,
+            next_steps=["orc --state active", "orc without --state to list every run"],
+        )
     directory = journal_dir if journal_dir is not None else resolve_journal_dir(None)
     abs_dir = directory.resolve()
     # issue #55 OSC-8 scope addition: these two "N runs in <abs dir>"/"0
@@ -522,10 +530,26 @@ def cmd_index(
     # the old flat-only assumption, `run_id` can no longer be recovered
     # from `path.stem` (a new-layout path's stem is always "journal"), so
     # entries carry the run_id alongside its resolved path explicitly.
-    run_entries = sorted(
-        ((run_id, layout.journal_path(directory, run_id)) for run_id in run_ids),
-        key=lambda entry: (entry[1].stat().st_mtime, entry[0]),
-    )
+    # `window_before` consumes oldest-first and the display reverses its
+    # window, so reverse the one shared newest-first order at this boundary.
+    run_entries = list(reversed(ordered_run_entries(directory)))
+    journal = JSONLJournal(directory)
+    projections: dict[str, Any] = {}
+    if state == "active":
+        filtered_entries = []
+        for run_id, path in run_entries:
+            try:
+                projection = journal.load_projection(delivery_run_id=run_id)
+            except CoreError:
+                # Preserve per-run degradation: unknown state must remain
+                # visible rather than silently hiding an unreadable run.
+                filtered_entries.append((run_id, path))
+                continue
+            projections[run_id] = projection
+            _rollup, active = _index_state_rollup(projection)
+            if active:
+                filtered_entries.append((run_id, path))
+        run_entries = filtered_entries
     corpus_total = len(run_entries)
     window_entries, total, truncated = window_before(
         run_entries,
@@ -538,12 +562,11 @@ def cmd_index(
     # append/chronological order, i.e. oldest-of-the-window first).
     window_entries = list(reversed(window_entries))
 
-    journal = JSONLJournal(directory)
     noun = "run" if corpus_total == 1 else "runs"
     print(f"{corpus_total} {noun} in {abs_dir_display}:")
     for run_id, _path in window_entries:
         try:
-            projection = journal.load_projection(delivery_run_id=run_id)
+            projection = projections.get(run_id) or journal.load_projection(delivery_run_id=run_id)
         except CoreError as exc:
             # A many-runs-at-a-glance scan must not go dark over one run's
             # replay failure. As of issue #52's fix, `load_projection`
@@ -882,7 +905,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
-    if not raw_args or raw_args[:1] in (["--limit"], ["--before"]):
+    if not raw_args or raw_args[:1] in (["--limit"], ["--before"], ["--state"]):
         # The content-first index is intentionally a promoted fast path,
         # not an argparse subcommand. Give that surface its own tiny parser
         # so `orc --limit N` retains the bare invocation while ordinary
@@ -890,8 +913,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         index_parser = argparse.ArgumentParser(prog="orc", add_help=False)
         index_parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
         index_parser.add_argument("--before", default=None)
+        index_parser.add_argument("--state", default=None)
         index_args = index_parser.parse_args(raw_args)
-        call = lambda: cmd_index(limit=index_args.limit, before=index_args.before)  # noqa: E731
+        call = lambda: cmd_index(  # noqa: E731
+            limit=index_args.limit, before=index_args.before, state=index_args.state
+        )
     else:
         parser = build_parser()
         args = parser.parse_args(raw_args)
