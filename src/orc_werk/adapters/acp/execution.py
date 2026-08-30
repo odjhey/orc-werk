@@ -36,8 +36,8 @@ Design summary (full rationale: `docs/adapters/acp/mapping.md`):
   whenever this attempt's session has already seen a prompt, from any
   process. See `docs/adapters/acp/mapping.md` "Idempotency behavior" for
   the durable-signal choice and its failure modes.
-- `inspect()` derives settlement **only** from a recorded `result.stopReason`
-  in the session's raw JSON-RPC event-log stream (`sessions show`'s
+- `inspect()` derives settlement **only** from a terminal-quiescent recorded
+  `result.stopReason` in the session's raw JSON-RPC event-log stream (`sessions show`'s
   `eventLog.active_path`) -- never from `acpx status`/`sessions show`'s
   process-liveness fields (`status`/`lastAgent*`), which the spike proved
   unsafe (`running` can persist 70+s after settlement; `idle`/`dead`
@@ -544,10 +544,10 @@ class AcpExecution(ExecutionPort):
         terminal_results = _scan_stream_terminal_results(stream_path) if stream_path else []
 
         expected = self._submitted_turns.get(execution_id)
-        settled_result: Optional[str] = None
+        candidate: Optional[tuple[str, Optional[dict[str, Any]]]] = None
         if expected is not None:
             if len(terminal_results) >= expected:
-                settled_result = terminal_results[expected - 1]
+                candidate = terminal_results[expected - 1]
         else:
             # Fresh process/instance: no local record of how many turns we
             # ourselves submitted. Per the module docstring, Execution<->
@@ -556,8 +556,10 @@ class AcpExecution(ExecutionPort):
             # process that died was the sole submitter, so there is
             # exactly one outstanding turn).
             if terminal_results:
-                settled_result = terminal_results[-1]
+                candidate = terminal_results[-1]
 
+        settled_result = candidate[0] if candidate is not None and candidate[1] is None else None
+        suppression = candidate[1] if candidate is not None else None
         if settled_result is not None:
             outcome = _STOP_REASON_TO_OUTCOME.get(settled_result, "failed")
             return ExecutionObservation(
@@ -576,13 +578,21 @@ class AcpExecution(ExecutionPort):
             extensions = self._session_provenance(
                 show, session_name, resume_ref=session_name
             )
-            extensions["acp-settlement/v1"] = {"unobservability": death_evidence}
+            settlement_diagnostics: dict[str, Any] = {"unobservability": death_evidence}
+            if suppression is not None:
+                settlement_diagnostics["suppression"] = suppression
+            extensions["acp-settlement/v1"] = settlement_diagnostics
             return ExecutionObservation(
                 state=LIFECYCLE_STATE_SETTLED,
                 outcome="failed",
                 extensions=extensions,
             )
 
+        if suppression is not None:
+            return ExecutionObservation(
+                state=LIFECYCLE_STATE_RUNNING,
+                extensions={"acp-settlement/v1": {"suppression": suppression}},
+            )
         return ExecutionObservation(state=LIFECYCLE_STATE_RUNNING)
 
     def _daemon_confirmed_dead(
@@ -727,13 +737,14 @@ class AcpExecution(ExecutionPort):
         return Execution(id=execution_id, work_id=work_id, attempt_number=attempt_number)
 
 
-def _scan_stream_terminal_results(stream_path: str) -> list[str]:
+def _scan_stream_terminal_results(
+    stream_path: str,
+) -> list[tuple[str, Optional[dict[str, Any]]]]:
     """Parse `stopReason` values, in file order, from an `acpx` session's
-    raw JSON-RPC event-log stream. Tolerant of unparsable/partial lines
-    (a concurrently-written NDJSON file, not a canonical journal --
-    unlike `orc_werk.adapters.jsonl.tailsafe`, a bad line here is simply
-    skipped, never an error): the stream is third-party output this
-    adapter only reads, never owns or repairs.
+    raw JSON-RPC event-log stream. An unparsable/partial line before a
+    result is ignored; after a result it is ambiguous post-result evidence
+    and suppresses settlement. The stream is concurrently written
+    third-party output that this adapter only reads, never owns or repairs.
 
     Confirmed empirically (this adapter's own probing against a live
     `acpx pi` session, recorded in `docs/adapters/acp/mapping.md`):
@@ -744,7 +755,7 @@ def _scan_stream_terminal_results(stream_path: str) -> list[str]:
     path = Path(stream_path)
     if not path.exists():
         return []
-    results: list[str] = []
+    records: list[Optional[dict[str, Any]]] = []
     with path.open("r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.strip()
@@ -753,15 +764,67 @@ def _scan_stream_terminal_results(stream_path: str) -> list[str]:
             try:
                 record = json.loads(line)
             except ValueError:
+                records.append(None)
                 continue
-            if not isinstance(record, dict):
+            records.append(record if isinstance(record, dict) else None)
+
+    passive_request_ids: set[Any] = set()
+    for record in records:
+        if record is not None and record.get("method") in {"initialize", "session/load"}:
+            request_id = record.get("id")
+            if isinstance(request_id, (int, str)):
+                passive_request_ids.add(request_id)
+
+    results: list[tuple[str, Optional[dict[str, Any]]]] = []
+    for index, record in enumerate(records):
+        if record is None:
+            continue
+        result = record.get("result")
+        if not (isinstance(result, dict) and "stopReason" in result and "id" in record):
+            continue
+        stop_reason = result["stopReason"]
+        if not isinstance(stop_reason, str):
+            continue
+
+        suppression: Optional[dict[str, Any]] = None
+        for later_index, later in enumerate(records[index + 1 :], start=index + 1):
+            later_class = _post_result_record_class(later, passive_request_ids)
+            if later_class is None:
                 continue
-            result = record.get("result")
-            if isinstance(result, dict) and "stopReason" in result and "id" in record:
-                stop_reason = result["stopReason"]
-                if isinstance(stop_reason, str):
-                    results.append(stop_reason)
+            suppression = {
+                "stopReason": stop_reason,
+                "resultRecord": index + 1,
+                "laterRecord": later_index + 1,
+                "laterRecordClass": later_class,
+            }
+            break
+        results.append((stop_reason, suppression))
     return results
+
+
+def _post_result_record_class(
+    record: Optional[dict[str, Any]], passive_request_ids: set[Any]
+) -> Optional[str]:
+    """Return None only for positively identified passive reconnect traffic."""
+    if record is None:
+        return "malformed"
+    method = record.get("method")
+    if method in {"initialize", "session/load"} and isinstance(record.get("id"), (int, str)):
+        return None
+    record_id = record.get("id")
+    if "result" in record and isinstance(record_id, (int, str)) and record_id in passive_request_ids:
+        result = record.get("result")
+        if isinstance(result, dict) and "stopReason" not in result:
+            return None
+    if method == "session/update":
+        update = record.get("params", {}).get("update", {})
+        if isinstance(update, dict) and isinstance(update.get("sessionUpdate"), str):
+            return update["sessionUpdate"]
+    if isinstance(method, str):
+        return method
+    if "result" in record:
+        return "result"
+    return "unknown"
 
 
 __all__ = [
