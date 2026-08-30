@@ -235,6 +235,38 @@ cockpit. The whole milestone is small and mostly composition-layer/docs.
   `acpx claude` provider swap; attention model; test-hardening tail
   (pre-port spec-hardening sweep per #125).
 
+## Delivered (2026-08-30) — M4 CLOSED, friction-driven from here
+
+M4 is complete. Every acceptance criterion below is met; the milestone doc
+stays `status: current` (the repo's convention — milestones are living
+records, marked done in prose, not frontmatter).
+
+- **M4a** — repo-default profile (`TASK-M4A-001`, #132); `project:` board
+  label (`TASK-M4A-002`, #133); mode-aware onboarding (`TASK-M4A-004`, #135);
+  portfolio-cockpit docs `PLAYBOOK-PORTFOLIO-COCKPIT` (`TASK-M4A-003`, #137).
+- **M4b** — richer state-aware single-dir index with unified ordering +
+  `orc --state active` (`TASK-M4B-001`, #138); `TASK-M4B-002` FOLDED into it
+  by subsumption (ruling 6, #139).
+- **M4c** — `orc guide` HELD dormant (ruling 4, #136). The acceptance
+  criterion "each role has a crisp guide reachable by a fresh agent" is met
+  NOT by a built command but by the three surfaces the ruling names: the
+  installed `orc-ledger` skill (principles) + the per-project mode
+  declaration (`TASK-M4A-004`) + `PLAYBOOK-AGENT-CLI` (reference).
+
+Delivered alongside M4 (friction/self-repair, same window): #111 briefs
+starvation note (#140); #119 bd flag audit (#141); and the reserved
+`CANCELLED` terminal state + `orc cancel` verb for healed-specimen closure
+(#142, a contract-first core change — `STATE-DELIVERY` item 10, `SCN-011`).
+The two healed wedge specimens were then closed on the live ledger via the
+new verb. Open self-repair tail: #143 (`orc cancel` over-constructs dispatch
+ports → the #111 note over-fires; low).
+
+**Stance going forward (operator, 2026-08-30): no new milestone.** The
+product is thesis-complete and dogfoodable; the next phase is friction-driven
+— keep using orc in real repos and let surfaced friction set priority.
+Dormant registry (AcpAssurance #126, `--json` #53, Beads authority #47, `orc
+guide` #136) stays dormant until a named trigger fires.
+
 ## Acceptance
 
 - A repo sets its execution/candidate/assurance/mirror defaults ONCE (the
