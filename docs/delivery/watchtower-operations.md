@@ -10,6 +10,8 @@ description: Multi-agent delivery operating model (watchtower/scout/ship/verify)
 
 This playbook records the delivery operating model used to ship M0 and expected for subsequent milestones. It is informative process documentation: it constrains how work is delivered, never what the product means (contracts own that — see `DOCS-ROOT` authority precedence).
 
+The cross-cutting *method* the roles below rely on — how to write agent-facing instructions, diagnose a bug, verify work on separated axes, generate a design before pricing it, and keep records — lives in `PLAYBOOK-ENGINEERING-METHOD`. That doc is deliberately orc-agnostic (it applies to any agent in this workflow); this one is the orc-specific pipeline that references it.
+
 ## Roles
 
 - **Watchtower** — the coordinating session. Decomposes milestones into PR-sized tasks, sequences delivery, makes contract rulings when audits surface ambiguity, reviews and merges every PR, and maintains the audit trail and deferred-decision ledger. The watchtower does not implement product code directly; it authors only small process/docs changes like this one.
