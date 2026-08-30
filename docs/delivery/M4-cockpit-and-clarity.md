@@ -135,14 +135,34 @@ inconsistency** the recon found: bare `orc` sorts by file mtime, HTML
 `--index` by discovery/id order — pick one and make them agree.
 **Scope honesty:** polish of existing surfaces; no new surface.
 
-### `TASK-M4B-002` — cross-run rollup within a dir (the one real gap)
-**Shape [SPECULATION]:** an "in flight" roll-up over one journal dir — all
-non-terminal / blocked works, at a glance — since the `_summarize_states`
-helpers exist only per-run today. Small, and it is the single-dir
-precursor to the board-level portfolio view (which M4a already gives
-cross-project). Decide whether this earns its own surface or folds into
-M4B-001's index enrichment.
-**Scope honesty:** modest new code if standalone; possibly just M4B-001.
+### `TASK-M4B-002` — cross-run rollup within a dir — FOLDED into M4B-001
+**Decision (watchtower, 2026-08-30): FOLD — delivered by subsumption, no
+separate surface.** The card asked us to decide standalone-vs-fold once
+M4B-001 shipped. It shipped, and M4B-001's `--state active` filter plus the
+per-run `states=<counts> flags=blocked,pending` rollup already *is* the
+in-flight roll-up over one journal dir this card described — all
+non-terminal / blocked works at a glance, with blocked reasons. Verified
+live on merged master:
+
+```
+$ orc --state active
+4 runs in .../.orc:
+trivia-sweep: states=READY:1 | sweep=READY attempts=2
+fix-71-corpus: states=BLOCKED:1 flags=blocked | work-1=BLOCKED attempts=3 blocked_reason=retry-budget-exhausted
+...
+```
+
+`_summarize_states` graduated from per-run-only into the shared
+`_index_state_rollup` helper (report.py) that both index surfaces consume,
+which was the mechanics gap this card named. A separate standalone surface
+would duplicate that with no added information.
+**Deferred nicety (not pulled):** a single dir-level aggregate header
+(e.g. "4 runs — 2 blocked, 2 ready") above the default (unfiltered) list.
+Marginal — the per-run flags already make blocked obvious and `--state
+active` already isolates in-flight — so it stays a follow-up pulled only if
+friction calls for it, not a milestone item.
+**Scope honesty:** no new code; a decision record. M4b is complete with
+M4B-001 alone.
 
 ## Phase M4c — Role guides (the clarity the operator asked for)
 
@@ -194,6 +214,11 @@ cockpit. The whole milestone is small and mostly composition-layer/docs.
 4. **Role guides: `orc guide` HELD dormant** — RULED (operator, 2026-08-30, supersedes the earlier `orc guide` decision). The command sits in a possibly-redundant middle; role clarity is covered by the installed skill (principles) + the per-project mode declaration `TASK-M4A-004` (procedure) + `PLAYBOOK-AGENT-CLI` (reference). `orc guide` is dormant with a named trigger (`TASK-M4C-001`): agents demonstrably getting seat discipline wrong despite those three surfaces.
 5. **`project:<name>` source: explicit `mirror.project` config key** —
    RULED, set once in `.orc/profile.json` (ties M4A-001 and M4A-002).
+6. **`TASK-M4B-002` folds into M4B-001** — RULED (watchtower, 2026-08-30).
+   M4B-001's `--state active` filter + the shared `_index_state_rollup`
+   helper are the single-dir in-flight roll-up M4B-002 scoped; a standalone
+   surface would only duplicate it. The dir-level aggregate header is a
+   deferred nicety, not a milestone item. **M4b is complete.**
 
 ## Explicitly NOT in M4 (dormant registry, triggers unchanged)
 
