@@ -113,7 +113,7 @@ class GitDiffCandidateConformanceTest(unittest.TestCase):
 
     # -- post-settlement identification confirms a quiescent ref. --
 
-    def test_identify_binds_later_head_when_head_advances_between_reads(self) -> None:
+    def test_race_marker_does_not_change_bound_subject_fingerprint(self) -> None:
         first = self.adapter.identify(execution_id="before").subject_identity["head_sha"]
         (self.repo / "b.txt").write_text("tail-end write")
         _git(["add", "."], cwd=self.repo)
@@ -140,6 +140,9 @@ class GitDiffCandidateConformanceTest(unittest.TestCase):
             candidate = adapter.identify(execution_id="race")
 
         self.assertEqual(candidate.subject_identity["head_sha"], later)
+        clean = self.adapter.current(work_id="clean-observation")
+        self.assertNotIn("extensions", clean.subject_identity)
+        self.assertEqual(candidate.fingerprint, clean.fingerprint)
         marker = candidate.subject_identity["extensions"]["git-candidate-identification/v1"]
         self.assertTrue(marker["worktree_advanced"])
         self.assertEqual(marker["initial_head"], first)

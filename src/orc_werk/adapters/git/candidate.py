@@ -28,12 +28,11 @@ Field rationale:
 - `repo_path` disambiguates candidates across repositories/worktrees. It
   is included by default (this adapter's target use is one Work per one
   configured worktree, so it does not create false negatives in the
-  intended usage) and deliberately participates in the fingerprint like
-  every other `subject_identity` field -- excluding it selectively would
-  mean inventing a second, adapter-private fingerprint scheme diverging
-  from the shared `fingerprint_of` helper for no real benefit at this
-  milestone. Callers who want cross-path identity MAY construct with
+  intended usage) and deliberately participates in the fingerprint.
+  Callers who want cross-path identity MAY construct with
   `include_repo_path=False`.
+- `extensions`, when present, carries adapter-local observation provenance
+  and never participates in identity or fingerprinting.
 
 Fingerprinting reuses `orc_werk.adapters.scripted.candidate.fingerprint_of`
 -- the same canonical-JSON sha256 helper every other adapter uses, rather
@@ -127,7 +126,7 @@ class GitDiffCandidate(CandidatePort):
             # PORT-CAND-001: no assurable subject -- not an error.
             return None
 
-        fingerprint = fingerprint_of(subject_identity)
+        fingerprint = self._fingerprint(subject_identity)
         candidate_id = f"cand-git-{fingerprint[3:15]}"
         return Candidate(
             id=candidate_id,
@@ -142,7 +141,7 @@ class GitDiffCandidate(CandidatePort):
         if subject_identity is None:
             # PORT-CAND-002: decline explicitly rather than guess.
             return None
-        fingerprint = fingerprint_of(subject_identity)
+        fingerprint = self._fingerprint(subject_identity)
         candidate_id = f"cand-git-{fingerprint[3:15]}"
         return Candidate(
             id=candidate_id,
@@ -158,6 +157,13 @@ class GitDiffCandidate(CandidatePort):
         return CANDIDATE_COMPARISON_DIFFERENT
 
     # -- git plumbing -------------------------------------------------------
+
+    @staticmethod
+    def _fingerprint(subject_identity: Mapping[str, Any]) -> str:
+        # Identity is the established Git subject tuple. Adapter-local
+        # extensions are observation provenance, never identity material.
+        identity = {key: value for key, value in subject_identity.items() if key != "extensions"}
+        return fingerprint_of(identity)
 
     @staticmethod
     def _work_id_placeholder(execution_id: str) -> str:
@@ -181,8 +187,8 @@ class GitDiffCandidate(CandidatePort):
         advanced = False
         if confirm_quiescence:
             for _ in range(self._quiescence_retries):
-                # Observation gate only: neither the duration nor wall-clock
-                # values enter candidate or journal data (INV-020).
+                # Observation gate only: neither duration nor wall-clock
+                # values enter INV-020 idempotency-key material or candidate data.
                 self._settle_wait(self._settle_interval)
                 later_head = self._read_head(ref, repo_path)
                 if later_head is None:
@@ -206,7 +212,7 @@ class GitDiffCandidate(CandidatePort):
         }
         if self._include_repo_path:
             subject_identity["repo_path"] = str(repo_path)
-        if advanced:
+        if advanced and head_sha != initial_head:
             note = "worktree advanced during identification; bound the final observed head"
             subject_identity["extensions"] = {
                 "git-candidate-identification/v1": {
