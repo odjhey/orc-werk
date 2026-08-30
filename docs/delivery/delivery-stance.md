@@ -39,7 +39,7 @@ An unrecorded rough edge is not a rough edge; it is a defect.
 
 ## Complementary goals
 
-- **Dogfood feedback is the backlog.** Findings from real usage are filed as issues and triaged into the next milestone; the loop from "it annoyed me" to "it is tracked" should be same-day.
+- **Dogfood feedback is the backlog.** Findings from real usage are filed as issues and triaged into the next milestone; the loop from "it annoyed me" to "it is tracked" should be same-day. A good finding carries a short repro when possible (the exact command plus observed versus expected behavior), the full `orc version` output, and the run id or journal excerpt when ledger-related; the repository issue template asks for exactly these.
 - **Contracts lead code** in both directions: ambiguity found during implementation routes to a docs amendment, and behavior invented by code gets legitimized or reverted — never left implicit.
 - **Heal-while-using over prevent-all-failure.** Recovery paths (replay, reconciliation, torn-tail healing) get priority over exhaustive input hardening.
 
