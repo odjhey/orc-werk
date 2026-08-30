@@ -741,6 +741,30 @@ class VetFlagDepthUnitTest(unittest.TestCase):
         ]
         self.assertIsNone(_vet_read_only(argv))
 
+    def test_over_block_guard_dangerous_token_as_a_value_still_passes(self) -> None:
+        # A security allowlist must be tested for OVER-blocking, not only
+        # under-blocking: a legitimately safe read-only command that merely
+        # *mentions* a refused token as a value-flag's VALUE (consumed
+        # unparsed, never in flag position) must still pass. This is the
+        # must-allow half of the policy -- the analog of a shell guard that
+        # blocks `git push --force` while letting
+        # `git commit -m "no --force here"` through. If any of these ever
+        # start refusing, the allowlist has grown a false positive that would
+        # silently degrade a real resolve command to the manual fallback.
+        must_pass = [
+            # `--watch`/`--db`/`--format` appear as the VALUE of `--label`/
+            # `--status`, not as flags; value-flags consume their value
+            # unparsed, so the dangerous shape is inert here.
+            ["bd", "list", "--label", "run:--watch", "--status", "all"],
+            ["bd", "list", "--label", "--watch"],
+            ["bd", "list", "--status", "all", "--label", "project:--db"],
+            ["bd", "show", "--label", "run:--format", "bd-1"],
+            # a bare sha positional to `git show` is not a flag and must pass
+            ["git", "show", "abc123"],
+        ]
+        for argv in must_pass:
+            self.assertIsNone(_vet_read_only(argv), msg=argv)
+
     def test_acpx_agent_leading_dash_refused(self) -> None:
         # A crafted provider string `acpx---output` yields agent `--output`,
         # which acpx would parse as an option before `sessions`.
