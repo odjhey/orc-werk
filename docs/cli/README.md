@@ -125,6 +125,35 @@ not a second copy of the schema.
 orc config-schema
 ```
 
+### `orc validate`
+
+```text
+usage: orc validate [-h] config
+```
+
+Validates one portable JSON dispatch config using the same schema validator
+as `dispatch`, without creating a journal, ports, or an orchestrator. A valid
+config exits `0` and prints a would-ingest preview: plan work ids, selected
+execution/candidate/assurance adapters, every attempt entry's keys, and any
+scripted assurance verdict and extension ids. This is the read-only check to
+run after editing a persisted run config and before re-dispatching it.
+
+```bash
+orc validate ./.orc/demo-pending/config.json
+```
+
+```text
+PASS: ./.orc/demo-pending/config.json
+plan works: work-1 (default)
+adapters: execution=scripted candidate=scripted assurance=scripted
+attempts.work-1[0]: keys=[assurance, candidate, outcome]
+attempts.work-1[0].assurance: verdict=accepted, extensions=[review-findings/v1]
+```
+
+Invalid JSON or an unknown/malformed config key exits `2` and prints the
+canonical `ERR-VALIDATION` JSON, including the offending config path. The
+command never reads or writes `.orc/` run state.
+
 ### `orc dispatch`
 
 ```text
