@@ -102,6 +102,53 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
             self.assertEqual(dispatch3.returncode, 0, msg=dispatch3.stdout + dispatch3.stderr)
             self.assertIn("state=ACCEPTED", dispatch3.stdout)
 
+    def test_abandon_briefed_acp_run_does_not_construct_provider_ports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "abandon-acp",
+                        "max_attempts": 2,
+                        "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "A"}}]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            initial = _run_cli(tmp_dir, "dispatch", "abandon me", "--config", str(config_path))
+            self.assertEqual(initial.returncode, 3, msg=initial.stdout + initial.stderr)
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "execution": {"adapter": "acp", "cwd": str(tmp_dir)},
+                        "candidate": {"adapter": "git", "repo_path": str(tmp_dir)},
+                        "briefs": {"work-1": "provider-only brief"},
+                        "attempts": {"work-1": []},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = _run_cli(
+                tmp_dir,
+                "dispatch",
+                "--run-id",
+                "abandon-acp",
+                "--config",
+                str(config_path),
+                "--abandon-work",
+                "work-1",
+                "--abandon-reason",
+                "adapter session orphaned",
+            )
+
+            self.assertEqual(result.returncode, 3, msg=result.stdout + result.stderr)
+            self.assertNotIn("note: work", result.stderr)
+            history = JSONLJournal(tmp_dir / ".orc").history(delivery_run_id="abandon-acp")
+            self.assertTrue(any(r["kind"] == "decision" and r["id"] == DEC_ABANDON_ATTEMPT for r in history))
+            self.assertTrue(any(r["kind"] == "fact" and r["id"] == FACT_ATTEMPT_ABANDONED for r in history))
+
 
 class AbandonIllegalCliTest(unittest.TestCase):
     def test_missing_abandon_reason_is_validation_error(self) -> None:

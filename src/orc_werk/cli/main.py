@@ -242,7 +242,9 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
     execution_adapter = (config.get("execution") or {}).get("adapter", "scripted")
     candidate_adapter = (config.get("candidate") or {}).get("adapter", "scripted")
-    if execution_adapter == "scripted" and candidate_adapter == "scripted":
+    if args.abandon_work is not None or (
+        execution_adapter == "scripted" and candidate_adapter == "scripted"
+    ):
         execution, candidate, assurance = build_scripted_adapters(config, delivery_run_id=run_id)
         journal = JSONLJournal(journal_dir)
     else:
@@ -428,14 +430,7 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     config = validate_config(deep_merge_config(profile, persisted))
     run_config = build_run_config(config, max_attempts_override=None)
     work_graph = MemoryWorkGraph()
-    execution_adapter = (config.get("execution") or {}).get("adapter", "scripted")
-    candidate_adapter = (config.get("candidate") or {}).get("adapter", "scripted")
-    if execution_adapter == "scripted" and candidate_adapter == "scripted":
-        execution, candidate, assurance = build_scripted_adapters(config, delivery_run_id=run_id)
-    else:
-        execution, candidate, assurance = build_dispatch_ports(
-            config, delivery_run_id=run_id, intent_text=intent_text, journal=journal
-        )
+    execution, candidate, assurance = build_scripted_adapters(config, delivery_run_id=run_id)
     orchestrator = Orchestrator(
         delivery_run_id=run_id,
         journal=journal,
