@@ -168,7 +168,15 @@ _GIT_SHOW_VALUE_FLAGS: frozenset[str] = frozenset()  # none needed; keep the sur
 _ACPX_SESSIONS_BOOL_FLAGS = frozenset({"--json"})
 _ACPX_SESSIONS_VALUE_FLAGS: frozenset[str] = frozenset()
 
-_BD_BOOL_FLAGS = frozenset({"--json"})
+# Audited against bd 1.2.2. Keep this surface minimal: `--json`, the
+# builder's `--label`/`--status` filters, and `--no-pager` for deterministic
+# non-interactive reads. Deliberately EXCLUDED (and therefore refused):
+# `-w`/`--watch` (runs indefinitely; hang/resource-exhaustion), `--format`
+# (Go-template/dot/digraph output control, not a read filter), `--db`
+# (attacker-controlled database-path read redirection), `--actor` (audit-trail
+# mutation shape), and `--global`/`--dolt-auto-commit`/`--ignore-schema-skew`
+# (global database, write/commit, or schema-skew controls; not read-only).
+_BD_BOOL_FLAGS = frozenset({"--json", "--no-pager"})
 _BD_VALUE_FLAGS = frozenset({"--label", "--status"})
 
 # no-mistakes axi status/logs: `--run`/`--step` take values; `--full`/
