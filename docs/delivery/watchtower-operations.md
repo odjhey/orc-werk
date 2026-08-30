@@ -15,7 +15,7 @@ This playbook records the delivery operating model used to ship M0 and expected 
 - **Watchtower** — the coordinating session. Decomposes milestones into PR-sized tasks, sequences delivery, makes contract rulings when audits surface ambiguity, reviews and merges every PR, and maintains the audit trail and deferred-decision ledger. The watchtower does not implement product code directly; it authors only small process/docs changes like this one.
 - **Scouts** (reconnaissance) — read-only agents that map contracts before implementation: produce the contract map, decomposition proposal, and — critically — the list of ambiguities that must be resolved in docs before code. Also used for proposal/issue assessments (compatibility, feasibility, alignment).
 - **Ship agents** — implementation agents. One task card, one worktree under `.worktrees/<branch>`, one branch, one PR. They receive governing contract IDs and a checkable definition of done; they must not invent semantics — genuine ambiguity is reported back in the PR body ("Ambiguities encountered"), not silently resolved. A guard, allowlist, or permission that refuses an action is likewise **reported, never worked around** — a refusal is a signal to route back, not an obstacle to engineer past. They never merge.
-- **Verification scouts** — adversarial read-only auditors that run on every implementation PR before merge. They audit both directions: does the diff respect the governing contracts (checked against actual doc text, not plausibility), and did implementation expose gaps in the docs that need amendment. Verdicts: MERGE / MERGE-WITH-FOLLOW-UPS / FIX-BEFORE-MERGE, with findings, doc-amendment deadlines, and explicit confirmations of what was positively verified.
+- **Verification scouts** — adversarial read-only auditors that run on every implementation PR before merge. They audit both directions: does the diff respect the governing contracts (checked against actual doc text, not plausibility), and did implementation expose gaps in the docs that need amendment. When a diff — or recon — contradicts an existing contract, the conflict is surfaced as a **first-class callout** that cites the contract by its stable ID and states why it should be reopened ("contradicts &lt;contract-id&gt;, worth reopening because …"), never silently routed around: the bidirectional check is only real if a contradiction is licensed to challenge the contract *out loud* rather than quietly conform to or ignore it. Verdicts: MERGE / MERGE-WITH-FOLLOW-UPS / FIX-BEFORE-MERGE, with findings, doc-amendment deadlines, and explicit confirmations of what was positively verified.
 - **Dogfood checker** — a read-only, user-perspective agent run against the real CLI, not the test suite. It selects and executes the slice of `dogfood/` (`DOGFOOD-CORPUS`) whose concern tags intersect a shipped change, then reports PASS / BUG / FRICTION per scenario with evidence (commands, exit codes, `status`/`history` excerpts). It never fixes anything itself — no code, no docs, no issues filed directly; routing the healing (a fix PR, an issue, a docs amendment) is the watchtower's job, per `DELIVERY-STANCE`'s "dogfood feedback is the backlog."
 
 Starting at M1a+ (`M-001`), ship agents and verification scouts also record their own observations directly into the delivery ledger through the `orc` CLI rather than the watchtower transcribing outcomes on their behalf — see `docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`) for the ship/verify recording protocol, role separation (no self-assurance), and the independent-derivation rule for verdicts. This is additive to the roles above, not a replacement: ship agents still ship, verification scouts still audit adversarially; the CLI is now how each records its own outcome, in addition to the PR-thread audit trail below.
@@ -41,6 +41,7 @@ Tasks are sized by reviewability and decision count, not implementation effort:
 - **Checkable definition of done** — enumerable conformance requirements and scenarios, never "make it work".
 - **No reward-hacking in the definition of done** — the brief states explicitly that tests, gates, and checks must not be deleted, skipped, weakened, or narrowed to make them pass. A green gate reached by weakening the check is a rejected candidate, not a delivery. This is the shipper-side complement to the verifier's tautological-test hunt: the shipper is told not to game the gate; the verifier confirms the gate was not gamed (it hunts tests that cannot fail and re-derives any identity a verdict rests on).
 - **Disjoint file territory** for anything dispatched in parallel.
+- **Wide mechanical refactors use expand → migrate → contract** — the sanctioned exception to "one PR = one green claim." A change with cross-codebase blast radius (rename a shared field, retype a shared symbol) cannot be a single green standalone PR. Sequence it: **expand** (add the new form beside the old; nothing breaks) → **migrate** call sites in blast-radius-sized batches (each its own PR, gate green batch-to-batch) → **contract** (delete the old form; blocked by all migrates). Every step keeps the gate green; there is no single giant red PR, and the "one reviewable claim" rule holds per batch.
 
 ## Dormant-feature lifecycle
 
@@ -66,6 +67,27 @@ extends the deferred-decision ledger (Audit trail, below) from deferred
 *decisions* to pre-decided *features*. A dormant item without a named trigger
 is a defect in this lifecycle, the same way an unrecorded rough edge is a
 defect under `DELIVERY-STANCE`.
+
+### Classifying deferred work, and what earns a record
+
+Not every "later" is the same, and not every decision earns a durable entry:
+
+- **Fog vs dormant vs out-of-scope** — the test is *can you state the question
+  precisely now*, not whether you can answer it. A **dormant item** is a
+  question sharp enough to phrase (recorded, with a named trigger). **Fog**
+  ("not yet specified") is work you cannot yet frame precisely — leave it as
+  fog; do not force it into a ticket to feel productive. **Out of scope** is
+  past the destination: it never graduates in place and returns only as a fresh
+  effort if the destination is redrawn. Conflating "we can't frame the question
+  yet" with "we've framed it and are waiting for the trigger" is the drift this
+  split prevents.
+- **What earns a durable decision record** — record a ruling when it is (1) hard
+  to reverse, (2) surprising without its context, or (3) the outcome of a real
+  trade-off. Absent all three it is probably a no-op the next reader would have
+  chosen anyway; recording it is ledger noise. The highest-value records are the
+  explicit **no**s and the deliberate deviations from the obvious path — a ruling
+  whose whole purpose is "do not re-litigate this / do not 'fix' this intentional
+  choice" is an anti-regression guard for a future agent, not noise.
 
 ## Audit trail
 

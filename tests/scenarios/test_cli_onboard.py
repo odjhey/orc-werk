@@ -96,6 +96,36 @@ class CanonicalOriginTest(unittest.TestCase):
         resolved = link.resolve()
         self.assertEqual(resolved, (REPO_ROOT / "src" / "orc_werk" / "skills" / "orc-ledger" / "SKILL.md").resolve())
 
+    def test_packaged_skill_frontmatter_is_strict_parse_safe(self):
+        # The packaged SKILL.md is loaded by adopters' agents, some behind
+        # STRICT YAML parsers (e.g. Pi's). A colon-space (": ") in an
+        # unquoted frontmatter value is read as a nested mapping, so the
+        # skill is *silently skipped* during discovery -- uninstallable,
+        # unlisted, no error (the exact failure mode mattpocock/skills hit
+        # and fixed in their fix-yaml-frontmatter-colons changeset; the
+        # sharper lesson is that the failure is a silent skip, so assert
+        # validity, not just lint). This backs the skill-description
+        # authoring guard (PLAYBOOK-WATCHTOWER, Conventions) with an
+        # executable check: a "---"-fenced flat block with name +
+        # description keys and no unquoted colon-space in any value.
+        # stdlib-only (PyYAML is not a dependency).
+        lines = packaged_skill_text().splitlines()
+        self.assertEqual(lines[0].strip(), "---", "SKILL.md must open with a YAML frontmatter fence")
+        end = lines.index("---", 1)
+        keys = {}
+        for line in lines[1:end]:
+            self.assertRegex(line, r"^[a-z][a-z0-9_-]*: ", f"non key:value frontmatter line: {line!r}")
+            key, _, value = line.partition(": ")
+            keys[key] = value
+            if not (value.startswith("'") or value.startswith('"')):
+                self.assertNotIn(
+                    ": ", value,
+                    f"unquoted colon-space in a frontmatter value silently breaks strict YAML "
+                    f"discovery -- quote the value or rephrase: {line!r}",
+                )
+        self.assertEqual(keys.get("name"), "orc-ledger", "frontmatter must carry name: orc-ledger")
+        self.assertIn("description", keys, "frontmatter must carry a description (the routing surface)")
+
     def test_agents_block_derived_from_packaged_skill_text(self):
         skill_text = packaged_skill_text()
         block = agents_block_text(skill_text)
