@@ -61,11 +61,11 @@ from orc_werk.cli.journal_reading import (
 )
 from orc_werk.cli.onboard import DEFAULT_AGENTS_FILE, cmd_onboard
 from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint, window_before
-from orc_werk.cli.refs import cmd_refs
+from orc_werk.cli.refs import FACT_ASSURE_SETTLED, cmd_refs
 from orc_werk.cli.report import _index_state_rollup, cmd_report, ordered_run_entries
 from orc_werk.cli.show import cmd_show
 from orc_werk.core.errors import CoreError, validation_error
-from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, WorkProjection
+from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, STATE_EXECUTING, WorkProjection
 from orc_werk.ports.capabilities import validate_capabilities
 
 # TASK-M1-002/SCN-007: the distinct in-progress exit code -- additive to
@@ -285,6 +285,9 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         by = args.abandon_by or os.environ.get("USER") or getpass.getuser()
         orchestrator.abandon_attempt(work_id=args.abandon_work, reason=args.abandon_reason, by=by)
 
+    # Snapshot the durable boundary so the output below can identify only
+    # assurance settlements folded by this dispatch invocation.
+    history_before_advance = journal.history(delivery_run_id=run_id)
     projection = orchestrator.run()
     history = journal.history(delivery_run_id=run_id)
 
@@ -349,6 +352,49 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "pending: run is non-terminal, awaiting operator-recorded input for: "
             + ", ".join(sorted(pending_ids) if pending_ids else sorted(projection.works))
         )
+
+    # Issues #147/#150: report only settlements durably appended by this
+    # invocation.  Reading the canonical records back makes this proof of
+    # ingestion rather than an echo of the config input.
+    previous_seq = max((record["seq"] for record in history_before_advance), default=0)
+    new_records = [record for record in history if record["seq"] > previous_seq]
+    settled_assurances = [
+        record
+        for record in new_records
+        if record.get("kind") == "fact" and record.get("id") == FACT_ASSURE_SETTLED
+    ]
+    for record in settled_assurances:
+        data = record["data"]
+        extension_keys = ", ".join(sorted(record.get("extensions", {})))
+        print(
+            f"assurance recorded: work {data['work_id']!r} verdict={data['verdict']} "
+            f"extensions=[{extension_keys}] (seq {record['seq']})"
+        )
+        retry = next(
+            (
+                item
+                for item in new_records
+                if item["seq"] > record["seq"]
+                and item.get("kind") == "decision"
+                and item.get("id") == "DEC-RETRY"
+                and item.get("data", {}).get("work_id") == data["work_id"]
+            ),
+            None,
+        )
+        work = projection.works.get(data["work_id"])
+        if (
+            data["verdict"] == "rejected"
+            and retry is not None
+            and work is not None
+            and work.state == STATE_EXECUTING
+            and is_pending(work)
+        ):
+            attempt = retry["data"]["attempt_number"]
+            print(
+                f"assurance verdict recorded (rejected); attempt {attempt} opened -- "
+                "the next action belongs to the EXECUTION seat, not the verifier."
+            )
+
     # issue #43: HATEOAS-style "next:" block, one mapping
     # (orc_werk.cli.affordances) shared by dispatch/status. `dispatch`
     # knows the config path it was actually invoked with, so its
