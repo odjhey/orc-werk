@@ -632,6 +632,20 @@ orc onboard --path . --force              # re-run, overwriting operator-modifie
 orc onboard --print-agents-block           # prints only, writes nothing
 ```
 
+**Joining a shared portfolio:** after onboarding, set `mirror.workspace` and `mirror.project` in the repository's `.orc/profile.json`. Every participating repository uses the same absolute workspace path and a distinct project name:
+
+```json
+{
+  "mirror": {
+    "adapter": "beads",
+    "workspace": "/home/alice/orc-portfolio",
+    "project": "payments"
+  }
+}
+```
+
+Keep that repository's journal local through `ORC_JOURNAL_DIR` or the local `./.orc` default. The shared workspace is only the write-only mirror destination; read the portfolio with `bd`'s own CLI. See `PLAYBOOK-PORTFOLIO-COCKPIT` for the sanctioned read-back commands and boundary.
+
 **Idempotent and non-destructive by construction**: every step compares
 what it would write against what is already there. An exact match is a
 `skip` note (no write). A target that already exists with *different*
@@ -731,6 +745,8 @@ convention" sections -- this reference does not duplicate it.
 - `.agents/skills/orc-ledger/SKILL.md` -- fresh-session onboarding skill.
 - `docs/product/adoption.md` (`PRODUCT-ADOPTION`) -- the adoption ladder
   and per-rung mechanical install story `orc onboard` fulfills rung 2 of.
+- `PLAYBOOK-PORTFOLIO-COCKPIT` -- shared-board setup and bd-native
+  portfolio read-back recipes.
 - `docs/scenarios/SCN-007-pending-settlement.md` (`SCN-007`) -- normative
   spec for exit `3` / pending-settlement behavior.
 - `docs/extensions/crew-report/README.md` (`EXT-CREW-REPORT-V1`, superseded)
