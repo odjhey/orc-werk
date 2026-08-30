@@ -239,8 +239,12 @@ def cmd_config_schema(_args: argparse.Namespace) -> int:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    """Validate and preview a dispatch config without constructing run machinery."""
-    config = load_config(args.config)
+    """Validate and preview a composed dispatch config without run machinery."""
+    journal_dir = resolve_journal_dir(args.journal)
+    explicit = load_config_overlay(args.config)
+    profile_path = journal_dir.resolve() / "profile.json"
+    profile = None if args.no_profile else load_repo_profile(journal_dir)
+    config = validate_config(deep_merge_config(profile or {}, explicit))
 
     plan = config.get("plan")
     if isinstance(plan, Mapping):
@@ -248,6 +252,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
     else:
         works = ["work-1 (default)"]
     print(f"PASS: {args.config}")
+    if profile is not None:
+        profile_keys = ", ".join(sorted(profile)) or "empty"
+        print(f"layers: profile: {profile_path} ({profile_keys}) + config: {args.config}")
+    else:
+        print(f"layers: config: {args.config}")
     print(f"plan works: {', '.join(works) if works else '(none)'}")
     print(
         "adapters: "
@@ -267,6 +276,63 @@ def cmd_validate(args: argparse.Namespace) -> int:
                     f"extensions=[{', '.join(sorted(extensions))}]"
                 )
     return 0
+
+
+def _candidate_identity(value: Any) -> Any:
+    """Return the operator-facing identity from a configured/bound candidate."""
+    if isinstance(value, Mapping):
+        subject = value.get("subject_identity")
+        if isinstance(subject, Mapping):
+            return dict(subject)
+        return dict(value)
+    return value
+
+
+def _candidate_identity_text(value: Any) -> str:
+    identity = _candidate_identity(value)
+    if isinstance(identity, Mapping) and identity.get("head_sha") is not None:
+        return str(identity["head_sha"])
+    return json.dumps(identity, sort_keys=True, separators=(",", ":"))
+
+
+def _warn_candidate_divergence(
+    config: Mapping[str, Any], projection: Any, history: Sequence[Mapping[str, Any]], *,
+    run_id: str, config_path: Path,
+) -> None:
+    """Warn when an edited scripted attempt disagrees with its journal binding."""
+    attempts = config.get("attempts") or {}
+    for work_id, wp in projection.works.items():
+        if wp.current_candidate_id is None or wp.attempt_number < 1:
+            continue
+        entries = attempts.get(work_id) or []
+        if len(entries) < wp.attempt_number:
+            continue
+        configured = entries[wp.attempt_number - 1].get("candidate")
+        if configured is None:
+            continue
+        bound = None
+        for record in reversed(history):
+            candidate = record.get("data", {}).get("dispatch_result", {}).get("candidate")
+            if (
+                record.get("kind") == "effect"
+                and record.get("data", {}).get("work_id") == work_id
+                and isinstance(candidate, Mapping)
+                and candidate.get("id") == wp.current_candidate_id
+            ):
+                bound = candidate
+                break
+        if bound is None or _candidate_identity(configured) == _candidate_identity(bound):
+            continue
+        configured_text = _candidate_identity_text(configured)
+        bound_text = _candidate_identity_text(bound)
+        print(
+            f"warning: config candidate ({configured_text}) differs from the bound "
+            f"attempt-{wp.attempt_number} candidate ({bound_text}); candidates are immutable "
+            "per attempt -- to open a fresh attempt: orc dispatch "
+            f"--run-id {run_id} --config {config_path} --abandon-work {work_id} "
+            '--abandon-reason "<why>"',
+            file=sys.stderr,
+        )
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
@@ -368,11 +434,12 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     is_first_dispatch = not journal.history(delivery_run_id=run_id)
     orchestrator.bootstrap(intent_id=run_id, text=intent_text, plan=plan)
 
+    abandoned_attempt: Optional[int] = None
     if args.abandon_work is not None:
         # TASK-M3B-001 (issues #76/#95): operator-only surface, never the
-        # ship/verify agent observation path. Recorded before the ordinary
-        # run() pass below so the same dispatch invocation both consumes
-        # the abandon and advances the resulting retry/block honestly.
+        # ship/verify agent observation path. This invocation stops at the
+        # READY/BLOCKED resting state produced by the journal-only abandon;
+        # a later real-config dispatch owns the next port effect (#165).
         if not args.abandon_reason:
             raise validation_error(
                 "--abandon-work requires --abandon-reason",
@@ -382,12 +449,22 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 ],
             )
         by = args.abandon_by or os.environ.get("USER") or getpass.getuser()
+        wp = orchestrator.projection().works.get(args.abandon_work)
+        abandoned_attempt = wp.attempt_number if wp else None
         orchestrator.abandon_attempt(work_id=args.abandon_work, reason=args.abandon_reason, by=by)
 
     # Snapshot the durable boundary so the output below can identify only
     # assurance settlements folded by this dispatch invocation.
     history_before_advance = journal.history(delivery_run_id=run_id)
-    projection = orchestrator.run()
+    pre_advance_projection = orchestrator.projection()
+    _warn_candidate_divergence(
+        config,
+        pre_advance_projection,
+        history_before_advance,
+        run_id=run_id,
+        config_path=persisted_config_path.resolve(),
+    )
+    projection = pre_advance_projection if args.abandon_work is not None else orchestrator.run()
     history = journal.history(delivery_run_id=run_id)
 
     # `TASK-M2-006`: optional, write-only Beads mirror -- absent `mirror`
@@ -451,6 +528,23 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             "pending: run is non-terminal, awaiting operator-recorded input for: "
             + ", ".join(sorted(pending_ids) if pending_ids else sorted(projection.works))
         )
+    if args.abandon_work is not None:
+        state = projection.works[args.abandon_work].state
+        redispatch = (
+            f"orc dispatch --run-id {run_id} --journal {journal_dir.resolve()} "
+            f"--config {persisted_config_path.resolve()}"
+        )
+        if state == "READY":
+            print(
+                f"attempt {abandoned_attempt} abandoned ({args.abandon_reason}); work "
+                f"{args.abandon_work} now READY -- next attempt starts on the next dispatch "
+                f"with the run's real config: {redispatch}"
+            )
+        else:
+            print(
+                f"attempt {abandoned_attempt} abandoned ({args.abandon_reason}); work "
+                f"{args.abandon_work} now {state}"
+            )
 
     # Issues #147/#150: report only settlements durably appended by this
     # invocation.  Reading the canonical records back makes this proof of
@@ -877,13 +971,20 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser = subparsers.add_parser(
         "validate",
         help="validate and preview a dispatch config without journaling",
-        description="Validate a portable JSON dispatch config with the same schema checks used "
-        "by dispatch, then preview the plan, adapters, and attempt entries. Read-only: creates "
-        "no journal, ports, or orchestrator.",
-        epilog="example:\n  orc validate ./.orc/my-run/config.json",
+        description="Compose the repo profile and a portable JSON dispatch config with dispatch's "
+        "precedence, apply the same schema checks, then preview the plan, adapters, and attempt "
+        "entries. Read-only: creates no journal, ports, or orchestrator.",
+        epilog="example:\n  orc validate ./.orc/my-run/config.json\n\n"
+        "defaults: --journal $ORC_JOURNAL_DIR or ./.orc; profile composition enabled",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    validate_parser.add_argument("config", help="path to a portable JSON dispatch config")
+    validate_parser.add_argument("config", help="path to a portable JSON dispatch config overlay")
+    validate_parser.add_argument(
+        "--journal", help="journal directory used to locate profile.json (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
+    validate_parser.add_argument(
+        "--no-profile", action="store_true", help="validate the config file alone, without the repo profile"
+    )
     validate_parser.set_defaults(func=cmd_validate)
 
     dispatch_parser = subparsers.add_parser(
