@@ -68,7 +68,18 @@ class CancelCliTest(unittest.TestCase):
     def test_cancel_briefed_acp_run_does_not_construct_provider_ports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _ready_run(root, "cancel-acp")
+            config_path = root / "cfg.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "cancel-acp",
+                        "attempts": {"work-1": []},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            initial = _run_cli(root, "dispatch", "cancel me", "--config", str(config_path))
+            self.assertEqual(initial.returncode, 3, msg=initial.stdout + initial.stderr)
             (root / ".orc" / "profile.json").write_text(
                 json.dumps(
                     {
