@@ -30,6 +30,7 @@ Starting at M1a+ (`M-001`), ship agents and verification scouts also record thei
 4. **Verify** each PR adversarially; required fixes are applied by the same ship agent on the same PR (fix-on-PR, not merge-then-patch) when they sit on advertised contracts; smaller items are tracked.
    - **Corrective-intent rounds are the norm for contract rejections** (operator ruling, 2026-08-29, issue #75): when a verdict rejects a candidate on findings, the fix round is a NEW dispatch whose intent text carries the verifier's findings verbatim — never a blind re-dispatch of the original intent, which re-briefs the executor with no knowledge of what failed. The kernel's bounded blind retry remains for transient execution failures only. Findings-in-retry-prompt automation stays dormant behind the full-autonomy trigger recorded on issue #75.
 5. **Merge** — watchtower only, squash merges, branch refreshed against master first (the single required `ci-required` status check is strict). Doc amendments merge before the code they govern whenever possible.
+   - **A verdict is stale the moment the head moves.** An assurance verdict binds to the head sha it judged; any new head — including a routine branch refresh — silently voids it with no CI signal. Before merging, compare the verified sha against the merge candidate: `git patch-id` distinguishes content drift (re-verify) from a mere rebase of identical content (the verdict carries). Record which case it was.
 6. **Consolidate** doc amendments produced by a round of audits into one docs PR rather than many.
 7. At integration gates, run a **falsifiability pass**: hand-picked contract-violating mutants applied to a scratch copy; every mutant must turn the suite red, and any survivor becomes a mandatory test addition.
 8. After a major merge, run the concerned slice of `dogfood/` (`DOGFOOD-CORPUS`) via the dogfood checker. Findings route per `DELIVERY-STANCE`: a deterministic, contract-relevant finding becomes an issue and/or a fix PR; a legibility/output-quality finding (FRICTION) becomes an issue or a docs amendment; either way the finding is recorded, never left as an unfiled observation.
@@ -44,6 +45,36 @@ Tasks are sized by reviewability and decision count, not implementation effort:
 - **No reward-hacking in the definition of done** — the brief states explicitly that tests, gates, and checks must not be deleted, skipped, weakened, or narrowed to make them pass. A green gate reached by weakening the check is a rejected candidate, not a delivery. This is the shipper-side complement to the verifier's tautological-test hunt: the shipper is told not to game the gate; the verifier confirms the gate was not gamed (it hunts tests that cannot fail and re-derives any identity a verdict rests on).
 - **Disjoint file territory** for anything dispatched in parallel.
 - **Wide mechanical refactors use expand → migrate → contract** — the sanctioned exception to "one PR = one green claim." A change with cross-codebase blast radius (rename a shared field, retype a shared symbol) cannot be a single green standalone PR. Sequence it: **expand** (add the new form beside the old; nothing breaks) → **migrate** call sites in blast-radius-sized batches (each its own PR, gate green batch-to-batch) → **contract** (delete the old form; blocked by all migrates). Every step keeps the gate green; there is no single giant red PR, and the "one reviewable claim" rule holds per batch.
+- **Pilot one unit to falsify the brief before fanning out.** Before dispatching a multi-unit batch from one brief template, push exactly one unit through the entire pipeline — brief, ship, verify, merge — with the stated purpose of *breaking* the template, the verify recipe, and the unit sizing while that costs one agent instead of many. Fix the template from pilot evidence, then scale. A batch dispatched on an unpiloted template bets the whole fan-out on an untested contract.
+
+## Autonomy and operator interaction
+
+How the watchtower proceeds while the operator is away — previously informal,
+now canonical:
+
+- **The reversible/irreversible boundary.** Proceed on anything reversible and
+  present the result; pause only for irreversible or outward-facing acts (force
+  pushes to shared branches, deletions, deploys, external messages) unless a
+  standing authorization covers them. Direction comes from the operator;
+  execution never blocks on them. "Should I keep going?" is never a question to
+  ask.
+- **An empirical fork is settled by a probe, not a question.** Before asking
+  "which approach?", classify the fork: if the answer is observable by running
+  something, build the throwaway probe and hand the operator a *result to react
+  to* instead of a decision to make. Questions are reserved for genuine
+  preference calls no experiment settles.
+- **A parked question carries a default.** Every question queued for the
+  operator states the options *and the default that applies if no answer
+  arrives*, so the program routes around the gate instead of truly blocking.
+  The default fires as an ordinary recorded ruling.
+- **A duration is not a finish condition.** Unattended runs get a checkable
+  predicate, never an hour count — and a pre-authorized escape hatch: if
+  genuinely stuck, stop and write up why. A written stop beats hours of creative
+  goal reinterpretation.
+
+Source for this section's mechanics: `cursor/plugins` pstack (poteto-mode,
+orchestrate, overnight), reconciled with our existing proceed-while-AFK
+practice and the reward-hacking clause above.
 
 ## Dormant-feature lifecycle
 
