@@ -65,6 +65,29 @@ class CancelCliTest(unittest.TestCase):
             self.assertEqual(repeated.returncode, 2)
             self.assertEqual(json.loads(repeated.stderr)["error"], "ERR-CONFLICT")
 
+    def test_cancel_briefed_acp_run_does_not_construct_provider_ports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _ready_run(root, "cancel-acp")
+            (root / ".orc" / "profile.json").write_text(
+                json.dumps(
+                    {
+                        "execution": {"adapter": "acp", "cwd": str(root)},
+                        "candidate": {"adapter": "git", "repo_path": str(root)},
+                        "briefs": {"work-1": "provider-only brief"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = _run_cli(
+                root, "cancel", "cancel-acp", "--work", "work-1", "--reason", "operator closure"
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("state=CANCELLED", result.stdout)
+            self.assertNotIn("note: work", result.stderr)
+
 
 class CancelledReportingTest(unittest.TestCase):
     def test_cancelled_is_settled_and_excluded_from_active_index(self) -> None:
