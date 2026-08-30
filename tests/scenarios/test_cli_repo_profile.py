@@ -41,14 +41,22 @@ class RepoProfileTest(unittest.TestCase):
         persisted = json.loads((self.root / ".orc" / "profile-run" / "config.json").read_text())
         self.assertEqual(persisted["attempts"]["work-1"][0]["candidate"], {"from": "profile"})
 
-    def test_explicit_overlay_deep_merges_nested_profile_defaults(self):
-        profile = {
-            "execution": {"adapter": "acp", "cwd": "/repo", "agent": "pi"},
-            "candidate": {"adapter": "git", "repo_path": "/repo"},
-            "assurance": {"adapter": "no-mistakes", "repo_path": "/repo"},
+    def test_dispatch_loader_defers_profile_completeness_until_composition(self):
+        profile_path = self.root / ".orc" / "profile.json"
+        profile_path.parent.mkdir()
+        profile_path.write_text(json.dumps({
+            "execution": {"adapter": "acp", "agent": "pi", "model": "model-x"},
+            "candidate": {"adapter": "git"},
+            "assurance": {"adapter": "no-mistakes"},
             "mirror": {"adapter": "beads", "workspace": "/board"},
-        }
-        merged = validate_config(deep_merge_config(profile, {"execution": {"model": "model-x"}}))
+        }), encoding="utf-8")
+
+        profile = load_repo_profile(self.root / ".orc")
+        merged = validate_config(deep_merge_config(profile or {}, {
+            "execution": {"cwd": "/repo"},
+            "candidate": {"repo_path": "/repo"},
+            "assurance": {"repo_path": "/repo"},
+        }))
         self.assertEqual(merged["execution"]["model"], "model-x")
         self.assertEqual(merged["execution"]["cwd"], "/repo")
         self.assertEqual(merged["assurance"]["adapter"], "no-mistakes")

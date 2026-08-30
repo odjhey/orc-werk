@@ -239,8 +239,12 @@ def cmd_config_schema(_args: argparse.Namespace) -> int:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    """Validate and preview a dispatch config without constructing run machinery."""
-    config = load_config(args.config)
+    """Validate and preview a composed dispatch config without run machinery."""
+    journal_dir = resolve_journal_dir(args.journal)
+    explicit = load_config_overlay(args.config)
+    profile_path = journal_dir.resolve() / "profile.json"
+    profile = None if args.no_profile else load_repo_profile(journal_dir)
+    config = validate_config(deep_merge_config(profile or {}, explicit))
 
     plan = config.get("plan")
     if isinstance(plan, Mapping):
@@ -248,6 +252,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
     else:
         works = ["work-1 (default)"]
     print(f"PASS: {args.config}")
+    if profile is not None:
+        profile_keys = ", ".join(sorted(profile)) or "empty"
+        print(f"layers: profile: {profile_path} ({profile_keys}) + config: {args.config}")
+    else:
+        print(f"layers: config: {args.config}")
     print(f"plan works: {', '.join(works) if works else '(none)'}")
     print(
         "adapters: "
@@ -877,13 +886,20 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser = subparsers.add_parser(
         "validate",
         help="validate and preview a dispatch config without journaling",
-        description="Validate a portable JSON dispatch config with the same schema checks used "
-        "by dispatch, then preview the plan, adapters, and attempt entries. Read-only: creates "
-        "no journal, ports, or orchestrator.",
-        epilog="example:\n  orc validate ./.orc/my-run/config.json",
+        description="Compose the repo profile and a portable JSON dispatch config with dispatch's "
+        "precedence, apply the same schema checks, then preview the plan, adapters, and attempt "
+        "entries. Read-only: creates no journal, ports, or orchestrator.",
+        epilog="example:\n  orc validate ./.orc/my-run/config.json\n\n"
+        "defaults: --journal $ORC_JOURNAL_DIR or ./.orc; profile composition enabled",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    validate_parser.add_argument("config", help="path to a portable JSON dispatch config")
+    validate_parser.add_argument("config", help="path to a portable JSON dispatch config overlay")
+    validate_parser.add_argument(
+        "--journal", help="journal directory used to locate profile.json (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
+    validate_parser.add_argument(
+        "--no-profile", action="store_true", help="validate the config file alone, without the repo profile"
+    )
     validate_parser.set_defaults(func=cmd_validate)
 
     dispatch_parser = subparsers.add_parser(
