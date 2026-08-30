@@ -666,8 +666,9 @@ honestly on its own line:
    (create the file if absent, append the entry if missing, skip-with-note
    if already present). Append-only: an existing line is never rewritten.
 2. **repo-default profile** -- write an empty starter `<path>/.orc/profile.json`; an exact match skips, a mismatch skips-with-note, and `--force` overwrites. This is scaffolding only and never creates or writes a journal.
-3. **skill install** -- write the orc-ledger skill's content to
-   `<path>/.agents/skills/orc-ledger/SKILL.md`, and link
+3. **skill install** -- write the versioned orc-ledger skill and its release
+   history to `<path>/.agents/skills/orc-ledger/SKILL.md` and the adjacent
+   `CHANGELOG.md`, and link
    `<path>/.claude/skills/orc-ledger` to it (a relative symlink,
    `../../.agents/skills/orc-ledger`, resolving correctly from the link's
    own directory -- the issue #63 lesson) so Claude Code's project-skill
@@ -690,8 +691,8 @@ honestly on its own line:
    depth surface. `--print-agents-block` prints this block to stdout and
    performs no other step -- writes nothing at all -- for pasting into
    whatever agent-instructions file a repo already uses.
-5. **install verification** -- honestly reports: `orc` on `$PATH`
-   (`shutil.which`) vs. this interpreter's own ability to import
+5. **install verification** -- honestly reports the installed orc-ledger
+   skill version; `orc` on `$PATH` (`shutil.which`) vs. this interpreter's own ability to import
    `orc_werk` (module form); the journal directory `--journal`/
    `$ORC_JOURNAL_DIR`/`./.orc` precedence would resolve to, anchored at
    `--path`; and the optional `bd` binary's presence (Beads mirror,
@@ -727,11 +728,13 @@ orc onboard --print-agents-block           # prints only, writes nothing
 Keep that repository's journal local through `ORC_JOURNAL_DIR` or the local `./.orc` default. The shared workspace is only the write-only mirror destination; read the portfolio with `bd`'s own CLI. See `PLAYBOOK-PORTFOLIO-COCKPIT` for the sanctioned read-back commands and boundary.
 
 **Idempotent and non-destructive by construction**: every step compares
-what it would write against what is already there. An exact match is a
-`skip` note (no write). A target that already exists with *different*
-content -- the skill file, the `.claude/skills` link, or the agents-block
-markers -- is `skip-with-note` by default (never a hard failure) unless
-`--force` is given, which overwrites/replaces it in place, also reported.
+what it would write against what is already there. An exact skill match is
+reported with its version and skipped. A differing skill whose content hash
+is recorded as a prior release in the packaged changelog is a clean stale
+copy, so `orc onboard` upgrades it and its changelog automatically. An
+unknown hash is operator-modified and remains `skip-with-note` by default
+(never a hard failure) unless `--force` is given. The same never-clobber rule
+applies to the `.claude/skills` link, changelog, and agents-block markers.
 Errors (`--path` missing or not a directory) are canonical `ERR-VALIDATION`
 with `next` guidance (issue #94), exit `2`; every other exit is `0`.
 
