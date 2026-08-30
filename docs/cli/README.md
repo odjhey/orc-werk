@@ -153,27 +153,6 @@ Invalid JSON or an unknown/malformed config key exits `2` and prints the
 canonical `ERR-VALIDATION` JSON, including the offending config path. The
 command never reads or writes `.orc/` run state.
 
-### `orc validate`
-
-```text
-usage: orc validate [-h] config
-```
-
-Validates one portable JSON dispatch config with the same CLI-owned schema
-checks used by `dispatch`, then prints a read-only preview of the plan works,
-selected execution/candidate/assurance adapters, and each recorded attempt's
-keys. Assurance entries show their verdict and extension keys explicitly so a
-verification-seat edit can be checked before re-dispatching.
-
-```bash
-orc validate ./.orc/demo-pending/config.json
-```
-
-Success prints `PASS` and exits `0`. Invalid JSON or schema content prints the
-canonical `ERR-VALIDATION` (including the offending key/path) to stderr and
-exits `2`. The command constructs no journal, ports, adapters, or orchestrator;
-it never creates or changes `.orc/` run state.
-
 ### `orc dispatch`
 
 ```text
