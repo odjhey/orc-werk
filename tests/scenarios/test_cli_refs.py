@@ -703,9 +703,43 @@ class VetFlagDepthUnitTest(unittest.TestCase):
         self.assertIsNone(_vet_read_only(["no-mistakes", "axi", "logs", "--run", "r1", "--step", "review", "--full"]))
         self.assertIsNotNone(_vet_read_only(["no-mistakes", "axi", "status", "--output", "/tmp/x"]))
 
-    def test_bd_unknown_flag_refused_label_status_pass(self) -> None:
-        self.assertIsNone(_vet_read_only(["bd", "--json", "-C", "/abs/ws", "list", "--label", "run:x", "--status", "open"]))
-        self.assertIsNotNone(_vet_read_only(["bd", "--json", "-C", "/abs/ws", "list", "--output", "/tmp/x"]))
+    def test_bd_audited_read_only_flags_pass_for_list_and_show(self) -> None:
+        for subcommand, positionals in (("list", []), ("show", ["bd-1"])):
+            for flag in ("--json", "--no-pager"):
+                argv = ["bd", subcommand, *positionals, flag]
+                self.assertIsNone(_vet_read_only(argv), msg=argv)
+
+    def test_bd_dangerous_flags_are_refused_for_list_and_show(self) -> None:
+        dangerous = {
+            "--watch": [],
+            "-w": [],
+            "--format": ["{{.Title}}"],
+            "--db": ["/tmp/attacker.db"],
+            "--actor": ["attacker"],
+            "--global": [],
+            "--dolt-auto-commit": ["on"],
+            "--ignore-schema-skew": [],
+        }
+        for subcommand, positionals in (("list", []), ("show", ["bd-1"])):
+            for flag, values in dangerous.items():
+                argv = ["bd", subcommand, *positionals, flag, *values]
+                reason = _vet_read_only(argv)
+                self.assertIsNotNone(reason, msg=argv)
+                self.assertIn("allowlist", reason, msg=argv)
+
+    def test_bd_unknown_novel_flag_remains_fail_closed(self) -> None:
+        for argv in (
+            ["bd", "list", "--novel-future-flag"],
+            ["bd", "show", "bd-1", "--novel-future-flag"],
+        ):
+            self.assertIsNotNone(_vet_read_only(argv), msg=argv)
+
+    def test_builder_bd_resolve_flags_pass(self) -> None:
+        argv = [
+            "bd", "--json", "-C", "/abs/ws", "list",
+            "--label", "run:x", "--status", "all",
+        ]
+        self.assertIsNone(_vet_read_only(argv))
 
     def test_acpx_agent_leading_dash_refused(self) -> None:
         # A crafted provider string `acpx---output` yields agent `--output`,
