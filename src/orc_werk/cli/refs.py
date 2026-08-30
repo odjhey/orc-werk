@@ -426,6 +426,7 @@ class RefRow:
     provider: str
     value: str
     resolve: ResolveCommand
+    verdict: Optional[str] = None
 
 
 def _display(value: Any) -> str:
@@ -561,7 +562,15 @@ def _evidence_ref_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
                 command = _command_field(entry)
                 if command is not None:
                     resolve = ResolveCommand.from_raw_text(command)
-            rows.append(RefRow(kind="evidence", provider="-", value=_display(entry), resolve=resolve))
+            rows.append(
+                RefRow(
+                    kind="evidence",
+                    provider="-",
+                    value=_display(entry),
+                    resolve=resolve,
+                    verdict=data.get("verdict") if isinstance(data.get("verdict"), str) else None,
+                )
+            )
     return rows
 
 
@@ -600,11 +609,15 @@ def _candidate_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
         head_sha = subject_identity.get("head_sha")
         if head_sha is not None:
             repo_path = subject_identity.get("repo_path")
+            identity = {"head_sha": head_sha}
+            if subject_identity.get("branch") is not None:
+                identity["branch"] = subject_identity["branch"]
             if repo_path is not None:
-                value = _display({"head_sha": head_sha, "repo_path": repo_path})
+                identity["repo_path"] = repo_path
+                value = _display(identity)
                 resolve = _candidate_git_show(str(head_sha), str(repo_path))
             else:
-                value = _display({"head_sha": head_sha})
+                value = _display(identity)
                 resolve = ResolveCommand.none()
             rows.append(RefRow(kind="candidate", provider="-", value=value, resolve=resolve))
 
@@ -695,7 +708,8 @@ def collect_refs(directory: Path, run_id: str, history: Sequence[Mapping[str, An
 
 
 def _row_line(row: RefRow) -> str:
-    return f"{row.kind:12s} {row.provider:16s} {row.value}  (resolve: {row.resolve.display})"
+    verdict = f" verdict={row.verdict}" if row.verdict is not None else ""
+    return f"{row.kind:12s} {row.provider:16s} {row.value}{verdict}  (resolve: {row.resolve.display})"
 
 
 # ---------------------------------------------------------------------------

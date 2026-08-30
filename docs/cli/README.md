@@ -77,6 +77,7 @@ Exit code `0`: every Work reached `ACCEPTED`.
 
 ```bash
 orc status demo-run-1                 # per-work terminal state, attempt count, candidate fingerprint
+orc verdict demo-run-1                # latest assurance verdict, evidence, and findings per work
 orc history demo-run-1                # the full seq-ordered fact/decision/effect record
 orc report demo-run-1                 # self-contained HTML report at .orc/demo-run-1/report.html
 ```
@@ -311,6 +312,23 @@ orc status my-run-id --journal ./.orc
 orc status ./.orc/my-run-id.jsonl
 ```
 
+### `orc verdict`
+
+```text
+usage: orc verdict [-h] [--journal JOURNAL] target
+```
+
+Read-only shortcut for the latest `FACT-ASSURE-SETTLED` per Work. It prints
+the verdict, bound candidate fingerprint, evidence references when present,
+extension keys, and a compact `review-findings/v1` finding summary using the
+same rendering as `orc show`. Work without a settled assurance prints
+`(no verdict yet)`. The command only reads the journal and records nothing.
+
+```bash
+orc verdict my-run-id
+orc verdict my-run-id --journal ./.orc
+```
+
 ### `orc history`
 
 ```text
@@ -464,7 +482,7 @@ absent when the run carries none of it -- never fabricated:
 `execution-session/v1` session/resume/transcript refs
 (`EXT-EXECUTION-SESSION-V1-SCHEMA`) off `FACT-EXEC-SETTLED`; assurance
 `evidence_refs` off `FACT-ASSURE-SETTLED` (`PROTOCOL-FACTS`); candidate
-identity (`head_sha`/`repo_path`/`pr`) off the journaled
+identity (`head_sha`/`branch`/`repo_path`/`pr`) off the journaled
 `FX-IDENTIFY-CANDIDATE` effect; and the Beads mirror's run label +
 workspace, read from the run's own persisted dispatch config when one
 configured a `mirror` block. The plain listing never shells out to
@@ -490,8 +508,8 @@ run: my-run-id
 [1] session      acpx-pi          sess-9f2c  (resolve: acpx pi sessions history sess-9f2c)
 [2] resume       acpx-pi          resume-ref-9f2c  (resolve: -)
 [3] transcript   acpx-pi          /abs/path/transcript.log  (resolve: cat /abs/path/transcript.log)
-[4] evidence     -                {"command":"no-mistakes axi status --run r1", ...}  (resolve: no-mistakes axi status --run r1)
-[5] candidate    -                {"head_sha":"abc123","repo_path":"/abs/worktree"}  (resolve: git -C /abs/worktree show abc123 --stat)
+[4] evidence     -                {"command":"no-mistakes axi status --run r1", ...} verdict=rejected  (resolve: no-mistakes axi status --run r1)
+[5] candidate    -                {"branch":"feature/widget","head_sha":"abc123","repo_path":"/abs/worktree"}  (resolve: git -C /abs/worktree show abc123 --stat)
 [6] mirror       beads            label=run:my-run-id workspace=/abs/bd-workspace  (resolve: bd --json -C /abs/bd-workspace list --label run:my-run-id)
 ```
 

@@ -63,7 +63,7 @@ from orc_werk.cli.onboard import DEFAULT_AGENTS_FILE, cmd_onboard
 from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint, window_before
 from orc_werk.cli.refs import FACT_ASSURE_SETTLED, cmd_refs
 from orc_werk.cli.report import _index_state_rollup, cmd_report, ordered_run_entries
-from orc_werk.cli.show import cmd_show
+from orc_werk.cli.show import _render_findings, cmd_show
 from orc_werk.core.errors import CoreError, validation_error
 from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, STATE_EXECUTING, WorkProjection
 from orc_werk.ports.capabilities import validate_capabilities
@@ -526,6 +526,43 @@ def _compact(data: object) -> str:
     return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
 
+def cmd_verdict(args: argparse.Namespace) -> int:
+    """Print each Work's latest journaled assurance outcome, without writing."""
+    directory, run_id = _resolve_journal(args.target, args.journal)
+    _require_journal_file(directory, run_id, target=args.target)
+    journal = JSONLJournal(directory)
+    history = journal.history(delivery_run_id=run_id)
+    projection = journal.load_projection(delivery_run_id=run_id)
+    latest: dict[str, Mapping[str, Any]] = {}
+    for record in history:
+        if record.get("kind") == "fact" and record.get("id") == FACT_ASSURE_SETTLED:
+            work_id = record.get("data", {}).get("work_id")
+            if isinstance(work_id, str):
+                latest[work_id] = record
+
+    print(f"run: {run_id}")
+    for work_id in sorted(projection.works):
+        record = latest.get(work_id)
+        if record is None:
+            print(f"work {work_id}: (no verdict yet)")
+            continue
+        data = record.get("data", {})
+        print(
+            f"work {work_id}: verdict={data.get('verdict', '-')} "
+            f"candidate_fingerprint={data.get('candidate_fingerprint', '-')}"
+        )
+        if data.get("evidence_refs"):
+            print(f"  evidence_refs={_compact(data['evidence_refs'])}")
+        extensions = record.get("extensions") or {}
+        if extensions:
+            print(f"  extensions={','.join(sorted(extensions))}")
+        findings = extensions.get("review-findings/v1")
+        if isinstance(findings, Mapping) and isinstance(findings.get("findings"), list):
+            for line in _render_findings(findings["findings"], run_id=run_id):
+                print(line)
+    return 0
+
+
 def cmd_history(args: argparse.Namespace) -> int:
     directory, run_id = _resolve_journal(args.target, args.journal)
     _require_journal_file(directory, run_id, target=args.target)
@@ -900,6 +937,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="resolve every ref that carries a resolve command, each under its own header",
     )
     refs_parser.set_defaults(func=cmd_refs)
+
+    verdict_parser = subparsers.add_parser(
+        "verdict",
+        help="print each work's latest assurance verdict and findings",
+        description="Read-only journal projection of each Work's latest assurance verdict, "
+        "candidate fingerprint, evidence references, and extension findings.",
+        epilog="examples:\n  orc verdict my-run-id\n  orc verdict my-run-id --journal ./.orc",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    verdict_parser.add_argument("target", help="journal path (dir or <run>.jsonl) or bare run id")
+    verdict_parser.add_argument(
+        "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
+    verdict_parser.set_defaults(func=cmd_verdict)
 
     history_parser = subparsers.add_parser(
         "history",

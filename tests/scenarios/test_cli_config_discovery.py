@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import unittest
@@ -10,6 +11,7 @@ from pathlib import Path
 from orc_werk.cli import config
 from orc_werk.cli.config import (
     _ASSURANCE_ADAPTERS,
+    _ASSURANCE_ENTRY_KEYS,
     _CANDIDATE_ADAPTERS,
     _EXECUTION_ADAPTERS,
     _MIRROR_ADAPTERS,
@@ -42,6 +44,17 @@ class ConfigDiscoveryTest(unittest.TestCase):
         self.assertEqual(result.stdout, config.__doc__)
         for block in ("execution", "candidate", "assurance", "mirror", "briefs"):
             self.assertIn(block, result.stdout)
+
+    def test_config_schema_documents_exact_assurance_entry_keys(self) -> None:
+        result = _run_cli("config-schema")
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        section = result.stdout.split("### Scripted assurance entry", 1)[1].split("\n- `plan`", 1)[0]
+        documented_keys = frozenset(re.findall(r"(?m)^- `([^`]+)`", section))
+        self.assertEqual(documented_keys, _ASSURANCE_ENTRY_KEYS)
+        self.assertIn("`verdict` (REQUIRED)", section)
+        self.assertIn("`extensions` (optional)", section)
+        self.assertIn("review-findings/v1", section)
+        self.assertIn("`PLAYBOOK-AGENT-CLI` section 4", section)
 
     def test_dispatch_help_lists_every_config_block_and_validator_adapters(self) -> None:
         result = _run_cli("dispatch", "--help")
