@@ -133,19 +133,15 @@ def agents_block_text(
     *,
     profile: Optional[dict] = None,
     scripted_default: bool = True,
+    agents_block: str = "slim",
+    ledger: str = "local",
 ) -> str:
-    """Derive the copy-pasteable `## Delivery ledger (orc)` block from the
-    packaged `SKILL.md` content: strip the YAML frontmatter, drop the `#
-    Working with the orc delivery ledger` H1 title, and keep every other
-    line verbatim (the intro paragraph plus the six numbered sections) --
-    already written context-free (`docs/README.md`'s spirit: this text
-    names the repo's own ledger convention, not orc-werk-specific
-    knowledge). A mechanical transform, not a second hand-authored copy of
-    the six-rule protocol -- `tests/scenarios/test_cli_onboard.py`'s
-    canonical-origin test re-derives this from the packaged source and
-    diffs it against what `onboard` actually wrote/printed, so a fork
-    (someone hand-editing the block's text in this module instead of
-    `SKILL.md`) fails that test immediately."""
+    """Build the adopter's agents block.
+
+    ``full`` mechanically transforms the packaged skill; ``slim`` keeps that
+    installed skill as the sole copy of its protocol and only points to it.
+    Mode remains derived from the repository profile in both forms.
+    """
     text = skill_text if skill_text is not None else packaged_skill_text()
     lines = text.splitlines()
     if lines and lines[0].strip() == "---":
@@ -179,14 +175,25 @@ def agents_block_text(
             "you the agent do the work and record the settlement/verdict by hand "
             "(do the work by hand)."
         )
+    locality = (
+        "The ledger is operator-machine-local; resume from the primary checkout root."
+        if ledger == "local"
+        else "The ledger is committed and shared through the repository."
+    )
+    skill_pointer = (
+        "Before touching the ledger, load the installed `orc-ledger` skill "
+        "(`.claude/skills/orc-ledger`) — it is the canonical protocol."
+    )
     declaration = (
         "### MODE DECLARATION\n\n"
         f"**{mode}.** {action}\n\n"
         "Dispatch configs default via profile `.orc/profile.json`; no adapter blocks need "
-        "to be specified. The seat discipline and recording protocol are in the "
-        "delivery-ledger rules below (the installed `orc-ledger` skill)."
+        "to be specified."
     )
-    return f"## Delivery ledger (orc)\n\n{declaration}\n\n{body}\n"
+    prefix = f"## Delivery ledger (orc)\n\n{declaration}\n\n{locality}"
+    if agents_block == "full":
+        return f"{prefix}\n\n{body}\n"
+    return f"{prefix}\n\n{skill_pointer}\n"
 
 
 BLOCK_BEGIN = "<!-- BEGIN ORC-LEDGER AGENTS BLOCK (orc onboard, TASK-M3D-001) -->"
@@ -212,8 +219,18 @@ _STARTER_PROFILE = "{}\n"
 # --- Step 1: gitignore --------------------------------------------------------
 
 
-def _step_gitignore(target: Path) -> str:
+def _step_gitignore(target: Path, *, ledger: str) -> str:
     path = target / ".gitignore"
+    if ledger == "committed":
+        if not path.exists():
+            return "gitignore: committed ledger selected; no `.orc/` entry written"
+        existing = {line.strip() for line in path.read_text(encoding="utf-8").splitlines()}
+        if GITIGNORE_ENTRY in existing or GITIGNORE_ENTRY.rstrip("/") in existing:
+            return (
+                "gitignore: WARNING -- committed ledger selected but an existing `.orc/` "
+                f"entry remains in {hyperlink_path(path.resolve())}; remove it explicitly to share the ledger"
+            )
+        return "gitignore: committed ledger selected; no `.orc/` entry written"
     if not path.exists():
         path.write_text(GITIGNORE_ENTRY + "\n", encoding="utf-8")
         return f"gitignore: created {hyperlink_path(path.resolve())} with `{GITIGNORE_ENTRY}` entry"
@@ -370,8 +387,17 @@ def _step_agents_block(
     force: bool,
     profile: Optional[dict],
     scripted_default: bool,
+    agents_block: str,
+    ledger: str,
 ) -> str:
-    wrapped = _wrapped_block(agents_block_text(profile=profile, scripted_default=scripted_default))
+    wrapped = _wrapped_block(
+        agents_block_text(
+            profile=profile,
+            scripted_default=scripted_default,
+            agents_block=agents_block,
+            ledger=ledger,
+        )
+    )
     path = target / agents_file
     if not path.exists():
         path.write_text(wrapped, encoding="utf-8")
@@ -414,8 +440,8 @@ def _verify(target: Path, *, journal_flag: Optional[str]) -> list[str]:
         lines.append(f"  orc console script on PATH: found ({orc_on_path})")
     else:
         lines.append(
-            "  orc console script on PATH: absent -- module form still works: "
-            "PYTHONPATH=<path-to-orc-werk-src> python3 -m orc_werk.cli"
+            "  orc console script on PATH: absent -- install the package console script; "
+            "then run `orc -h` for the local command reference"
         )
 
     module_found = importlib.util.find_spec("orc_werk") is not None
@@ -456,7 +482,11 @@ def cmd_onboard(args: argparse.Namespace) -> int:
         profile = load_repo_profile(target / ".orc")
         print(
             _wrapped_block(
-                agents_block_text(profile=dict(profile) if profile is not None else None)
+                agents_block_text(
+                    profile=dict(profile) if profile is not None else None,
+                    agents_block=args.agents_block,
+                    ledger=args.ledger,
+                )
             ),
             end="",
         )
@@ -479,7 +509,12 @@ def cmd_onboard(args: argparse.Namespace) -> int:
     profile_was_absent = not (target / _PROFILE_REL).exists()
 
     print(f"onboard: {hyperlink_path(target)}")
-    print(_step_gitignore(target))
+    print(f"ledger: {args.ledger} -- " + (
+        "operator-machine-local; resume from the primary checkout root"
+        if args.ledger == "local"
+        else "committed and shared through the repository"
+    ))
+    print(_step_gitignore(target, ledger=args.ledger))
     print(_step_profile(target, force=args.force))
     profile = load_repo_profile(target / ".orc")
     for line in _step_skill(target, force=args.force):
@@ -491,6 +526,8 @@ def cmd_onboard(args: argparse.Namespace) -> int:
             force=args.force,
             profile=dict(profile) if profile is not None else None,
             scripted_default=profile_was_absent or profile == {},
+            agents_block=args.agents_block,
+            ledger=args.ledger,
         )
     )
     for line in _verify(target, journal_flag=args.journal):

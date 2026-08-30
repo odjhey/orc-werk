@@ -650,6 +650,7 @@ with zero escape bytes.
 ```text
 usage: orc onboard [-h] [--path PATH] [--print-agents-block] [--force]
                     [--agents-file NAME] [--journal JOURNAL]
+                    [--agents-block {slim,full}] [--ledger {local,committed}]
 ```
 
 Mechanically scaffolds an adopting repository (`TASK-M3D-001`, `TASK-M4A-001`, `TASK-M4A-004`) -- the
@@ -657,9 +658,10 @@ hand-work `docs/product/adoption.md` (`PRODUCT-ADOPTION`) used to describe
 as a manual copy. Four independently idempotent steps, each reported
 honestly on its own line:
 
-1. **gitignore** -- ensure a `.orc/` entry exists in `<path>/.gitignore`
-   (create the file if absent, append the entry if missing, skip-with-note
-   if already present). Append-only: an existing line is never rewritten.
+1. **ledger placement / gitignore** -- `--ledger local` (the default) ensures a
+   `.orc/` entry exists in `<path>/.gitignore`. `--ledger committed` writes no
+   ignore entry; if one already exists, onboard warns and leaves removal to the
+   operator. The report and agents block state the selected placement.
 2. **repo-default profile** -- write an empty starter `<path>/.orc/profile.json`; an exact match skips, a mismatch skips-with-note, and `--force` overwrites. This is scaffolding only and never creates or writes a journal.
 3. **skill install** -- write the versioned orc-ledger skill and its release
    history to `<path>/.agents/skills/orc-ledger/SKILL.md` and the adjacent
@@ -673,19 +675,14 @@ honestly on its own line:
    hand-maintained copy of the six-rule protocol embedded in this CLI's own
    source.
 4. **agents-onboarding block** -- a copy-pasteable `## Delivery ledger
-   (orc)` block (the same six-rule content step 2 installs, mechanically
-   derived from it -- strip the YAML frontmatter and the H1 title, keep
-   everything else verbatim) written into `<path>/<agents-file>` (default
-   `AGENTS.md`), wrapped in HTML-comment markers so a re-run can detect and
-   compare it. The block adds a **MODE DECLARATION** derived from
-   `.orc/profile.json`: scripted/absent execution and assurance adapters
-   declare scripted mode (an absent profile is the scripted default), while
-   ACP execution or non-scripted assurance declares adapter-driven mode. It
-   states who performs the seat, notes that configs default via the profile
-   without adapter blocks, and points to the seat discipline in the installed `orc-ledger` skill
-   depth surface. `--print-agents-block` prints this block to stdout and
-   performs no other step -- writes nothing at all -- for pasting into
-   whatever agent-instructions file a repo already uses.
+   (orc)` block written into `<path>/<agents-file>` (default `AGENTS.md`) and
+   wrapped in markers for safe comparison. The default `--agents-block slim`
+   contains only the profile-derived **MODE DECLARATION**, selected ledger
+   locality, and a requirement to load `.claude/skills/orc-ledger` before
+   touching the ledger. The skill remains the single protocol copy. Select
+   `--agents-block full` only for harnesses without skill support; this form
+   mechanically transforms and inlines the packaged skill. `--print-agents-block`
+   prints the selected block and writes nothing.
 5. **install verification** -- honestly reports the installed orc-ledger
    skill version; `orc` on `$PATH` (`shutil.which`) vs. this interpreter's own ability to import
    `orc_werk` (module form); the journal directory `--journal`/
@@ -701,11 +698,15 @@ honestly on its own line:
 | `--force` | off | overwrite/replace a target that already exists with different content (default: skip-with-note) |
 | `--agents-file` | `AGENTS.md` | agent-instructions file (relative to `--path`) the Delivery ledger block is written into |
 | `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory the verification step reports on (anchored at `--path`); `onboard` never creates a journal itself |
+| `--agents-block` | `slim` | `slim` points to the installed skill; `full` inlines it for harnesses without skill support |
+| `--ledger` | `local` | `local` adds the ignore entry and declares operator-machine locality; `committed` leaves gitignore unchanged and declares shared repository state |
 
 ```bash
 orc onboard --path /path/to/adopting-repo
 orc onboard --path . --force              # re-run, overwriting operator-modified targets
-orc onboard --print-agents-block           # prints only, writes nothing
+orc onboard --print-agents-block           # prints slim block only, writes nothing
+orc onboard --ledger committed             # shared ledger, no new ignore entry
+orc onboard --agents-block full             # harness cannot load project skills
 ```
 
 **Joining a shared portfolio:** after onboarding, set `mirror.workspace` and `mirror.project` in the repository's `.orc/profile.json`. Every participating repository uses the same absolute workspace path and a distinct project name:
