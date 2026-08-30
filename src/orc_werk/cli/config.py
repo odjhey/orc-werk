@@ -51,6 +51,21 @@ config's ``max_attempts``.
   field (e.g. an `execution-session/v1` payload) -- the same passthrough
   envelope field every journaled fact already carries
   (`CONTRACT-EXTENSIONS`).
+
+### Scripted assurance entry
+
+An attempt entry's `assurance` object accepts exactly these keys:
+
+- `verdict` (REQUIRED): `"accepted"`, `"rejected"`, or `"inconclusive"`.
+- `states` (optional): the per-assurance-inspection lifecycle-state script,
+  in order; it defaults to `["settled"]`.
+- `evidence_refs` (optional): a portable list of externally resolvable
+  reference strings.
+- `extensions` (optional): a versioned-extension map transported opaquely
+  under `CONTRACT-EXTENSIONS`. Per `PLAYBOOK-AGENT-CLI` section 4, a
+  verifier records substantive findings here as
+  `{"review-findings/v1": {...}}`.
+
 - `plan` is an optional `PORT-WORK-001` multi-work plan (needed to exercise
   a fan-in run like `SCN-005` from the CLI); defaults to
   `orc_werk.app.default_single_work_plan()`.
