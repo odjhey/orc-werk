@@ -43,7 +43,11 @@ None of these raise — `PORT-CAND-001` frames "no assurable subject" as a valid
 
 `identify(execution_id, artifact_refs)`: `execution_id` is not used to look anything up (there is no `{execution_id: subject}` mapping for a real adapter to consult) — it is only threaded through into the returned `Candidate.execution_id` and `Candidate.work_id` (bookkeeping; `PORT-CAND-001` does not hand `identify()` a `work_id`, so this adapter synthesizes `Candidate.work_id = execution_id`). `artifact_refs['ref']`, when present, names the git ref to fingerprint instead of the default `HEAD`.
 
-`current(work_id)`: fingerprints `HEAD` for the configured `repo_path`, using a synthesized `execution_id` (`f"git-diff-worktree:{work_id}"`) purely as bookkeeping — the returned `Candidate.work_id` is the real `work_id` passed in.
+Before binding, `identify()` confirms a quiescent ref: two consecutive commit-resolution reads must agree, with a short bounded settle interval between them, and Git's resolved `index.lock` path must be absent. When a read advances, the later value becomes the next baseline. Confirmation is bounded to three comparisons. Exhaustion is **never a timeout-to-failure**: the adapter binds the latest observed commit and records/prints the honest race note `worktree advanced during identification; bound the final observed head`. The diff is then read against that bound SHA, not the moving ref. If the final bound SHA differs from the initial observation, dispatch stderr also says `note: worktree advanced during candidate identification (<A>..<B>); bound <B>`. The adapter-owned `git-candidate-identification/v1` marker appears in the candidate subject only on that race path.
+
+The settle interval gates **when** Git is observed; its duration and wall-clock time are never canonical candidate or journal data (`INV-020`). Stable observations therefore retain the pre-rule candidate shape byte-for-byte. A still-present lock after the bound degrades to bind-latest rather than failing, with no invented timing data.
+
+`current(work_id)`: fingerprints `HEAD` for the configured `repo_path`, using a synthesized `execution_id` (`f"git-diff-worktree:{work_id}"`) purely as bookkeeping — the returned `Candidate.work_id` is the real `work_id` passed in. Because `current()` is a point-in-time comparison rather than post-settlement identification, it does not perform the settle confirmation.
 
 ## Idempotency behavior
 

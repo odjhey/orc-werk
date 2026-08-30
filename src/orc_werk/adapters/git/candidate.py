@@ -55,8 +55,10 @@ violation rather than an environmental "can't tell" condition.
 from __future__ import annotations
 
 import subprocess
+import sys
+import time
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from orc_werk.adapters.scripted.candidate import fingerprint_of
 from orc_werk.core.errors import validation_error
@@ -76,10 +78,24 @@ class GitDiffCandidate(CandidatePort):
         repo_path: str,
         git_bin: str = "git",
         include_repo_path: bool = True,
+        settle_interval: float = 0.05,
+        quiescence_retries: int = 3,
+        head_reader: Optional[Callable[[str, Path], Optional[str]]] = None,
+        lock_present: Optional[Callable[[Path], bool]] = None,
+        settle_wait: Callable[[float], None] = time.sleep,
     ) -> None:
+        if settle_interval < 0:
+            raise ValueError("settle_interval must be non-negative")
+        if quiescence_retries < 1:
+            raise ValueError("quiescence_retries must be at least 1")
         self._repo_path = repo_path
         self._git_bin = git_bin
         self._include_repo_path = include_repo_path
+        self._settle_interval = settle_interval
+        self._quiescence_retries = quiescence_retries
+        self._head_reader = head_reader
+        self._lock_present_hook = lock_present
+        self._settle_wait = settle_wait
 
     def capabilities(self) -> frozenset[str]:
         # CONTRACT-CAPABILITIES defines no CandidatePort capability ids as
@@ -106,7 +122,7 @@ class GitDiffCandidate(CandidatePort):
                     )
                 ref = requested_ref
 
-        subject_identity = self._subject_identity(ref)
+        subject_identity = self._subject_identity(ref, confirm_quiescence=True)
         if subject_identity is None:
             # PORT-CAND-001: no assurable subject -- not an error.
             return None
@@ -151,24 +167,79 @@ class GitDiffCandidate(CandidatePort):
         # of treating execution_id as the join key for subject lookup.
         return execution_id
 
-    def _subject_identity(self, ref: str) -> Optional[dict[str, Any]]:
+    def _subject_identity(
+        self, ref: str, *, confirm_quiescence: bool = False
+    ) -> Optional[dict[str, Any]]:
         repo_path = Path(self._repo_path)
         if not repo_path.is_dir():
             return None
-        head_sha = self._git(["rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=repo_path)
-        if head_sha is None:
+
+        initial_head = self._read_head(ref, repo_path)
+        if initial_head is None:
             return None
-        diff_text = self._git(["diff", "--no-color", ref], cwd=repo_path)
+        head_sha = initial_head
+        advanced = False
+        if confirm_quiescence:
+            for _ in range(self._quiescence_retries):
+                # Observation gate only: neither the duration nor wall-clock
+                # values enter candidate or journal data (INV-020).
+                self._settle_wait(self._settle_interval)
+                later_head = self._read_head(ref, repo_path)
+                if later_head is None:
+                    return None
+                if later_head != head_sha:
+                    advanced = True
+                stable = later_head == head_sha
+                head_sha = later_head
+                if stable and not self._index_lock_present(repo_path):
+                    break
+
+        # Pin the diff to the selected observation. Reading the moving ref
+        # here would reopen the exact race the confirmation closed.
+        diff_text = self._git(["diff", "--no-color", head_sha], cwd=repo_path)
         if diff_text is None:
             return None
         digest = fingerprint_of(diff_text)  # reuse the shared digest helper for the diff text too
         subject_identity: dict[str, Any] = {
-            "head_sha": head_sha.strip(),
+            "head_sha": head_sha,
             "diff_digest": digest.replace("fp-", "sha256:", 1),
         }
         if self._include_repo_path:
             subject_identity["repo_path"] = str(repo_path)
+        if advanced:
+            note = "worktree advanced during identification; bound the final observed head"
+            subject_identity["extensions"] = {
+                "git-candidate-identification/v1": {
+                    "worktree_advanced": True,
+                    "initial_head": initial_head,
+                    "bound_head": head_sha,
+                    "note": note,
+                }
+            }
+            print(
+                "note: worktree advanced during candidate identification "
+                f"({initial_head}..{head_sha}); bound {head_sha}",
+                file=sys.stderr,
+            )
         return subject_identity
+
+    def _read_head(self, ref: str, repo_path: Path) -> Optional[str]:
+        if self._head_reader is not None:
+            value = self._head_reader(ref, repo_path)
+        else:
+            value = self._git(["rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=repo_path)
+        return value.strip() if value is not None else None
+
+    def _index_lock_present(self, repo_path: Path) -> bool:
+        if self._lock_present_hook is not None:
+            return self._lock_present_hook(repo_path)
+        lock_path = self._git(["rev-parse", "--git-path", "index.lock"], cwd=repo_path)
+        if lock_path is None:
+            return False
+        path = Path(lock_path.strip())
+        if not path.is_absolute():
+            path = repo_path / path
+        return path.exists()
 
     def _git(self, args: list[str], *, cwd: Path) -> Optional[str]:
         try:
