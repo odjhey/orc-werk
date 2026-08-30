@@ -56,7 +56,10 @@ def _run_cli(cwd: Path, *args: str, env: dict | None = None) -> subprocess.Compl
 
 
 def _namespace(**kwargs) -> argparse.Namespace:
-    defaults = dict(path=".", print_agents_block=False, force=False, agents_file="AGENTS.md", journal=None)
+    defaults = dict(
+        path=".", print_agents_block=False, force=False, agents_file="AGENTS.md",
+        journal=None, agents_block="slim", ledger="local",
+    )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
 
@@ -131,7 +134,7 @@ class CanonicalOriginTest(unittest.TestCase):
 
     def test_agents_block_derived_from_packaged_skill_text(self):
         skill_text = packaged_skill_text()
-        block = agents_block_text(skill_text)
+        block = agents_block_text(skill_text, agents_block="full")
         self.assertTrue(block.startswith("## Delivery ledger (orc)"))
         for section in (
             "1. Orient first",
@@ -144,7 +147,7 @@ class CanonicalOriginTest(unittest.TestCase):
             self.assertIn(section, block)
         # the YAML frontmatter and the H1 title are gone
         self.assertNotIn("name: orc-ledger", block)
-        self.assertNotIn("version: 1", block)
+        self.assertNotIn("version: 2", block)
         self.assertNotIn("# Working with the orc delivery ledger", block)
         # but the ledger's own intro paragraph (context-free content) survives
         self.assertIn("This repository tracks delivery through orc", block)
@@ -155,8 +158,8 @@ class CanonicalOriginTest(unittest.TestCase):
         # transforms its input rather than returning a string literal that
         # could silently drift from SKILL.md (a fork would fail this).
         forked = packaged_skill_text().replace("Orient first", "FORKED SECTION TITLE")
-        self.assertIn("FORKED SECTION TITLE", agents_block_text(forked))
-        self.assertNotIn("FORKED SECTION TITLE", agents_block_text())
+        self.assertIn("FORKED SECTION TITLE", agents_block_text(forked, agents_block="full"))
+        self.assertNotIn("FORKED SECTION TITLE", agents_block_text(agents_block="full"))
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +204,7 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertIn("skill: linked", output)
         self.assertIn("agents-block: created", output)
         self.assertIn("verification:", output)
-        self.assertIn("installed orc-ledger skill version: v1", output)
+        self.assertIn("installed orc-ledger skill version: v2", output)
         self.assertIn("next:", output)
 
     def test_scripted_profile_declares_work_doer_mode_and_retires_preamble(self):
@@ -216,7 +219,7 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertIn("SCRIPTED MODE", block)
         self.assertIn("do the work by hand", block)
         self.assertIn("configs default via profile `.orc/profile.json`", block.lower())
-        self.assertIn("delivery-ledger rules below", block)
+        self.assertIn("load the installed `orc-ledger` skill", block)
 
     def test_real_execution_and_assurance_profile_declares_adapter_driven_mode(self):
         profile = self.target / ".orc" / "profile.json"
@@ -235,13 +238,64 @@ class OnboardScaffoldTest(unittest.TestCase):
         block = (self.target / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("ADAPTER-DRIVEN MODE", block)
         self.assertIn("you configure rather than perform", block)
-        self.assertIn("delivery-ledger rules below", block)
+        self.assertIn("load the installed `orc-ledger` skill", block)
 
     def test_absent_profile_declares_scripted_default_mode(self):
         _onboard(path=str(self.target))
         block = (self.target / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("SCRIPTED MODE (scripted default)", block)
-        self.assertIn("delivery-ledger rules below", block)
+        self.assertIn("load the installed `orc-ledger` skill", block)
+
+    def test_default_agents_block_is_slim_and_names_locality_and_skill(self):
+        _, output = _onboard(path=str(self.target))
+        block = (self.target / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("MODE DECLARATION", block)
+        self.assertIn("operator-machine-local", block)
+        self.assertIn("load the installed `orc-ledger` skill", block)
+        self.assertNotIn("## 1. Orient first", block)
+        self.assertIn("ledger: local", output)
+
+    def test_full_agents_block_mechanically_inlines_the_skill_protocol(self):
+        _onboard(path=str(self.target), agents_block="full")
+        block = (self.target / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("## 1. Orient first", block)
+        self.assertIn("## 6. Depth on demand", block)
+        transformed = agents_block_text(
+            packaged_skill_text(), agents_block="full", ledger="local"
+        )
+        self.assertIn(transformed, block)
+
+    def test_committed_ledger_writes_no_ignore_entry_and_reports_shared_placement(self):
+        _, output = _onboard(path=str(self.target), ledger="committed")
+        self.assertFalse((self.target / ".gitignore").exists())
+        block = (self.target / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("ledger is committed and shared", block)
+        self.assertIn("ledger: committed -- committed and shared", output)
+        self.assertIn("no `.orc/` entry written", output)
+
+    def test_committed_ledger_warns_without_removing_existing_ignore(self):
+        (self.target / ".gitignore").write_text(".orc/\n", encoding="utf-8")
+        _, output = _onboard(path=str(self.target), ledger="committed")
+        self.assertEqual((self.target / ".gitignore").read_text(encoding="utf-8"), ".orc/\n")
+        self.assertIn("WARNING", output)
+        self.assertIn("remove it explicitly", output)
+
+    def test_all_adopter_emitted_text_has_no_unresolved_or_unmarked_references(self):
+        _, output = _onboard(path=str(self.target), agents_block="full")
+        emitted = "\n".join(
+            (
+                output,
+                (self.target / "AGENTS.md").read_text(encoding="utf-8"),
+                (self.target / ".agents/skills/orc-ledger/SKILL.md").read_text(encoding="utf-8"),
+            )
+        )
+        self.assertNotRegex(emitted, r"(?<![A-Za-z0-9_.-])docs/[^\s`)]+\.md")
+        for line in emitted.splitlines():
+            if "PLAYBOOK-" in line:
+                self.assertRegex(
+                    line.lower(), r"external|canonical in the orc-werk",
+                    f"stable ID must be explicitly external in adopter output: {line}",
+                )
 
     def test_rerun_is_idempotent_no_dupes_skip_notes(self):
         _onboard(path=str(self.target))
@@ -261,7 +315,7 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertEqual(agents_before.count(BLOCK_BEGIN), 1)
         self.assertIn("-- skip", output)
         self.assertIn("already present", output)
-        self.assertIn("skill: v1 already installed -- skip", output)
+        self.assertIn("skill: v2 already installed -- skip", output)
         self.assertIn("skill changelog: already installed", output)
         self.assertIn("already links to the installed skill", output)
         self.assertIn("already present and up to date", output)
@@ -281,7 +335,7 @@ class OnboardScaffoldTest(unittest.TestCase):
         _onboard(path=str(self.target))
         agents_path = self.target / "AGENTS.md"
         original = agents_path.read_text(encoding="utf-8")
-        modified = original.replace("This repository tracks delivery", "OPERATOR EDITED THIS LINE")
+        modified = original.replace("Before touching the ledger", "OPERATOR EDITED THIS LINE")
         agents_path.write_text(modified, encoding="utf-8")
 
         exit_code, output = _onboard(path=str(self.target))
@@ -294,7 +348,7 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         replaced = agents_path.read_text(encoding="utf-8")
         self.assertNotEqual(replaced, modified)
-        self.assertIn("This repository tracks delivery", replaced)
+        self.assertIn("Before touching the ledger", replaced)
         self.assertIn("replaced (--force)", output)
 
     def test_stale_known_skill_is_upgraded_without_force(self):

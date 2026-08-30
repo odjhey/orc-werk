@@ -1263,6 +1263,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="journal directory to report on in the verification step (default: $ORC_JOURNAL_DIR or ./.orc, anchored at --path)",
     )
+    onboard_parser.add_argument(
+        "--agents-block",
+        choices=("slim", "full"),
+        default="slim",
+        help="agents block detail: slim points to the installed skill (default); full inlines it for harnesses without skill support",
+    )
+    onboard_parser.add_argument(
+        "--ledger",
+        choices=("local", "committed"),
+        default="local",
+        help="ledger placement: local adds .orc/ to .gitignore (default); committed leaves gitignore unchanged",
+    )
     onboard_parser.set_defaults(func=cmd_onboard)
 
     return parser

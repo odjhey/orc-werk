@@ -49,7 +49,7 @@ The lower ledger rungs use **scripted mode**: with execution and assurance adapt
 The rungs above describe capability; this is the literal install path for each:
 
 - **Rung 1 (simulator/spec-executor) — zero install.** Clone or vendor this repository and either `pip install -e .` for a real `orc` command, or alias the module invocation with no install step at all: `alias orc='PYTHONPATH=src python3 -m orc_werk.cli'` (run from the repo root). This is the adoption ladder's own "Python 3.11+ and this repo — nothing else" promise, and it remains the permanent zero-install fallback at every rung above it — nothing below forces a real install.
-- **Rung 2 (durable ledger for real work) — `pip install`, then `orc onboard`.** `pip install <path-to-a-checkout>` or `pip install <git-or-URL-source>` installs the package and its `orc` console script (`[project.scripts]`, `pyproject.toml`) onto `$PATH`, real going forward rather than an aliased module invocation. From there, `orc onboard [--path DIR]` mechanizes the adopting-repo scaffold this section used to describe as hand-work: it ensures a `.orc/` `.gitignore` entry, installs the orc-ledger skill (content read from THIS installed package — one canonical origin, never a second hand-maintained copy) resolvably under `.claude/skills`, writes (or `--print-agents-block` prints, writing nothing) the copy-pasteable `## Delivery ledger (orc)` block below into the target repo's `AGENTS.md`, and reports install verification honestly (`orc` on `$PATH` vs. module form, journal dir resolution, optional `bd` presence). Idempotent re-run; an operator-modified target is skip-with-note unless `--force`. See `docs/cli/README.md`'s `orc onboard` reference for the full flag/output detail.
+- **Rung 2 (durable ledger for real work) — `pip install`, then `orc onboard`.** `pip install <path-to-a-checkout>` or `pip install <git-or-URL-source>` installs the package and its `orc` console script (`[project.scripts]`, `pyproject.toml`) onto `$PATH`, real going forward rather than an aliased module invocation. From there, `orc onboard [--path DIR]` mechanizes the adopting-repo scaffold this section used to describe as hand-work: it installs the orc-ledger skill (content read from THIS installed package — one canonical origin) resolvably under `.claude/skills`, writes a slim mode/locality/skill-pointer block into `AGENTS.md`, and reports install verification honestly. Ledger placement is explicit: `--ledger local` is the default and adds `.orc/` to `.gitignore`; `--ledger committed` leaves `.gitignore` unchanged and warns if an existing ignore entry conflicts. Use `--agents-block full` only for an agent harness that cannot load the installed skill. `--print-agents-block` prints the selected block without writing. Idempotent re-run; an operator-modified target is skip-with-note unless `--force`. See `docs/cli/README.md`'s `orc onboard` reference for full flag and output detail.
 - **Higher rungs (multi-agent ledger, multi-repo cockpit, autonomous orchestrator)** — no additional Orc install step: the same `orc` binary `onboard` verified, now driven by agents recording their own observations (`PLAYBOOK-AGENT-CLI`), configured to project multiple repos into one board (`PLAYBOOK-PORTFOLIO-COCKPIT`), or backed by a real `PORT-EXECUTION` adapter, per the ladder table above.
 
 For both the rung-1 checkout/module path and rung-2 package install, `orc version` reports which install form is actually running, including checkout git identity when available.
@@ -105,19 +105,17 @@ The canonical state machine, its invariants, the facts/decisions/effects vocabul
 `orc onboard [--path DIR]` (`TASK-M3D-001`) mechanizes this: it installs the
 `orc-ledger` project skill into the adopting repository at
 `.agents/skills/orc-ledger/SKILL.md` and links it resolvably under
-`.claude/skills/orc-ledger`, and writes (or, with `--print-agents-block`,
-just prints) the same six-rule content as a copy-pasteable
-`## Delivery ledger (orc)` block for `AGENTS.md`-style files, including a
-mode declaration derived from `.orc/profile.json` — the audience
-issue #55's superseded onboarding-snippet idea was right for all along:
-subagents in the adopting repo, distinct from the interactive-session skill
-above. A fresh session (interactive, via the skill, or a subagent, via the
-`AGENTS.md` block) then self-onboards the same way either surface teaches:
-orient via bare `orc`, resume rather than duplicate pending runs, and follow
-`PLAYBOOK-AGENT-CLI`'s seat discipline before recording. Both surfaces stay
-at six rules because the CLI's affordances teach the rest in situ, and both
-are sourced from the exact same packaged skill content — never two
-maintained copies of the protocol.
+`.claude/skills/orc-ledger`, and writes (or, with `--print-agents-block`, just prints) a slim
+`## Delivery ledger (orc)` block for `AGENTS.md`-style files. The block carries
+the mode derived from `.orc/profile.json`, the selected ledger locality, and a
+pointer requiring agents to load the installed skill before touching the
+ledger. This keeps the skill as the one protocol copy and avoids loading it in
+every unrelated session. Harnesses without skill support can select
+`--agents-block full`; that compatibility form mechanically derives the six
+rules from the packaged skill rather than maintaining another copy. The skill
+is self-contained, names `orc -h`, `orc config-schema`, `orc validate`, and
+`orc verdict` as local references, and marks upstream Orc Werk stable-ID
+citations as external.
 
 ## 4. Worked example — a fleet control tower (Rozoro)
 
