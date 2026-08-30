@@ -62,6 +62,30 @@ class RepoProfileTest(unittest.TestCase):
         self.assertEqual(merged["assurance"]["adapter"], "no-mistakes")
         self.assertEqual(merged["mirror"]["workspace"], "/board")
 
+    def test_dispatch_adapter_switch_drops_inherited_acp_keys(self):
+        profile = self.root / ".orc" / "profile.json"
+        profile.parent.mkdir()
+        profile.write_text(json.dumps({
+            "execution": {
+                "adapter": "acp", "agent": "pi", "model": "m",
+                "thought_level": "high", "approve_all": True,
+            }
+        }), encoding="utf-8")
+        config_path = self.root / "run.json"
+        config_path.write_text(json.dumps({
+            "plan": {"works": [{"work_id": "w", "deps": []}]},
+            "execution": {"adapter": "scripted"},
+        }), encoding="utf-8")
+
+        result = _run(
+            self.root, "dispatch", "adapter switch", "--run-id", "switch-run",
+            "--config", str(config_path),
+        )
+
+        self.assertEqual(result.returncode, 3, result.stderr)
+        persisted = json.loads((self.root / ".orc" / "switch-run" / "config.json").read_text())
+        self.assertEqual(persisted["execution"], {"adapter": "scripted"})
+
     def test_absent_profile_preserves_empty_scripted_default(self):
         self.assertIsNone(load_repo_profile(self.root / ".orc"))
         result = _run(self.root, "dispatch", "no profile", "--run-id", "empty-default")
