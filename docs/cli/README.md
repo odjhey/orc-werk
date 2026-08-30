@@ -144,31 +144,36 @@ orc config-schema
 ### `orc validate`
 
 ```text
-usage: orc validate [-h] config
+usage: orc validate [-h] [--journal JOURNAL] [--no-profile] config
 ```
 
-Validates one portable JSON dispatch config using the same schema validator
-as `dispatch`, without creating a journal, ports, or an orchestrator. A valid
-config exits `0` and prints a would-ingest preview: plan work ids, selected
-execution/candidate/assurance adapters, every attempt entry's keys, and any
-scripted assurance verdict and extension ids. This is the read-only check to
-run after editing a persisted run config and before re-dispatching it.
+Composes one portable JSON dispatch config over the repo profile and applies
+the same deep-merge precedence and schema validator as `dispatch`. The journal
+directory, used only to locate `profile.json`, resolves via `--journal` >
+`ORC_JOURNAL_DIR` > `./.orc`. Pass `--no-profile` to deliberately validate the
+file alone. A valid config exits `0` and prints a would-ingest preview: the
+contributing layers, plan work ids, selected execution/candidate/assurance
+adapters, every attempt entry's keys, and any scripted assurance verdict and
+extension ids. This is the read-only check to run after editing a per-run
+config and before dispatching it.
 
 ```bash
 orc validate ./.orc/demo-pending/config.json
+orc validate run.json --journal ./.orc --no-profile  # standalone file check
 ```
 
 ```text
-PASS: ./.orc/demo-pending/config.json
+PASS: run.json
+layers: profile: /abs/path/.orc/profile.json (candidate, execution) + config: run.json
 plan works: work-1 (default)
-adapters: execution=scripted candidate=scripted assurance=scripted
-attempts.work-1[0]: keys=[assurance, candidate, outcome]
-attempts.work-1[0].assurance: verdict=accepted, extensions=[review-findings/v1]
+adapters: execution=acp candidate=git assurance=scripted
 ```
 
-Invalid JSON or an unknown/malformed config key exits `2` and prints the
-canonical `ERR-VALIDATION` JSON, including the offending config path. The
-command never reads or writes `.orc/` run state.
+When no profile is present, validation is identical to standalone behavior
+and the layer note names only the config. Invalid JSON or an unknown/malformed
+composed config key exits `2` and prints canonical `ERR-VALIDATION` JSON,
+including the offending config path. The command reads a profile when present
+but never writes run state or creates the journal directory.
 
 ### `orc dispatch`
 

@@ -14,11 +14,13 @@ SRC = REPO_ROOT / "src"
 
 
 class CliValidateTest(unittest.TestCase):
-    def _validate(self, root: Path, config: dict) -> subprocess.CompletedProcess[str]:
+    def _validate(
+        self, root: Path, config: dict, *extra_args: str
+    ) -> subprocess.CompletedProcess[str]:
         path = root / "config.json"
         path.write_text(json.dumps(config), encoding="utf-8")
         return subprocess.run(
-            [sys.executable, "-m", "orc_werk.cli", "validate", str(path)],
+            [sys.executable, "-m", "orc_werk.cli", "validate", str(path), *extra_args],
             cwd=root,
             env={"PYTHONPATH": str(SRC), "PATH": "/usr/bin:/bin"},
             capture_output=True,
@@ -58,6 +60,65 @@ class CliValidateTest(unittest.TestCase):
                 result.stdout,
             )
             self.assertFalse((root / ".orc").exists())
+
+    def test_profile_composes_with_per_run_config_and_names_both_layers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            journal = root / "ledger"
+            journal.mkdir()
+            (journal / "profile.json").write_text(
+                json.dumps({
+                    "execution": {"adapter": "acp", "agent": "pi", "cwd": str(root)},
+                    "candidate": {"adapter": "git", "repo_path": str(root)},
+                    "mirror": {"adapter": "beads", "workspace": "/tmp/beads"},
+                }),
+                encoding="utf-8",
+            )
+            result = self._validate(
+                root,
+                {
+                    "execution": {"cwd": str(root)},
+                    "candidate": {"repo_path": str(root)},
+                },
+                "--journal", str(journal),
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn(
+                f"layers: profile: {(journal / 'profile.json').resolve()} (candidate, execution, mirror) "
+                f"+ config: {root / 'config.json'}",
+                result.stdout,
+            )
+            self.assertIn("adapters: execution=acp candidate=git assurance=scripted", result.stdout)
+
+    def test_no_profile_preserves_standalone_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            journal = root / "ledger"
+            journal.mkdir()
+            (journal / "profile.json").write_text(
+                json.dumps({
+                    "execution": {"adapter": "acp", "agent": "pi", "cwd": str(root)},
+                    "candidate": {"adapter": "git", "repo_path": str(root)},
+                }),
+                encoding="utf-8",
+            )
+            result = self._validate(
+                root,
+                {"execution": {"cwd": str(root)}, "candidate": {"repo_path": str(root)}},
+                "--journal", str(journal), "--no-profile",
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(json.loads(result.stderr)["error"], "ERR-VALIDATION")
+            self.assertIn("unknown_keys", json.loads(result.stderr)["details"])
+
+    def test_missing_profile_keeps_standalone_behavior_and_does_not_create_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            journal = root / "missing" / ".orc"
+            result = self._validate(root, {}, "--journal", str(journal))
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn(f"layers: config: {root / 'config.json'}", result.stdout)
+            self.assertFalse(journal.exists())
 
     def test_unknown_assurance_key_is_canonical_validation_error_and_pure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
