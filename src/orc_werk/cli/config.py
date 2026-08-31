@@ -18,7 +18,10 @@ cwd/ancestor search is performed.  Effective precedence is explicit
 ``--config`` (deep-merged) over a run's persisted ``config.json`` over the
 profile over ``{}``; nested JSON objects compose, while other values replace.
 The ``--max-attempts`` flag keeps its existing precedence over the resulting
-config's ``max_attempts``.
+config's ``max_attempts``. At each layer boundary, an explicit adapter change
+inside ``execution``, ``candidate``, ``assurance``, or ``mirror`` drops keys
+inherited from the previous adapter that are exclusive to it; keys supplied by
+the overlay and inherited adapter-agnostic keys remain.
 
 ```json
 {
@@ -262,6 +265,22 @@ _ASSURANCE_ADAPTERS = frozenset({"scripted", "no-mistakes"})
 _MIRROR_CONFIG_KEYS = frozenset({"adapter", "workspace", "bd_bin", "project"})
 _MIRROR_ADAPTERS = frozenset({"beads"})
 
+# Single source for adapter-conditional validation and layer composition.
+# When an overlay changes a section's adapter, only inherited keys exclusive
+# to the lower layer's selected adapter are removed (#174).
+_ADAPTER_EXCLUSIVE_KEYS: Mapping[str, Mapping[str, frozenset[str]]] = {
+    "execution": {"acp": _EXECUTION_ADAPTER_ONLY_KEYS},
+    "candidate": {"git": frozenset({"repo_path"})},
+    "assurance": {"no-mistakes": frozenset({"repo_path"})},
+    "mirror": {"beads": _MIRROR_CONFIG_KEYS - {"adapter"}},
+}
+_ADAPTER_DEFAULTS = {
+    "execution": "scripted",
+    "candidate": "scripted",
+    "assurance": "scripted",
+    "mirror": "beads",
+}
+
 # issue #94: every validation error this module raises is, by construction,
 # about the dispatch config document -- `orc config-schema` (this module's
 # own docstring, printed verbatim) is the one guide every one of them
@@ -452,7 +471,7 @@ def _validate_execution_config(value: Any) -> None:
             path="<config>.execution.adapter",
         )
     if adapter == "scripted":
-        present_only = sorted(_EXECUTION_ADAPTER_ONLY_KEYS & set(value))
+        present_only = sorted(_ADAPTER_EXCLUSIVE_KEYS["execution"]["acp"] & set(value))
         if present_only:
             raise validation_error(
                 f"config value(s) at <config>.execution {present_only} require execution.adapter == 'acp'",
@@ -516,7 +535,8 @@ def _validate_candidate_config(value: Any) -> None:
             path="<config>.candidate.adapter",
         )
     if adapter == "scripted":
-        if "repo_path" in value:
+        present_only = sorted(_ADAPTER_EXCLUSIVE_KEYS["candidate"]["git"] & set(value))
+        if present_only:
             raise validation_error(
                 "config value at <config>.candidate.repo_path requires candidate.adapter == 'git'",
                 path="<config>.candidate.repo_path",
@@ -554,7 +574,8 @@ def _validate_assurance_config(value: Any) -> None:
             path="<config>.assurance.adapter",
         )
     if adapter == "scripted":
-        if "repo_path" in value:
+        present_only = sorted(_ADAPTER_EXCLUSIVE_KEYS["assurance"]["no-mistakes"] & set(value))
+        if present_only:
             raise validation_error(
                 "config value at <config>.assurance.repo_path requires assurance.adapter == 'no-mistakes'",
                 path="<config>.assurance.repo_path",
@@ -741,16 +762,34 @@ def load_repo_profile(journal_dir: Path) -> Optional[Mapping[str, Any]]:
     return profile
 
 
-def deep_merge_config(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Recursively merge JSON objects, with overlay values taking precedence."""
+def _deep_merge_json(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> dict[str, Any]:
+    """Generic recursive JSON-object merge used after layer-aware cleanup."""
     merged: dict[str, Any] = dict(base)
     for key, value in overlay.items():
         prior = merged.get(key)
         if isinstance(prior, Mapping) and isinstance(value, Mapping):
-            merged[key] = deep_merge_config(prior, value)
+            merged[key] = _deep_merge_json(prior, value)
         else:
             merged[key] = value
     return merged
+
+
+def deep_merge_config(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Compose two config layers, dropping old-adapter-exclusive inheritance."""
+    prepared: dict[str, Any] = dict(base)
+    for section, exclusive_by_adapter in _ADAPTER_EXCLUSIVE_KEYS.items():
+        lower = base.get(section)
+        higher = overlay.get(section)
+        if not isinstance(lower, Mapping) or not isinstance(higher, Mapping) or "adapter" not in higher:
+            continue
+        lower_adapter = lower.get("adapter", _ADAPTER_DEFAULTS[section])
+        if higher["adapter"] == lower_adapter:
+            continue
+        cleaned = dict(lower)
+        for key in exclusive_by_adapter.get(lower_adapter, frozenset()):
+            cleaned.pop(key, None)
+        prepared[section] = cleaned
+    return _deep_merge_json(prepared, overlay)
 
 
 def _predicted_execution_id(*, delivery_run_id: str, work_id: str, attempt_number: int) -> str:
