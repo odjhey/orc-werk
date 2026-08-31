@@ -89,15 +89,16 @@ An attempt entry's `assurance` object accepts exactly these keys:
 Three optional top-level objects select the adapters for the delivery seats.
 Their complete adapter vocabularies are: `execution.adapter` is `"scripted"`
 (default) or `"acp"`; `candidate.adapter` is `"scripted"` (default) or
-`"git"`; and `assurance.adapter` is `"scripted"` (default) or
-`"no-mistakes"`.
+`"git"`; and `assurance.adapter` is `"scripted"` (default),
+`"no-mistakes"`, or `"command"`.
 
 ```json
 {
   "execution": {"adapter": "acp", "cwd": "/abs/worktree", "agent": "pi",
                  "thought_level": "low", "model": null, "approve_all": false},
   "candidate": {"adapter": "git", "repo_path": "/abs/worktree"},
-  "assurance": {"adapter": "no-mistakes", "repo_path": "/abs/worktree"}
+  "assurance": {"adapter": "command", "script": "scripts/assure-candidate.sh",
+                 "cwd": "/abs/worktree", "timeout_s": 300}
 }
 ```
 
@@ -117,13 +118,16 @@ Their complete adapter vocabularies are: `execution.adapter` is `"scripted"`
 - `candidate.adapter`: `"scripted"` (default) or `"git"`. `"git"` selects
   `orc_werk.adapters.git.candidate.GitDiffCandidate(repo_path=...)`.
   `repo_path` is REQUIRED when `adapter == "git"`.
-- `assurance.adapter`: `"scripted"` (default) or `"no-mistakes"`.
-  `"no-mistakes"` selects
+- `assurance.adapter`: `"scripted"` (default), `"no-mistakes"`, or
+  `"command"`. `"no-mistakes"` selects
   `orc_werk.adapters.no_mistakes.assurance.NoMistakesAssurance(repo_path=...)`.
-  `repo_path` is REQUIRED when `adapter == "no-mistakes"`. A real assurance
-  adapter derives its own verdict, so attempt entries MUST NOT also provide
-  `assurance`. `assurance.adapter == "no-mistakes"` REQUIRES
-  `candidate.adapter == "git"`.
+  `"command"` selects `orc_werk.adapters.command.assurance.CommandAssurance`
+  with REQUIRED `script` and `cwd`; relative scripts resolve against `cwd`,
+  the resolved path must remain inside `cwd`, and it must exist and be
+  executable. `timeout_s` is a positive number (default 300). No args,
+  environment, or inline-script key exists. A real assurance adapter derives
+  its own verdict, so attempt entries MUST NOT also provide `assurance`.
+  Both real assurance adapters REQUIRE `candidate.adapter == "git"`.
 - **Constraint**: `execution.adapter == "acp"` REQUIRES `candidate.adapter
   == "git"` -- rejected otherwise. A real agent execution's outcome cannot
   be matched against a config-scripted candidate (`ScriptedCandidate`'s
@@ -208,6 +212,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from orc_werk.adapters.acp.execution import AcpExecution
 from orc_werk.adapters.beads.mirror import BeadsMirror
+from orc_werk.adapters.command.assurance import CommandAssurance
 from orc_werk.adapters.git.candidate import GitDiffCandidate
 from orc_werk.adapters.no_mistakes.assurance import NoMistakesAssurance
 from orc_werk.adapters.scripted.assurance import ScriptedAssurance
@@ -215,7 +220,7 @@ from orc_werk.adapters.scripted.candidate import ScriptedCandidate, fingerprint_
 from orc_werk.adapters.scripted.execution import ScriptedExecution
 from orc_werk.app.orchestrator import RunConfig
 from orc_werk.core.effects import FX_IDENTIFY_CANDIDATE, FX_START_EXECUTION
-from orc_werk.core.errors import CoreError, conflict_error
+from orc_werk.core.errors import CoreError, ERR_PROVIDER_UNAVAILABLE, canonical_error, conflict_error
 from orc_werk.core.errors import validation_error as _core_validation_error
 from orc_werk.core.facts import ASSURANCE_VERDICTS, EXEC_OUTCOMES, FACT_CANDIDATE_OBSERVED
 from orc_werk.core.idempotency import idempotency_key
@@ -262,8 +267,8 @@ _EXECUTION_ADAPTER_ONLY_KEYS = _EXECUTION_CONFIG_KEYS - {"adapter"}
 _EXECUTION_ADAPTERS = frozenset({"scripted", "acp"})
 _CANDIDATE_CONFIG_KEYS = frozenset({"adapter", "repo_path"})
 _CANDIDATE_ADAPTERS = frozenset({"scripted", "git"})
-_ASSURANCE_CONFIG_KEYS = frozenset({"adapter", "repo_path"})
-_ASSURANCE_ADAPTERS = frozenset({"scripted", "no-mistakes"})
+_ASSURANCE_CONFIG_KEYS = frozenset({"adapter", "repo_path", "script", "cwd", "timeout_s"})
+_ASSURANCE_ADAPTERS = frozenset({"scripted", "no-mistakes", "command"})
 # `mirror` (`TASK-M2-006`, module docstring "Beads mirror" section): unlike
 # execution/candidate/assurance, there is no "scripted" default -- absent
 # `mirror` means no mirror at all, not a null-object adapter. `workspace`
@@ -280,7 +285,10 @@ _MIRROR_ADAPTERS = frozenset({"beads"})
 _ADAPTER_EXCLUSIVE_KEYS: Mapping[str, Mapping[str, frozenset[str]]] = {
     "execution": {"acp": _EXECUTION_ADAPTER_ONLY_KEYS},
     "candidate": {"git": frozenset({"repo_path"})},
-    "assurance": {"no-mistakes": frozenset({"repo_path"})},
+    "assurance": {
+        "no-mistakes": frozenset({"repo_path"}),
+        "command": frozenset({"script", "cwd", "timeout_s"}),
+    },
     "mirror": {"beads": _MIRROR_CONFIG_KEYS - {"adapter"}},
 }
 _ADAPTER_DEFAULTS = {
@@ -601,19 +609,72 @@ def _validate_assurance_config(value: Any) -> None:
             path="<config>.assurance.adapter",
         )
     if adapter == "scripted":
-        present_only = sorted(_ADAPTER_EXCLUSIVE_KEYS["assurance"]["no-mistakes"] & set(value))
+        real_only = set().union(*_ADAPTER_EXCLUSIVE_KEYS["assurance"].values())
+        present_only = sorted(real_only & set(value))
         if present_only:
             raise validation_error(
-                "config value at <config>.assurance.repo_path requires assurance.adapter == 'no-mistakes'",
+                f"config value(s) at <config>.assurance {present_only} require a real assurance adapter",
+                path="<config>.assurance",
+            )
+        return
+    if adapter == "no-mistakes":
+        command_only = sorted(_ADAPTER_EXCLUSIVE_KEYS["assurance"]["command"] & set(value))
+        if command_only:
+            raise validation_error(
+                f"config value(s) at <config>.assurance {command_only} require assurance.adapter == 'command'",
+                path="<config>.assurance",
+            )
+        repo_path = value.get("repo_path")
+        if not isinstance(repo_path, str) or not repo_path:
+            raise validation_error(
+                "config value at <config>.assurance.repo_path is required (a non-empty string) when "
+                "assurance.adapter == 'no-mistakes' -- NoMistakesAssurance has no safe default repository",
                 path="<config>.assurance.repo_path",
             )
         return
-    repo_path = value.get("repo_path")
-    if not isinstance(repo_path, str) or not repo_path:
+    if "repo_path" in value:
         raise validation_error(
-            "config value at <config>.assurance.repo_path is required (a non-empty string) when "
-            "assurance.adapter == 'no-mistakes' -- NoMistakesAssurance has no safe default repository",
+            "config value at <config>.assurance.repo_path requires assurance.adapter == 'no-mistakes'",
             path="<config>.assurance.repo_path",
+        )
+    script = value.get("script")
+    cwd = value.get("cwd")
+    if not isinstance(script, str) or not script:
+        raise validation_error(
+            "config value at <config>.assurance.script is required (a non-empty string) when assurance.adapter == 'command'",
+            path="<config>.assurance.script",
+        )
+    if not isinstance(cwd, str) or not cwd:
+        raise validation_error(
+            "config value at <config>.assurance.cwd is required (a non-empty string) when assurance.adapter == 'command'",
+            path="<config>.assurance.cwd",
+        )
+    timeout_s = value.get("timeout_s", 300)
+    if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or timeout_s <= 0:
+        raise validation_error(
+            "config value at <config>.assurance.timeout_s must be a positive number",
+            path="<config>.assurance.timeout_s",
+        )
+    cwd_path = Path(cwd).resolve()
+    configured = Path(script)
+    resolved = (cwd_path / configured).resolve() if not configured.is_absolute() else configured.resolve()
+    try:
+        resolved.relative_to(cwd_path)
+    except ValueError as exc:
+        raise validation_error(
+            "config command assurance script must resolve inside cwd",
+            path="<config>.assurance.script",
+            resolved_script=str(resolved),
+            cwd=str(cwd_path),
+        ) from exc
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise CoreError(
+            canonical_error(
+                ERR_PROVIDER_UNAVAILABLE,
+                "command assurance script is missing or not executable",
+                script=str(resolved),
+                cwd=str(cwd_path),
+            )
         )
 
 
@@ -705,22 +766,20 @@ def _validate_execution_candidate_combo(execution_cfg: Any, candidate_cfg: Any) 
 
 
 def _validate_assurance_candidate_combo(assurance_cfg: Any, candidate_cfg: Any) -> None:
-    """`assurance.adapter == 'no-mistakes'` REQUIRES `candidate.adapter ==
-    'git'` (`TASK-M2-001`, mirroring `_validate_execution_candidate_combo`'s
-    acp-requires-git precedent exactly): `no-mistakes` reviews real git
-    state at a configured `repo_path`; a config-scripted candidate's
-    `subject_identity` (and therefore fingerprint) would not correspond to
-    anything `no-mistakes` actually reviewed, so a settled verdict could
-    never be honestly bound to it (`INV-007`)."""
+    """Every real assurance adapter REQUIRES `candidate.adapter == 'git'`.
+
+    A no-mistakes or command verifier observes real repository state; a
+    config-predicted scripted candidate cannot honestly bind its verdict.
+    """
     assurance_adapter = (
         (assurance_cfg or {}).get("adapter", "scripted") if isinstance(assurance_cfg, Mapping) else "scripted"
     )
-    if assurance_adapter != "no-mistakes":
+    if assurance_adapter not in {"no-mistakes", "command"}:
         return
     candidate_adapter = (candidate_cfg or {}).get("adapter", "scripted") if isinstance(candidate_cfg, Mapping) else "scripted"
     if candidate_adapter != "git":
         raise validation_error(
-            "config assurance.adapter == 'no-mistakes' requires candidate.adapter == 'git' "
+            f"config assurance.adapter == {assurance_adapter!r} requires candidate.adapter == 'git' "
             "(a real assurance verdict cannot be bound to a config-scripted candidate)",
             path="<config>.candidate.adapter",
             assurance_adapter=assurance_adapter,
@@ -1100,6 +1159,14 @@ def _build_no_mistakes_assurance(assurance_cfg: Mapping[str, Any], *, intent_tex
     return _IntentRequirementsAssurance(inner, intent_text=intent_text)
 
 
+def _build_command_assurance(assurance_cfg: Mapping[str, Any]) -> AssurancePort:
+    return CommandAssurance(
+        script=assurance_cfg["script"],
+        cwd=assurance_cfg["cwd"],
+        timeout_s=assurance_cfg.get("timeout_s", 300),
+    )
+
+
 def _build_acp_execution(
     execution_cfg: Mapping[str, Any],
     *,
@@ -1281,6 +1348,8 @@ def build_dispatch_ports(
     assurance: AssurancePort
     if assurance_adapter == "no-mistakes":
         assurance = _build_no_mistakes_assurance(assurance_cfg, intent_text=intent_text)
+    elif assurance_adapter == "command":
+        assurance = _build_command_assurance(assurance_cfg)
     else:
         journal_history: Iterable[Mapping[str, Any]] = (
             journal.history(delivery_run_id=delivery_run_id) if journal is not None else ()
