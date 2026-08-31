@@ -269,8 +269,8 @@ def _step_profile(target: Path, *, force: bool) -> str:
 
 def _install_skill_file(
     target: Path, *, canonical: str, changelog: str, force: bool
-) -> tuple[str, bool]:
-    """Install the skill, returning its note and whether CHANGELOG must follow.
+) -> tuple[str, bool, Optional[tuple[int, int]]]:
+    """Return the skill note, whether CHANGELOG must follow, and any upgrade.
 
     A byte hash recorded in the canonical changelog proves that a differing
     file is an untouched prior release. Only that proof permits an automatic
@@ -283,7 +283,7 @@ def _install_skill_file(
         current_bytes = path.read_bytes()
         canonical_bytes = canonical.encode("utf-8")
         if current_bytes == canonical_bytes:
-            return f"skill: v{new_version} already installed -- skip", False
+            return f"skill: v{new_version} already installed -- skip", False, None
         old_hash = hashlib.sha256(current_bytes).hexdigest()
         old_version = _changelog_registry(changelog).get(old_hash)
         if old_version is not None and old_version < new_version:
@@ -292,42 +292,60 @@ def _install_skill_file(
                 f"skill: upgraded v{old_version} -> v{new_version} "
                 "(see .agents/skills/orc-ledger/CHANGELOG.md)",
                 True,
+                (old_version, new_version),
             )
         if not force:
             return (
                 f"skill: skip -- {hyperlink_path(path.resolve())} exists and differs from the package "
                 "source (operator-modified); rerun with --force to overwrite",
                 False,
+                None,
             )
         path.write_bytes(canonical_bytes)
-        return f"skill: overwritten (--force) at {hyperlink_path(path.resolve())}", True
+        return f"skill: overwritten (--force) at {hyperlink_path(path.resolve())}", True, None
     if path.is_symlink() and not path.exists():
         if not force:
             return (
                 f"skill: skip -- {hyperlink_path(path)} is a dangling symlink (operator-modified); "
                 "rerun with --force to replace it",
                 False,
+                None,
             )
         path.unlink()
     path.write_text(canonical, encoding="utf-8")
-    return f"skill: installed at {hyperlink_path(path.resolve())}", True
+    return f"skill: installed at {hyperlink_path(path.resolve())}", True, None
 
 
-def _install_skill_changelog(target: Path, *, canonical: str, force: bool) -> str:
+def _install_skill_changelog(
+    target: Path,
+    *,
+    canonical: str,
+    force: bool,
+    replace: bool = False,
+    upgrade: Optional[tuple[int, int]] = None,
+) -> str:
     path = target / _CHANGELOG_REL
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and not path.is_symlink():
         if path.read_text(encoding="utf-8") == canonical:
             return f"skill changelog: already installed at {hyperlink_path(path.resolve())} -- skip"
-        if not force:
+        if not (force or replace):
             return (
                 f"skill changelog: skip -- {hyperlink_path(path.resolve())} differs from the package "
                 "source (operator-modified); rerun with --force to overwrite"
             )
         path.write_text(canonical, encoding="utf-8")
-        return f"skill changelog: overwritten (--force) at {hyperlink_path(path.resolve())}"
+        if upgrade is not None and not force:
+            old_version, new_version = upgrade
+            return (
+                f"skill changelog: refreshed for skill upgrade v{old_version} -> v{new_version} "
+                f"at {hyperlink_path(path.resolve())}"
+            )
+        if force:
+            return f"skill changelog: overwritten (--force) at {hyperlink_path(path.resolve())}"
+        return f"skill changelog: refreshed alongside skill installation at {hyperlink_path(path.resolve())}"
     if path.is_symlink() and not path.exists():
-        if not force:
+        if not (force or replace):
             return f"skill changelog: skip -- {hyperlink_path(path)} is a dangling symlink (operator-modified); rerun with --force to replace it"
         path.unlink()
     path.write_text(canonical, encoding="utf-8")
@@ -368,11 +386,15 @@ def _install_skill_link(target: Path, *, force: bool) -> str:
 def _step_skill(target: Path, *, force: bool) -> list[str]:
     canonical = packaged_skill_text()
     changelog = packaged_skill_changelog_text()
-    skill_note, replace_changelog = _install_skill_file(
+    skill_note, replace_changelog, changelog_upgrade = _install_skill_file(
         target, canonical=canonical, changelog=changelog, force=force
     )
     changelog_note = _install_skill_changelog(
-        target, canonical=changelog, force=force or replace_changelog
+        target,
+        canonical=changelog,
+        force=force,
+        replace=replace_changelog,
+        upgrade=changelog_upgrade,
     )
     return [skill_note, changelog_note, _install_skill_link(target, force=force)]
 
@@ -398,6 +420,15 @@ def _step_agents_block(
             ledger=ledger,
         )
     )
+    other_mode = "full" if agents_block == "slim" else "slim"
+    other_wrapped = _wrapped_block(
+        agents_block_text(
+            profile=profile,
+            scripted_default=scripted_default,
+            agents_block=other_mode,
+            ledger=ledger,
+        )
+    )
     path = target / agents_file
     if not path.exists():
         path.write_text(wrapped, encoding="utf-8")
@@ -413,6 +444,12 @@ def _step_agents_block(
     if current_block == wrapped:
         return f"agents-block: already present and up to date in {hyperlink_path(path.resolve())} -- skip"
     if not force:
+        if current_block == other_wrapped:
+            return (
+                f"agents-block: skip -- {hyperlink_path(path.resolve())} has a canonical "
+                f"{other_mode} block (mode mismatch: requested {agents_block}); rerun with "
+                f"--agents-block {agents_block} --force to replace it"
+            )
         return (
             f"agents-block: skip -- {hyperlink_path(path.resolve())} has a Delivery ledger block that "
             "differs from the canonical content (operator-modified); rerun with --force to replace it"
