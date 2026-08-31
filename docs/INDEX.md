@@ -39,8 +39,8 @@ description: Flat documentation index.
 - [`assurance-context/v1`](extensions/assurance-context/README.md)
 - [`acp-settlement/v1`](extensions/acp-settlement/README.md)
 - [`git-candidate-identification/v1`](extensions/git-candidate-identification/README.md)
+- [`executor-identity/v1`](extensions/executor-identity/v1/README.md)
 - [`crew-report/v1`](extensions/crew-report/README.md) (superseded — removed, historical reference only)
-- `executor-identity/v1` (unregistered CLI/playbook convention; see [Agent CLI usage](playbooks/agent-cli-usage.md), not a registered extension contract)
 
 ## Verification
 - [Golden scenarios](scenarios/README.md)
