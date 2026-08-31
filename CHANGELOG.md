@@ -12,6 +12,33 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.3.0] — 2026-08-31
+
+No breaking changes. Existing configs and journals need no migration.
+
+### Added
+- **`orc record` verb** (#192): record an assurance verdict without hand-editing
+  the run's backing config. Validates and merge-appends the entry — acp attempts
+  carry only the `assurance` key, scripted entries keep their outcome/candidate —
+  then prints the exact resume command as its `next:` affordance. It records only;
+  advancing the dispatch stays the dispatch party's act (one-party-dispatch
+  discipline). First-class flags for `--derived-identity` (composes with the
+  0.2.0 stale-candidate check), `--finding` (rides `review-findings/v1`), and
+  `--model`/`--session-ref`/`--seat-ref` (rides `executor-identity/v1`). Refuses,
+  never corrupts: unknown run/work, a work not awaiting a verdict, or an already
+  recorded verdict each get a canonical error. The config is written atomically.
+
+### Fixed
+- **Null candidate identification no longer wedges a run** (#191,
+  `SCN-014`): when the candidate adapter observes no subject on a settled
+  execution (e.g. identification raced ahead of the executor's commit), the
+  observation is non-binding and every subsequent dispatch re-derives — the run
+  heals on its own once the commit exists. As an escape hatch when a subject never
+  appears, `--abandon-work` is now legal from that specific shape (settled-completed
+  with no bound candidate) and lands at the resting state without auto-starting the
+  next attempt. Candidate identity remains adapter-derived; no hand-authored path
+  was added.
+
 ## [0.2.0] — 2026-08-31
 
 No breaking changes. Existing configs and journals need no migration.
