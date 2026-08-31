@@ -16,6 +16,9 @@ AcpSettlementV1 {
 }
 
 UnobservabilityEvidence {
+    reason?: "worker-vanished-mid-turn"
+    prompted?: boolean
+    stream_activity_seen?: boolean
     lastAgentExitCode?: opaque portable JSON
     lastAgentExitSignal?: opaque portable JSON
     status?: opaque portable JSON
@@ -32,7 +35,7 @@ SettlementSuppressionEvidence {
 }
 ```
 
-At least one of `unobservability` or `suppression` is required when the extension is emitted; both may appear when post-result activity suppresses a candidate and daemon death is subsequently corroborated. Unobservability evidence fields are optional and opaque; absence means only that the adapter did not observe that field. Suppression fields identify the candidate result's stop reason and one-based stream-record position plus the first later record that was not positively classified as passive bookkeeping. `laterRecordClass` is an adapter-owned portable label such as `agent_message_chunk`, `session/prompt`, `malformed`, or `unknown`.
+At least one of `unobservability` or `suppression` is required when the extension is emitted; both may appear when post-result activity suppresses a candidate and daemon death is subsequently corroborated. Unobservability evidence fields are optional; absence means only that the adapter did not observe that field. For `reason: "worker-vanished-mid-turn"`, `status` MUST be `"no-session"` and both `prompted` and `stream_activity_seen` MUST be `true`. Other evidence values remain opaque. Suppression fields identify the candidate result's stop reason and one-based stream-record position plus the first later record that was not positively classified as passive bookkeeping. `laterRecordClass` is an adapter-owned portable label such as `agent_message_chunk`, `session/prompt`, `malformed`, or `unknown`.
 
 All values MUST be portable JSON-compatible data (`EXT-006`).
 

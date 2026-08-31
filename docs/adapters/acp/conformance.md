@@ -13,6 +13,7 @@ description: ACP/acpx adapter (AcpExecution) conformance status.
 | `CONF-EXEC-001` | pass | `tests/conformance/test_acp_execution_conformance.py::AcpExecutionConformanceTest::test_conf_exec_001_start_returns_stable_execution_identity` |
 | `CONF-EXEC-002` | pass | `tests/conformance/test_acp_execution_conformance.py::AcpExecutionConformanceTest::test_conf_exec_002_repeated_start_same_key_no_duplicate_execution` |
 | `CONF-EXEC-003` | pass | `tests/conformance/test_acp_execution_conformance.py::AcpExecutionConformanceTest::test_conf_exec_003_inspect_distinguishes_running_from_settled` |
+| `CONF-EXEC-005` | pass | `tests/conformance/test_acp_execution_unit.py::AcpExecutionUnobservabilityTest::test_no_session_after_mid_turn_activity_settles_failed` and `::test_no_session_during_startup_with_empty_stream_stays_running` |
 | `CONF-EXEC-004` | pass | `tests/conformance/test_acp_execution_conformance.py::AcpExecutionConformanceTest::test_conf_exec_004_unsupported_resume_strength_fails_explicitly` |
 | `CONF-CAND-001` | pass (`GitDiffCandidate`) | `tests/conformance/test_git_candidate_conformance.py::GitDiffCandidateConformanceTest::test_conf_cand_001_same_subject_same_fingerprint` |
 | `CONF-CAND-002` | pass (`GitDiffCandidate`) | `tests/conformance/test_git_candidate_conformance.py::GitDiffCandidateConformanceTest::test_conf_cand_002_changed_subject_different_fingerprint` (+ `..._new_commit_changes_fingerprint`) |

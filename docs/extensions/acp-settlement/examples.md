@@ -30,7 +30,24 @@ description: Example acp-settlement/v1 diagnostics payload.
 }
 ```
 
-The sibling extension records why the ACP adapter considered the outstanding result unobservable. A running observation suppressed by post-result activity instead uses:
+The sibling extension records why the ACP adapter considered the outstanding result unobservable. A vanished worker after substantive turn activity uses:
+
+```json
+{
+  "extensions": {
+    "acp-settlement/v1": {
+      "unobservability": {
+        "reason": "worker-vanished-mid-turn",
+        "status": "no-session",
+        "prompted": true,
+        "stream_activity_seen": true
+      }
+    }
+  }
+}
+```
+
+The same `no-session` observation with an empty/no-substantive stream remains running and does not emit this evidence. A running observation suppressed by post-result activity instead uses:
 
 ```json
 {

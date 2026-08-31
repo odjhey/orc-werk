@@ -95,7 +95,7 @@ Their complete adapter vocabularies are: `execution.adapter` is `"scripted"`
 ```json
 {
   "execution": {"adapter": "acp", "cwd": "/abs/worktree", "agent": "pi",
-                 "thought_level": "low", "model": null, "approve_all": false},
+                 "thought_level": "low", "model": null, "approve_all": false, "ttl": 0},
   "candidate": {"adapter": "git", "repo_path": "/abs/worktree"},
   "assurance": {"adapter": "command", "script": "scripts/assure-candidate.sh",
                  "cwd": "/abs/worktree", "timeout_s": 300}
@@ -105,7 +105,7 @@ Their complete adapter vocabularies are: `execution.adapter` is `"scripted"`
 - `execution.adapter`: `"scripted"` (default) or `"acp"`. `"acp"` selects
   `orc_werk.adapters.acp.execution.AcpExecution`, keyed exactly to that
   constructor's real parameters (`agent`, `cwd`, `thought_level`,
-  `approve_all`; `capabilities` is instead reused from this config's
+  `approve_all`, `ttl`; `capabilities` is instead reused from this config's
   existing top-level `execution_capabilities` key rather than a duplicate
   field). `cwd` is REQUIRED when `adapter == "acp"` -- there is no safe
   default working directory for a real agent to run in. `model`, when
@@ -262,7 +262,7 @@ _ASSURANCE_ENTRY_KEYS = frozenset({"verdict", "states", "evidence_refs", "extens
 # exception for `execution`, threaded through to the per-call
 # `execution_request` instead (see `_build_acp_execution`), and `adapter`
 # is this CLI's own selector, not an adapter constructor parameter.
-_EXECUTION_CONFIG_KEYS = frozenset({"adapter", "agent", "cwd", "thought_level", "model", "approve_all"})
+_EXECUTION_CONFIG_KEYS = frozenset({"adapter", "agent", "cwd", "thought_level", "model", "approve_all", "ttl"})
 _EXECUTION_ADAPTER_ONLY_KEYS = _EXECUTION_CONFIG_KEYS - {"adapter"}
 _EXECUTION_ADAPTERS = frozenset({"scripted", "acp"})
 _CANDIDATE_CONFIG_KEYS = frozenset({"adapter", "repo_path"})
@@ -544,6 +544,12 @@ def _validate_execution_config(value: Any) -> None:
         raise validation_error(
             "config value at <config>.execution.approve_all must be a boolean when present",
             path="<config>.execution.approve_all",
+        )
+    ttl = value.get("ttl", 0)
+    if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 0:
+        raise validation_error(
+            "config value at <config>.execution.ttl must be a non-negative integer",
+            path="<config>.execution.ttl",
         )
 
 
@@ -1186,6 +1192,8 @@ def _build_acp_execution(
         kwargs["thought_level"] = execution_cfg["thought_level"]
     if "approve_all" in execution_cfg:
         kwargs["approve_all"] = execution_cfg["approve_all"]
+    if "ttl" in execution_cfg:
+        kwargs["ttl"] = execution_cfg["ttl"]
     caps = tuple(capabilities)
     if caps:
         kwargs["capabilities"] = caps
