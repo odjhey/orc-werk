@@ -90,6 +90,86 @@ class CliValidateTest(unittest.TestCase):
             )
             self.assertIn("adapters: execution=acp candidate=git assurance=scripted", result.stdout)
 
+    def test_adapter_switch_keeps_override_keys_and_unrelated_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            journal = root / "ledger"
+            journal.mkdir()
+            (journal / "profile.json").write_text(json.dumps({
+                "execution": {
+                    "adapter": "acp", "agent": "pi", "model": "m",
+                    "thought_level": "high", "approve_all": True,
+                }
+            }), encoding="utf-8")
+
+            result = self._validate(
+                root,
+                {"execution": {"adapter": "scripted"}, "briefs": {"work-1": "keep me"}},
+                "--journal", str(journal),
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("adapters: execution=scripted", result.stdout)
+
+    def test_same_adapter_keeps_profile_defaults_composed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            journal = root / "ledger"
+            journal.mkdir()
+            (journal / "profile.json").write_text(json.dumps({
+                "execution": {
+                    "adapter": "acp", "agent": "pi", "model": "m",
+                    "thought_level": "high", "approve_all": True,
+                },
+                "candidate": {"adapter": "git"},
+            }), encoding="utf-8")
+
+            result = self._validate(
+                root,
+                {
+                    "execution": {"adapter": "acp", "cwd": str(root)},
+                    "candidate": {"adapter": "git", "repo_path": str(root)},
+                },
+                "--journal", str(journal),
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("adapters: execution=acp candidate=git", result.stdout)
+
+    def test_candidate_switch_to_scripted_drops_inherited_git_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            journal = root / "ledger"
+            journal.mkdir()
+            (journal / "profile.json").write_text(
+                json.dumps({"candidate": {"adapter": "git"}}), encoding="utf-8"
+            )
+
+            result = self._validate(
+                root, {"candidate": {"adapter": "scripted"}}, "--journal", str(journal)
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("candidate=scripted", result.stdout)
+
+    def test_same_git_candidate_composes_explicit_repo_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            journal = root / "ledger"
+            journal.mkdir()
+            (journal / "profile.json").write_text(
+                json.dumps({"candidate": {"adapter": "git"}}), encoding="utf-8"
+            )
+
+            result = self._validate(
+                root,
+                {"candidate": {"adapter": "git", "repo_path": str(root)}},
+                "--journal", str(journal),
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("candidate=git", result.stdout)
+
     def test_no_profile_preserves_standalone_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
