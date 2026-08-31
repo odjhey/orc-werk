@@ -211,6 +211,92 @@ class AcpExecutionUnobservabilityTest(unittest.TestCase):
         self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
         self.assertEqual(observed.outcome, "completed")
 
+    def test_end_turn_followed_by_retry_activity_stays_running(self) -> None:
+        ref, session_name = self._start(
+            work_id="retry", idempotency_key="retry-after-result", states=["running"]
+        )
+        self._world.append_stream(
+            session_name,
+            {"jsonrpc": "2.0", "id": 10, "result": {"stopReason": "end_turn"}},
+        )
+        self._world.append_stream(
+            session_name,
+            {
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": "Retrying (attempt 1/3, waiting 2s)..."},
+                    }
+                },
+            },
+        )
+
+        observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
+        self.assertIsNone(observed.outcome)
+        evidence = observed.extensions["acp-settlement/v1"]["suppression"]
+        self.assertEqual(evidence["stopReason"], "end_turn")
+        self.assertEqual(evidence["laterRecordClass"], "agent_message_chunk")
+
+    def test_terminal_end_turn_still_settles_completed(self) -> None:
+        ref, session_name = self._start(
+            work_id="terminal", idempotency_key="terminal-result", states=["running"]
+        )
+        self._world.append_stream(
+            session_name,
+            {"jsonrpc": "2.0", "id": 10, "result": {"stopReason": "end_turn"}},
+        )
+
+        observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "completed")
+
+    def test_passive_reconnect_records_after_end_turn_do_not_block_settlement(self) -> None:
+        ref, session_name = self._start(
+            work_id="passive", idempotency_key="passive-after-result", states=["running"]
+        )
+        self._world.append_stream(
+            session_name,
+            {"jsonrpc": "2.0", "id": 10, "result": {"stopReason": "end_turn"}},
+        )
+        self._world.append_stream(
+            session_name,
+            {"jsonrpc": "2.0", "id": 20, "method": "initialize", "params": {}},
+        )
+        self._world.append_stream(
+            session_name,
+            {"jsonrpc": "2.0", "id": 20, "result": {"protocolVersion": 1}},
+        )
+        self._world.append_stream(
+            session_name,
+            {"jsonrpc": "2.0", "id": 21, "method": "session/load", "params": {}},
+        )
+        self._world.append_stream(
+            session_name,
+            {"jsonrpc": "2.0", "id": 21, "result": {"configOptions": []}},
+        )
+
+        observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "completed")
+
+    def test_ambiguous_record_after_end_turn_stays_running(self) -> None:
+        ref, session_name = self._start(
+            work_id="ambiguous", idempotency_key="ambiguous-after-result", states=["running"]
+        )
+        self._world.append_stream(
+            session_name,
+            {"jsonrpc": "2.0", "id": 10, "result": {"stopReason": "end_turn"}},
+        )
+        self._world.append_stream(session_name, {"jsonrpc": "2.0", "future": {"kind": "new"}})
+
+        observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
+        evidence = observed.extensions["acp-settlement/v1"]["suppression"]
+        self.assertEqual(evidence["laterRecordClass"], "unknown")
+
     def test_result_present_maps_cancelled_stop_reason(self) -> None:
         ref, _session_name = self._start(
             work_id="w1", idempotency_key="cancelled-1", states=["settled"]
