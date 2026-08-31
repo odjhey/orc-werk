@@ -33,7 +33,7 @@ from orc_werk.adapters.jsonl import layout
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.adapters.memory.work_graph import MemoryWorkGraph
 from orc_werk.app.orchestrator import Orchestrator, is_pending
-from orc_werk.cli.affordances import render_next_block
+from orc_werk.cli.affordances import redispatch_command, render_next_block
 from orc_werk.cli import config as config_module
 from orc_werk.cli.config import (
     _ASSURANCE_ADAPTERS,
@@ -48,6 +48,7 @@ from orc_werk.cli.config import (
     load_config,
     load_config_overlay,
     load_repo_profile,
+    record_assurance_entry,
     validate_config,
 )
 from orc_werk.cli.hyperlink import hyperlink_path
@@ -67,8 +68,8 @@ from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint, window_b
 from orc_werk.cli.refs import FACT_ASSURE_SETTLED, cmd_refs
 from orc_werk.cli.report import _index_state_rollup, cmd_report, ordered_run_entries
 from orc_werk.cli.show import _render_findings, cmd_show
-from orc_werk.core.errors import CoreError, validation_error
-from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, STATE_EXECUTING, WorkProjection
+from orc_werk.core.errors import CoreError, conflict_error, not_found_error, validation_error
+from orc_werk.core.state import STATE_ACCEPTED, STATE_ASSURING, STATE_BLOCKED, STATE_EXECUTING, WorkProjection
 from orc_werk.ports.capabilities import validate_capabilities
 
 # TASK-M1-002/SCN-007: the distinct in-progress exit code -- additive to
@@ -609,6 +610,83 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def cmd_record(args: argparse.Namespace) -> int:
+    """Record, but never dispatch, the current requested assurance verdict."""
+    directory, run_id = _resolve_journal(args.target, args.journal)
+    _require_journal_file(directory, run_id, target=args.target)
+    journal = JSONLJournal(directory)
+    history = journal.history(delivery_run_id=run_id)
+    projection = journal.load_projection(delivery_run_id=run_id)
+    work = projection.works.get(args.work)
+    if work is None:
+        raise not_found_error(
+            f"no work {args.work!r} in run {run_id!r}",
+            delivery_run_id=run_id,
+            work_id=args.work,
+            next_steps=[f"actual work ids: {', '.join(sorted(projection.works))}"],
+        )
+    if work.state != STATE_ASSURING or not is_pending(work):
+        actual = _awaiting_label(work) if is_pending(work) else work.state
+        raise conflict_error(
+            f"work {args.work!r} is not awaiting an assurance verdict (actual pending state: {actual})",
+            delivery_run_id=run_id,
+            work_id=args.work,
+            actual_pending_state=actual,
+        )
+
+    derived = None
+    if args.derived_identity is not None:
+        try:
+            derived = json.loads(args.derived_identity)
+        except json.JSONDecodeError as exc:
+            raise validation_error("--derived-identity must be a JSON object", value=args.derived_identity) from exc
+        if not isinstance(derived, Mapping):
+            raise validation_error("--derived-identity must be a JSON object", value=args.derived_identity)
+
+    extensions: dict[str, Any] = {}
+    if args.finding:
+        extensions["review-findings/v1"] = {"findings": list(args.finding)}
+    identity = {
+        key: value for key, value in (
+            ("model", args.model), ("session_ref", args.session_ref), ("seat_ref", args.seat_ref)
+        ) if value is not None
+    }
+    if identity:
+        identity["role"] = "verify"
+        extensions["executor-identity/v1"] = identity
+    assurance: dict[str, Any] = {"verdict": args.verdict}
+    if args.evidence_ref:
+        assurance["evidence_refs"] = list(args.evidence_ref)
+    if extensions:
+        assurance["extensions"] = extensions
+    if derived is not None:
+        assurance["derived_identity"] = derived
+
+    config_path = layout.config_path(directory, run_id)
+    if not config_path.exists():
+        raise not_found_error(
+            f"run {run_id!r} has no persisted backing config",
+            delivery_run_id=run_id,
+            path=str(config_path),
+        )
+    record_assurance_entry(
+        config_path, work_id=args.work, attempt_number=work.attempt_number, assurance=assurance
+    )
+    extension_names = ",".join(sorted(extensions)) or "none"
+    print(
+        f"recorded assurance: run={run_id} work={args.work} verdict={args.verdict} "
+        f"extensions=[{extension_names}]"
+    )
+    print("next:")
+    print("  - " + redispatch_command(
+        run_id=run_id,
+        journal_dir=directory.resolve(),
+        config_path=config_path.resolve(),
+        intent_text=_intent_text(history),
+    ))
+    return 0
+
+
 def cmd_cancel(args: argparse.Namespace) -> int:
     directory, run_id = _resolve_journal(args.target, args.journal)
     _require_journal_file(directory, run_id, target=args.target)
@@ -1043,6 +1121,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="operator identity for --abandon-work (default: $USER)",
     )
     dispatch_parser.set_defaults(func=cmd_dispatch)
+
+    record_parser = subparsers.add_parser(
+        "record",
+        help="record the current requested assurance verdict without dispatching",
+        description="Atomically merge an assurance verdict into a run's persisted config; never dispatches.",
+        epilog="example:\n  orc record my-run --work work-1 --verdict accepted --evidence-ref audit.log",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    record_parser.add_argument("target", help="run id")
+    record_parser.add_argument("--work", required=True, metavar="WORK_ID", help="work awaiting assurance")
+    record_parser.add_argument("--verdict", required=True, choices=("accepted", "rejected"))
+    record_parser.add_argument("--evidence-ref", action="append", default=[], metavar="REF")
+    record_parser.add_argument("--finding", action="append", default=[], metavar="TEXT")
+    record_parser.add_argument("--derived-identity", default=None, metavar="JSON")
+    record_parser.add_argument("--model", default=None, metavar="M")
+    record_parser.add_argument("--session-ref", default=None, metavar="S")
+    record_parser.add_argument("--seat-ref", default=None, metavar="S")
+    record_parser.add_argument(
+        "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
+    record_parser.set_defaults(func=cmd_record)
 
     cancel_parser = subparsers.add_parser(
         "cancel",

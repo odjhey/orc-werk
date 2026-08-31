@@ -200,7 +200,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
@@ -761,6 +763,51 @@ def validate_config(data: Mapping[str, Any]) -> Mapping[str, Any]:
 
 def load_config(path: str) -> Mapping[str, Any]:
     return validate_config(_read_config_mapping(Path(path)))
+
+
+def record_assurance_entry(
+    path: Path, *, work_id: str, attempt_number: int, assurance: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Merge one assurance entry into a persisted config and replace atomically."""
+    current = load_config(str(path))
+    updated = json.loads(json.dumps(current))
+    attempts = updated.setdefault("attempts", {})
+    entries = attempts.setdefault(work_id, [])
+    index = attempt_number - 1
+    if len(entries) < index:
+        raise validation_error(
+            f"config has no entry for attempt {attempt_number} of work {work_id!r}",
+            path=f"<config>.attempts.{work_id}[{index}]",
+        )
+    if len(entries) == index:
+        entries.append({})
+    entry = entries[index]
+    if "assurance" in entry:
+        raise conflict_error(
+            f"attempt {attempt_number} of work {work_id!r} already has a recorded assurance entry",
+            work_id=work_id,
+            attempt_number=attempt_number,
+        )
+    entry["assurance"] = dict(assurance)
+    validate_config(updated)  # reuse all assurance/extension/adapter checks
+
+    path = path.resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(updated, stream, sort_keys=True, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+    return updated
 
 
 def load_config_overlay(path: str) -> Mapping[str, Any]:
