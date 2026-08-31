@@ -84,7 +84,6 @@ from orc_werk.ports.assurance import AssuranceObservation, AssurancePort
 from orc_werk.ports.base import LIFECYCLE_STATE_REQUESTED, LIFECYCLE_STATE_RUNNING, LIFECYCLE_STATE_SETTLED
 from orc_werk.ports.capabilities import (
     CAP_ASSURE_CANDIDATE_BOUND,
-    CAP_ASSURE_MAY_MUTATE_CANDIDATE,
     CAP_ASSURE_STRUCTURED_FINDINGS,
     CAP_ASSURE_STRUCTURED_VERDICT,
     validate_capabilities,
@@ -234,18 +233,6 @@ def _parse_assurance_id(assurance_id: str) -> tuple[str, str, Optional[str], str
     _prefix, fingerprint, native_run_id, head_token, repo_path = parts
     expected_head = None if head_token == _UNKNOWN_HEAD_TOKEN else head_token
     return fingerprint, native_run_id, expected_head, repo_path
-
-
-class _NoMistakesInvocationError(Exception):
-    def __init__(self, *, returncode: int, stdout: str, stderr: str) -> None:
-        super().__init__(f"no-mistakes exited {returncode}")
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
-
-    @property
-    def combined_lower(self) -> str:
-        return (self.stdout + "\n" + self.stderr).lower()
 
 
 class NoMistakesAssurance(AssurancePort):

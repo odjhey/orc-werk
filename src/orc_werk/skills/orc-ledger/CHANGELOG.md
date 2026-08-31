@@ -1,5 +1,12 @@
 # orc-ledger skill changelog
 
+## v3 -- 2026-08-31
+
+- Prefer `orc record` for validated assurance-verdict recording while retaining hand-editing as legal merge-only config recording.
+- Include `orc record` in the command orientation for discoverability.
+
+content-sha256: 9da2c4a403d36146fdf90d556cb1ad6be86da3780bab9af616957fb805977943
+
 ## v2 -- 2026-08-30
 
 - Fix #166 by keeping the installed skill as the canonical protocol behind the new slim default agents block, avoiding duplicated instructions.

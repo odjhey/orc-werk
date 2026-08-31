@@ -636,8 +636,9 @@ class Orchestrator:
         `FACT-ATTEMPT-ABANDONED` for `work_id` (`STATE-DELIVERY` mechanical
         fact sequencing item 9). Legal only when the Work currently rests
         at an unresolved candidate-observation conflict
-        (`has_candidate_conflict`) or at `ASSURING` with its current
-        Assurance still unsettled (`is_pending`) -- anything else raises
+        (`has_candidate_conflict`), at `EXECUTING` after its Execution
+        settled completed with no bound Candidate, or at `ASSURING` with
+        its current Assurance still unsettled (`is_pending`) -- anything else raises
         `ERR-VALIDATION`, never silently no-ops. `reason`/`by` become the
         Decision's `data`/`attribution` (`INV-011`/`INV-012`); the Fact
         itself only carries `reason` (mirrors `FACT-WORK-BLOCKED`'s

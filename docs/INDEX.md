@@ -36,7 +36,11 @@ description: Flat documentation index.
 - [Extension registry](extensions/README.md)
 - [`review-findings/v1`](extensions/review-findings/README.md)
 - [`execution-session/v1`](extensions/execution-session/README.md)
+- [`assurance-context/v1`](extensions/assurance-context/README.md)
+- [`acp-settlement/v1`](extensions/acp-settlement/README.md)
+- [`git-candidate-identification/v1`](extensions/git-candidate-identification/README.md)
 - [`crew-report/v1`](extensions/crew-report/README.md) (superseded — removed, historical reference only)
+- `executor-identity/v1` (unregistered CLI/playbook convention; see [Agent CLI usage](playbooks/agent-cli-usage.md), not a registered extension contract)
 
 ## Verification
 - [Golden scenarios](scenarios/README.md)
@@ -70,10 +74,14 @@ description: Flat documentation index.
 - [M0 pure core](delivery/M0-pure-core.md)
 - [M1 delivery ledger](delivery/M1-delivery-ledger.md)
 - [M2 close the loop](delivery/M2-close-the-loop.md)
+- [M3 harden the loop](delivery/M3-harden-the-loop.md)
+- [M4 cockpit and clarity](delivery/M4-cockpit-and-clarity.md)
 - [Watchtower operations playbook](delivery/watchtower-operations.md)
 - [Delivery stance](delivery/delivery-stance.md)
 - [CLI usage guide](playbooks/cli-usage.md)
 - [Agent CLI usage playbook](playbooks/agent-cli-usage.md)
+- [Engineering method](playbooks/engineering-method.md)
+- [Portfolio cockpit](playbooks/portfolio-cockpit.md)
 - [CLI reference](cli/README.md)
 
 ## Dogfooding
@@ -104,3 +112,19 @@ description: Flat documentation index.
 - [TASK-M2-004](delivery/task-cards/TASK-M2-004-second-repo-adoption.md)
 - [TASK-M2-005](delivery/task-cards/TASK-M2-005-policy-parameterization.md) (deferred out of M2)
 - [TASK-M2-006](delivery/task-cards/TASK-M2-006-beads-mirror.md)
+
+## M3 task cards
+- [TASK-M3B-001](delivery/task-cards/TASK-M3B-001-verdict-inheritance-abandon.md)
+- [TASK-M3B-002](delivery/task-cards/TASK-M3B-002-nm-inspect-guard.md)
+- [TASK-M3C-001](delivery/task-cards/TASK-M3C-001-orc-show.md)
+- [TASK-M3C-002](delivery/task-cards/TASK-M3C-002-refs-resolve.md)
+- [TASK-M3D-001](delivery/task-cards/TASK-M3D-001-orc-onboard.md)
+
+## M4 task cards
+- [TASK-M4A-001](delivery/task-cards/TASK-M4A-001-repo-default-config.md)
+- [TASK-M4A-002](delivery/task-cards/TASK-M4A-002-project-label.md)
+- [TASK-M4A-003](delivery/task-cards/TASK-M4A-003-portfolio-cockpit-docs.md)
+- [TASK-M4A-004](delivery/task-cards/TASK-M4A-004-mode-aware-onboarding.md)
+- [TASK-M4B-001](delivery/task-cards/TASK-M4B-001-richer-index.md)
+- [TASK-M4B-002](delivery/task-cards/TASK-M4B-002-inflight-rollup.md)
+- [TASK-M4C-001](delivery/task-cards/TASK-M4C-001-role-guides.md)

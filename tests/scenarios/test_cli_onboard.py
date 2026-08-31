@@ -40,6 +40,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 
 
+def _packaged_skill_version() -> str:
+    """The version the packaged skill declares — derived, not pinned, so a
+    skill bump does not require editing these onboard assertions in lockstep."""
+    for line in packaged_skill_text().splitlines():
+        if line.startswith("version:"):
+            return line.split(":", 1)[1].strip()
+    raise AssertionError("no version line in packaged skill frontmatter")
+
+
 def _run_cli(cwd: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     full_env = {"PYTHONPATH": str(SRC)}
     if env:
@@ -204,7 +213,7 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertIn("skill: linked", output)
         self.assertIn("agents-block: created", output)
         self.assertIn("verification:", output)
-        self.assertIn("installed orc-ledger skill version: v2", output)
+        self.assertIn(f"installed orc-ledger skill version: v{_packaged_skill_version()}", output)
         self.assertIn("next:", output)
 
     def test_scripted_profile_declares_work_doer_mode_and_retires_preamble(self):
@@ -315,7 +324,7 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertEqual(agents_before.count(BLOCK_BEGIN), 1)
         self.assertIn("-- skip", output)
         self.assertIn("already present", output)
-        self.assertIn("skill: v2 already installed -- skip", output)
+        self.assertIn(f"skill: v{_packaged_skill_version()} already installed -- skip", output)
         self.assertIn("skill changelog: already installed", output)
         self.assertIn("already links to the installed skill", output)
         self.assertIn("already present and up to date", output)

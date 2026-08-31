@@ -18,6 +18,8 @@ alias orc='PYTHONPATH=src python3 -m orc_werk.cli'
 
 orc [--limit N] [--before RUN_ID]                               # live text index of ./.orc (issue #43)
 orc config-schema                                               # full dispatch config reference
+orc record <run-id> --work <work-id> --verdict <accepted|rejected> [recording options]
+                                                                   # preferred validated recording sugar; see `orc record -h`
 orc dispatch "<intent text>" --config cfg.json [--journal DIR] [--max-attempts N]
 orc dispatch --run-id <id> [--journal DIR]                       # resume existing run
 orc dispatch --run-id <id> --abandon-work <work_id> --abandon-reason "<why>" [--abandon-by "<who>"]
@@ -43,7 +45,7 @@ orc onboard --print-agents-block                                                
 - **Config persistence / resume.** On a run's first `dispatch`, the effective config is durably copied into that run's own directory, `<journal-dir>/<run_id>/config.json`. Resume with `orc dispatch --run-id <id>` (and `--journal DIR` when needed): both positional `intent` and `--config` are optional when that id names an existing run with a journaled intent, and the config resolves from the run dir. The existing `orc dispatch "<intent>" --run-id <id>` form remains valid; its fresh intent text is ignored by replay. An explicit `--config` on a later dispatch still wins and refreshes the persisted copy. To prevent accidental stray runs, a new dispatch whose intent text exactly matches an existing run id is rejected with `ERR-VALIDATION`; use `--run-id <id>` to resume or reword genuinely new work. `next:` re-dispatch affordances name the durable in-run-dir config path once it exists, never the caller's ephemeral path.
 - **Onboarding an adopting repo (`TASK-M3D-001`).** `orc onboard [--path DIR]` mechanizes the adopting-repo scaffold `PRODUCT-ADOPTION` used to describe as hand-work: a `.orc/` `.gitignore` entry, the orc-ledger skill installed and resolvable under `.claude/skills` (content sourced from THIS installed package -- one canonical origin), a copy-pasteable `## Delivery ledger (orc)` block written into `AGENTS.md` (or printed only, via `--print-agents-block`, writing nothing), and an honest install-verification report (`orc` on `$PATH` vs. module form, journal dir resolution, optional `bd` presence). Idempotent re-run; an operator-modified target is skip-with-note unless `--force`. See `docs/cli/README.md`'s `orc onboard` reference for the full flag/output detail.
 - **Operator cancel (`SCN-011`).** `orc cancel <run-id> --work <work-id> --reason "<why>" [--journal <dir>]` records operator-attributed `DEC-CANCEL` followed by `FACT-WORK-CANCELLED`, closing `READY`, `EXECUTING`, or `ASSURING` Work directly as terminal `CANCELLED`. This is journal-only (no port Effect), never fabricates an assurance verdict, and is rejected with `ERR-CONFLICT` from `ACCEPTED`, `BLOCKED`, or `CANCELLED`. `--work` and `--reason` are required; attribution defaults to `$USER`/`whoami`. This operator power is never part of the ship/verify agent path.
-- **Operator abandon (`TASK-M3B-001`, issues #76/#95).** `--abandon-work <work_id> --abandon-reason "<why>" [--abandon-by "<who>"]` on `orc dispatch` records `DEC-ABANDON-ATTEMPT`/`FACT-ATTEMPT-ABANDONED` (`STATE-DELIVERY` item 9) for the named work, then continues the same dispatch pass — an ordinary retry or block follows immediately. Legal only when that work is currently resting at an unresolved candidate-observation conflict, or at `ASSURING` with its current attempt still unsettled (exit `3`'s `pending, awaiting=assurance-verdict`) and the operator knows, out-of-band, it will never settle (issue #95's adapter-owned in-flight case) — anything else is rejected with `ERR-VALIDATION` and a `next` pointer at `orc status <run>`. `--abandon-by` defaults to `$USER`/`whoami`; a flag, not a config-entry, is the chosen recording surface for this operator-only power (see the PR body's design rationale) — it is never available to the ship/verify agent seats `docs/playbooks/agent-cli-usage.md` governs.
+- **Operator abandon (`TASK-M3B-001`, issues #76/#95).** `--abandon-work <work_id> --abandon-reason "<why>" [--abandon-by "<who>"]` on `orc dispatch` records `DEC-ABANDON-ATTEMPT`/`FACT-ATTEMPT-ABANDONED` (`STATE-DELIVERY` item 9) for the named work, then continues the same dispatch pass — an ordinary retry or block follows immediately. Legal only when that work is currently resting at an unresolved candidate-observation conflict, at `EXECUTING` after a completed Execution settled with no bound Candidate, or at `ASSURING` with its current attempt still unsettled (exit `3`'s `pending, awaiting=assurance-verdict`) and the operator knows, out-of-band, it will never settle (issue #95's adapter-owned in-flight case) — anything else is rejected with `ERR-VALIDATION` and a `next` pointer at `orc status <run>`. `--abandon-by` defaults to `$USER`/`whoami`; a flag, not a config-entry, is the chosen recording surface for this operator-only power (see the PR body's design rationale) — it is never available to the ship/verify agent seats `docs/playbooks/agent-cli-usage.md` governs.
 
 ## Design principles
 
@@ -106,8 +108,14 @@ orc dispatch "reply with the word ping" --config acp-cfg.json --journal ./.orc  
 # candidate_fingerprint=fp-<real hash> is printed -- a real candidate was
 # identified and journaled with execution-session/v1 provenance.
 
-# a (different) verification agent edits acp-cfg.json to add, e.g.:
+# a (different) verification agent preferably records the verdict through the
+# validated `orc record` sugar (use the exact command printed by `next:` and
+# `orc record -h` for the applicable identity/evidence options):
+orc record <run-id> --work work-1 --verdict accepted --journal ./.orc
+
+# Hand-editing remains legal: equivalently edit acp-cfg.json to add
 #   "attempts": {"work-1": [{"assurance": {"verdict": "accepted"}}]}
+# then validate it with `orc validate`.
 
 orc dispatch "reply with the word ping" --config acp-cfg.json --journal ./.orc   # re-run again
 # exit 0: work-1 ACCEPTED.

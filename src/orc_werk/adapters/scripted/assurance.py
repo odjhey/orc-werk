@@ -17,7 +17,7 @@ caller tries to.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Mapping
 
 from orc_werk.core.errors import not_found_error, validation_error
 from orc_werk.core.facts import ASSURANCE_VERDICTS

@@ -1,6 +1,6 @@
 ---
 name: orc-ledger
-version: 2
+version: 3
 description: Onboard to and operate within a repository whose delivery is tracked by an orc ledger (an .orc/ directory of run journals). Use when a session starts work in such a repo, when the user mentions orc runs, the ledger, dispatch, pending runs, settlements, or verdicts, or before recording anything into a run.
 ---
 
@@ -13,7 +13,8 @@ what it needs.
 
 Invoke the CLI as `orc`. Run `orc -h` for the local command reference,
 `orc config-schema` for dispatch configuration, `orc validate` before using an
-edited configuration, and `orc verdict` to inspect assurance results.
+edited configuration, `orc record` for validated recording sugar, and `orc
+verdict` to inspect assurance results.
 
 ## 1. Orient first — always
 
@@ -52,6 +53,12 @@ here so a fresh session needs no other file:
   work may be done at exit 3 — read the output, not just the code).
 
 ## 4. Recording mechanics
+
+Prefer `orc record <run-id> --work <work-id> --verdict <accepted|rejected>`
+for assurance verdicts: it validates and atomically performs the same
+merge-only backing-config update, then prints the resume command without
+running it. Hand-editing remains legal; this verb is recording sugar, not a
+new journal semantic.
 
 Outcomes are recorded into the run's backing config (the JSON file named in
 the run's `next:` affordance), then advanced by re-running the same dispatch
