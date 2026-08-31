@@ -151,6 +151,27 @@ typing it, add an `assurance` block:
   renders its own verdict from the parked findings without waiting for a
   human at all — see the mapping doc's "Judge-only ruling").
 
+## Generic command assurance config (issue #194)
+
+An adopter may instead make an operator-authored, PR-reviewed in-repository
+script the verify seat:
+
+```json
+{ "candidate": {"adapter": "git", "repo_path": "/abs/repo"},
+  "assurance": {"adapter": "command", "script": "scripts/assure-candidate.sh",
+                "cwd": "/abs/repo", "timeout_s": 300} }
+```
+
+`script` and `cwd` are required; `timeout_s` is positive and defaults to 300.
+No args, environment, or inline-script-text keys exist. Relative scripts resolve
+against `cwd`, and the resolved path must remain inside it. The script receives
+`command-assurance-input/v1` JSON only on standard input. Clean exit 0 means
+`accepted`, clean exit 1 means `rejected`, and every other exit, signal, or
+timeout means `inconclusive`. Stdout is optional, bounded enrichment only; it
+cannot override verdict, state, or fingerprint. As for no-mistakes, command
+assurance requires a git candidate and forbids per-attempt scripted assurance
+entries. See `ADAPTER-COMMAND-MAPPING`.
+
 ## Reading a run
 
 - `status` — per-work terminal state, attempt count, current candidate fingerprint.
