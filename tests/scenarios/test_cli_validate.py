@@ -211,6 +211,25 @@ class CliValidateTest(unittest.TestCase):
             self.assertIn("<config>.attempts.w[0].assurance", error["message"])
             self.assertFalse((root / ".orc").exists())
 
+    def test_invalid_derived_identity_shapes_name_exact_path(self) -> None:
+        cases = ("stale", {}, {"extensions": {"source": "audit"}})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index, derived_identity in enumerate(cases):
+                with self.subTest(derived_identity=derived_identity):
+                    result = self._validate(root, {
+                        "attempts": {"w": [{"assurance": {
+                            "verdict": "accepted", "derived_identity": derived_identity
+                        }}]}
+                    })
+                    self.assertEqual(result.returncode, 2)
+                    error = json.loads(result.stderr)
+                    self.assertEqual(error["error"], "ERR-VALIDATION")
+                    self.assertEqual(
+                        error["details"]["path"],
+                        "<config>.attempts.w[0].assurance.derived_identity",
+                    )
+
     def test_unknown_top_level_key_is_canonical_validation_error_and_pure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

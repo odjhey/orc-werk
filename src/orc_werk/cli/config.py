@@ -69,6 +69,13 @@ An attempt entry's `assurance` object accepts exactly these keys:
   verifier records substantive findings here as
   `{"review-findings/v1": {...}}`; `{"assurance-context/v1": {...}}` is
   also accepted for verifier-attested audit-base provenance.
+- `derived_identity` (optional): a non-empty portable-JSON object containing
+  identity fields only; an empty object, a non-object, or an object containing
+  `extensions` is `ERR-VALIDATION`. At verdict-binding time every asserted key
+  must exist and compare by uninterpreted JSON equality with the bound
+  candidate's durable `subject_identity`. A mismatch is `ERR-CONFLICT` before
+  any Fact is journaled. The key is CLI-only and is stripped before the
+  scripted assurance adapter receives the entry.
 
 - `plan` is an optional `PORT-WORK-001` multi-work plan (needed to exercise
   a fan-in run like `SCN-005` from the CLI); defaults to
@@ -205,8 +212,8 @@ from orc_werk.adapters.scripted.assurance import ScriptedAssurance
 from orc_werk.adapters.scripted.candidate import ScriptedCandidate, fingerprint_of
 from orc_werk.adapters.scripted.execution import ScriptedExecution
 from orc_werk.app.orchestrator import RunConfig
-from orc_werk.core.effects import FX_START_EXECUTION
-from orc_werk.core.errors import CoreError
+from orc_werk.core.effects import FX_IDENTIFY_CANDIDATE, FX_START_EXECUTION
+from orc_werk.core.errors import CoreError, conflict_error
 from orc_werk.core.errors import validation_error as _core_validation_error
 from orc_werk.core.facts import ASSURANCE_VERDICTS, EXEC_OUTCOMES, FACT_CANDIDATE_OBSERVED
 from orc_werk.core.idempotency import idempotency_key
@@ -240,7 +247,7 @@ _TOP_LEVEL_KEYS = frozenset(
     }
 )
 _ATTEMPT_ENTRY_KEYS = frozenset({"outcome", "candidate", "assurance", "states", "artifact_refs", "extensions"})
-_ASSURANCE_ENTRY_KEYS = frozenset({"verdict", "states", "evidence_refs", "extensions"})
+_ASSURANCE_ENTRY_KEYS = frozenset({"verdict", "states", "evidence_refs", "extensions", "derived_identity"})
 
 # `execution`/`candidate`/`assurance` real-port selection (module
 # docstring, "Real-port selection" section). Keyed exactly to what each
@@ -356,6 +363,24 @@ def _validate_assurance_entry(assurance: Any, *, path: str) -> None:
             path=f"{path}.verdict",
             verdict=assurance["verdict"],
         )
+    if "derived_identity" in assurance:
+        derived = assurance["derived_identity"]
+        derived_path = f"{path}.derived_identity"
+        if not isinstance(derived, Mapping):
+            raise validation_error(
+                f"config value at {derived_path} must be a JSON object, got {type(derived).__name__}",
+                path=derived_path,
+            )
+        if not derived:
+            raise validation_error(
+                f"config value at {derived_path} must be a non-empty identity object",
+                path=derived_path,
+            )
+        if "extensions" in derived:
+            raise validation_error(
+                f"config value at {derived_path} must contain identity fields only; extensions is forbidden",
+                path=derived_path,
+            )
 
 
 def _attempt_allowed_keys(
@@ -820,6 +845,41 @@ def _exec_entry_from_attempt(attempt: Mapping[str, Any]) -> dict[str, Any]:
     return exec_entry
 
 
+def _json_equal(left: Any, right: Any) -> bool:
+    """Representation-preserving equality for uninterpreted portable JSON."""
+    return json.dumps(left, sort_keys=True, separators=(",", ":")) == json.dumps(
+        right, sort_keys=True, separators=(",", ":")
+    )
+
+
+def _bound_assurance_entry(
+    assurance_entry: Mapping[str, Any], *, subject_identity: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Corroborate and remove the CLI-only derived identity at binding time."""
+    bound = dict(assurance_entry)
+    derived = bound.pop("derived_identity", None)
+    if derived is None:
+        return bound
+    matches = all(
+        key in subject_identity and _json_equal(value, subject_identity[key])
+        for key, value in derived.items()
+    )
+    if not matches:
+        asserted_json = json.dumps(derived, sort_keys=True, separators=(",", ":"))
+        bound_json = json.dumps(subject_identity, sort_keys=True, separators=(",", ":"))
+        raise conflict_error(
+            "scripted assurance derived_identity does not match the bound candidate subject_identity",
+            next_steps=[
+                f"asserted derived_identity: {asserted_json}",
+                f"bound subject_identity: {bound_json}",
+                "correct the assurance entry and re-dispatch, or inspect DEC-ABANDON-ATTEMPT",
+            ],
+            derived_identity=dict(derived),
+            subject_identity=dict(subject_identity),
+        )
+    return bound
+
+
 def build_scripted_adapters(
     config: Mapping[str, Any], *, delivery_run_id: str
 ) -> tuple[ScriptedExecution, ScriptedCandidate, ScriptedAssurance]:
@@ -865,7 +925,9 @@ def build_scripted_adapters(
                 assurance_entry = attempt.get("assurance")
                 if assurance_entry is not None:
                     fingerprint = fingerprint_of(candidate_content)
-                    assurance_script[fingerprint] = dict(assurance_entry)
+                    assurance_script[fingerprint] = _bound_assurance_entry(
+                        assurance_entry, subject_identity=candidate_content
+                    )
 
     # pending=True: the CLI-wired M1a default (SCN-007) -- a work with no
     # recorded outcome for its next attempt starts and rests unsettled
@@ -1043,6 +1105,24 @@ def _observed_candidate_fingerprints(history: Iterable[Mapping[str, Any]]) -> di
     return by_work
 
 
+def _observed_candidate_bindings(
+    history: Iterable[Mapping[str, Any]],
+) -> dict[str, list[tuple[str, Mapping[str, Any]]]]:
+    """Read fingerprint and identity together from durable identify effects."""
+    by_work: dict[str, list[tuple[str, Mapping[str, Any]]]] = {}
+    for record in history:
+        if record.get("kind") != "effect" or record.get("id") != FX_IDENTIFY_CANDIDATE:
+            continue
+        data = record.get("data", {})
+        candidate = data.get("dispatch_result", {}).get("candidate", {})
+        work_id = data.get("work_id")
+        fingerprint = candidate.get("fingerprint")
+        subject_identity = candidate.get("subject_identity")
+        if work_id and fingerprint and isinstance(subject_identity, Mapping):
+            by_work.setdefault(work_id, []).append((fingerprint, subject_identity))
+    return by_work
+
+
 def build_real_assurance_script(
     attempts_by_work: Mapping[str, Any], *, history: Iterable[Mapping[str, Any]]
 ) -> dict[str, dict[str, Any]]:
@@ -1058,15 +1138,26 @@ def build_real_assurance_script(
     nothing to bind it to *yet*, and `ScriptedAssurance(pending=True)`
     reports the ordinary SCN-007 pending wait until a later dispatch (once
     the candidate is observed) supplies the matching script entry."""
-    observed = _observed_candidate_fingerprints(history)
+    history_records = list(history)
+    observed = _observed_candidate_bindings(history_records)
+    observed_fingerprints = _observed_candidate_fingerprints(history_records)
     script: dict[str, dict[str, Any]] = {}
     for work_id, attempts in attempts_by_work.items():
-        fingerprints = observed.get(work_id, [])
+        bindings = observed.get(work_id, [])
+        fingerprints = observed_fingerprints.get(work_id, [])
         for attempt_index, attempt in enumerate(attempts):
             assurance_entry = attempt.get("assurance")
             if assurance_entry is None or attempt_index >= len(fingerprints):
                 continue
-            script[fingerprints[attempt_index]] = dict(assurance_entry)
+            if "derived_identity" not in assurance_entry:
+                script[fingerprints[attempt_index]] = dict(assurance_entry)
+                continue
+            if attempt_index >= len(bindings):
+                continue
+            fingerprint, subject_identity = bindings[attempt_index]
+            script[fingerprint] = _bound_assurance_entry(
+                assurance_entry, subject_identity=subject_identity
+            )
     return script
 
 

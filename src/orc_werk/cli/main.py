@@ -559,9 +559,14 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     for record in settled_assurances:
         data = record["data"]
         extension_keys = ", ".join(sorted(record.get("extensions", {})))
+        corroborated = any(
+            "derived_identity" in (attempt.get("assurance") or {})
+            for attempt in (config.get("attempts") or {}).get(data["work_id"], [])
+        )
+        corroboration_note = " -- derived_identity corroborated" if corroborated else ""
         print(
             f"assurance recorded: work {data['work_id']!r} verdict={data['verdict']} "
-            f"extensions=[{extension_keys}] (seq {record['seq']})"
+            f"extensions=[{extension_keys}] (seq {record['seq']}){corroboration_note}"
         )
         retry = next(
             (
