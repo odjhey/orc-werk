@@ -115,6 +115,50 @@ class AssuranceIngestionOutputTest(unittest.TestCase):
             )
             self.assertIn("awaiting=execution-outcome", result.stdout)
 
+    def test_mismatch_error_carries_both_identities_and_affordances(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._dispatch(
+                Path(tmp),
+                {"attempts": {"work-1": [{
+                    "outcome": "completed",
+                    "candidate": {"head_sha": "current", "pr": 180},
+                    "assurance": {
+                        "verdict": "accepted",
+                        "derived_identity": {"head_sha": "stale"},
+                    },
+                }]}},
+                run_id="identity-mismatch-output",
+            )
+            self.assertEqual(result.returncode, 2)
+            error = json.loads(result.stderr)
+            self.assertEqual(error["error"], "ERR-CONFLICT")
+            self.assertEqual(error["details"]["derived_identity"], {"head_sha": "stale"})
+            self.assertEqual(
+                error["details"]["subject_identity"], {"head_sha": "current", "pr": 180}
+            )
+            self.assertIn('asserted derived_identity: {"head_sha":"stale"}', error["next"])
+            self.assertIn(
+                'bound subject_identity: {"head_sha":"current","pr":180}', error["next"]
+            )
+
+    def test_match_output_notes_derived_identity_corroboration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._dispatch(
+                Path(tmp),
+                {"attempts": {"work-1": [{
+                    "outcome": "completed",
+                    "candidate": {"head_sha": "current", "pr": 180},
+                    "assurance": {
+                        "verdict": "accepted",
+                        "derived_identity": {"head_sha": "current"},
+                    },
+                }]}},
+                run_id="identity-match-output",
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("assurance recorded:", result.stdout)
+            self.assertIn("derived_identity corroborated", result.stdout)
+
     def test_execution_only_settlement_emits_no_assurance_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = self._dispatch(
