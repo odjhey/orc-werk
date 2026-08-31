@@ -29,7 +29,8 @@ import unittest
 from pathlib import Path
 
 from orc_werk.adapters.acp.execution import AcpExecution, session_name_for_idempotency_key
-from orc_werk.core.errors import CoreError
+from orc_werk.cli.config import validate_config
+from orc_werk.core.errors import CoreError, ERR_VALIDATION
 from orc_werk.ports.base import LIFECYCLE_STATE_RUNNING, LIFECYCLE_STATE_SETTLED
 from tests.conformance.support_acpx_stub import AcpxStubWorld
 
@@ -82,6 +83,35 @@ class AcpExecutionModelPinTest(unittest.TestCase):
             self.assertIn(model_id, str(caught.exception))
 
 
+class AcpExecutionTtlAndConfigTest(unittest.TestCase):
+    def test_default_ttl_is_top_level_before_agent(self) -> None:
+        argv = AcpExecution()._base_argv()
+        self.assertEqual(argv[:5], ["acpx", "--format", "json", "--ttl", "0"])
+        self.assertLess(argv.index("--ttl"), argv.index("pi"))
+
+    def test_configured_ttl_is_top_level_before_agent(self) -> None:
+        argv = AcpExecution(agent="pi", ttl=47)._base_argv()
+        self.assertEqual(argv[argv.index("--ttl") : argv.index("--ttl") + 2], ["--ttl", "47"])
+        self.assertLess(argv.index("--ttl"), argv.index("pi"))
+
+    def test_negative_ttl_is_canonical_validation_error(self) -> None:
+        with self.assertRaises(CoreError) as caught:
+            validate_config({"execution": {"adapter": "acp", "cwd": "/tmp", "ttl": -1},
+                             "candidate": {"adapter": "git", "repo_path": "/tmp"}})
+        self.assertEqual(caught.exception.error["error"], ERR_VALIDATION)
+
+    def test_non_integer_ttl_is_canonical_validation_error(self) -> None:
+        with self.assertRaises(CoreError) as caught:
+            validate_config({"execution": {"adapter": "acp", "cwd": "/tmp", "ttl": 1.5},
+                             "candidate": {"adapter": "git", "repo_path": "/tmp"}})
+        self.assertEqual(caught.exception.error["error"], ERR_VALIDATION)
+
+    def test_ttl_is_rejected_for_non_acp_execution(self) -> None:
+        with self.assertRaises(CoreError) as caught:
+            validate_config({"execution": {"adapter": "scripted", "ttl": 0}})
+        self.assertEqual(caught.exception.error["error"], ERR_VALIDATION)
+
+
 class AcpExecutionUnobservabilityTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -120,6 +150,43 @@ class AcpExecutionUnobservabilityTest(unittest.TestCase):
         self.assertNotIn("unobservability", provenance)
         evidence = observed.extensions["acp-settlement/v1"]["unobservability"]
         self.assertEqual(evidence["lastAgentExitCode"], 137)
+
+    def test_no_session_after_mid_turn_activity_settles_failed(self) -> None:
+        ref, session_name = self._start(
+            work_id="vanished", idempotency_key="vanished-mid-turn", states=["running"]
+        )
+        self._world.append_stream(
+            session_name,
+            {"jsonrpc": "2.0", "method": "session/update", "params": {
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"text": "working"}}
+            }},
+        )
+        record = self._world.session_record(session_name)
+        assert record is not None
+        record["closed"] = True
+        self._world._save(session_name, record)
+
+        observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_SETTLED)
+        self.assertEqual(observed.outcome, "failed")
+        self.assertEqual(
+            observed.extensions["acp-settlement/v1"]["unobservability"],
+            {"reason": "worker-vanished-mid-turn", "status": "no-session",
+             "prompted": True, "stream_activity_seen": True},
+        )
+
+    def test_no_session_during_startup_with_empty_stream_stays_running(self) -> None:
+        ref, session_name = self._start(
+            work_id="startup-no-session", idempotency_key="startup-no-session", states=["running"]
+        )
+        record = self._world.session_record(session_name)
+        assert record is not None
+        record["closed"] = True
+        self._world._save(session_name, record)
+
+        observed = AcpExecution(env=self._world.env()).inspect(execution_id=ref.id)
+        self.assertEqual(observed.state, LIFECYCLE_STATE_RUNNING)
+        self.assertIsNone(observed.outcome)
 
     def test_startup_window_dead_with_live_owner_runs_then_completes(self) -> None:
         ref, session_name = self._start(

@@ -25,3 +25,4 @@ The pure core must pass these scenarios with scripted/in-memory adapters before 
 13. [`SCN-013`](SCN-013-derived-identity-binding.md) scripted assurance derived-identity binding (issue #180, `CONF-ASSURE-005`)
 14. [`SCN-014`](SCN-014-null-candidate-recovery.md) null candidate recovery by re-identification or legal abandon (issue #191, `CONF-CAND-004`)
 15. [`SCN-015`](SCN-015-command-assurance.md) confined operator-script assurance with honest exit-status and hostile-output handling (issue #194, `CONF-ASSURE-006`, `CONF-ASSURE-007`)
+16. [`SCN-016`](SCN-016-acp-worker-vanished.md) corroborated ACP worker disappearance with startup-transient guard (issue #206, `CONF-EXEC-005`)

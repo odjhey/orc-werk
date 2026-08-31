@@ -102,6 +102,9 @@ _STUB_SOURCE = textwrap.dedent(
             if tok == "--json-strict":
                 i += 1
                 continue
+            if tok == "--ttl":
+                i += 2
+                continue
             if tok == "--cwd":
                 i += 2
                 continue

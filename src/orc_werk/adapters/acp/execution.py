@@ -49,8 +49,10 @@ Design summary (full rationale: `docs/adapters/acp/mapping.md`):
 - Unobservability (the task card's ruling) is a deterministic check, never
   a timeout: reconnect via `sessions show`/stream-tail first; settle
   `failed` only when daemon death is corroborated (a nonzero
-  `lastAgentExitCode`, an exit signal, or status `"dead"` together with
-  `pidAlive == false`) with no recorded result for the outstanding turn.
+  `lastAgentExitCode`, an exit signal, status `"dead"` together with
+  `pidAlive == false`, or issue #206's prompted + substantive-current-turn-
+  activity + `"no-session"` combination) with no recorded result for the
+  outstanding turn. Empty startup streams remain ambiguous/running per #157.
 """
 
 from __future__ import annotations
@@ -223,6 +225,7 @@ class AcpExecution(ExecutionPort):
         capabilities: Iterable[str] = _DEFAULT_CAPABILITIES,
         thought_level: Optional[str] = "low",
         approve_all: bool = False,
+        ttl: int = 0,
         acpx_bin: str = "acpx",
         env: Optional[Mapping[str, str]] = None,
     ) -> None:
@@ -255,6 +258,9 @@ class AcpExecution(ExecutionPort):
         # footgun). The instance-level default here is the fail-closed
         # posture (--non-interactive-permissions deny).
         self._approve_all = approve_all
+        if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 0:
+            raise ValueError("ttl must be a non-negative integer")
+        self._ttl = ttl
         self._acpx_bin = acpx_bin
 
         # In-process-only bookkeeping. Neither of these is required for
@@ -280,7 +286,7 @@ class AcpExecution(ExecutionPort):
         # permission posture) are TOP-LEVEL acpx options and MUST precede
         # the agent subcommand -- `acpx --format json pi ...`, never
         # `acpx pi ... --format json`.
-        argv = [self._acpx_bin, "--format", "json"]
+        argv = [self._acpx_bin, "--format", "json", "--ttl", str(self._ttl)]
         if json_strict:
             argv.append("--json-strict")
         if self._cwd:
@@ -568,7 +574,11 @@ class AcpExecution(ExecutionPort):
                 extensions=self._session_provenance(show, session_name, resume_ref=session_name),
             )
 
-        death_evidence = self._daemon_confirmed_dead(show, session_name)
+        death_evidence = self._daemon_confirmed_dead(
+            show,
+            session_name,
+            stream_activity_seen=_stream_has_outstanding_turn_activity(stream_path),
+        )
         if death_evidence is not None:
             # The task card's abandonment ruling: settle failed ONLY on a
             # deterministic unobservability signal, never a timeout. This
@@ -596,7 +606,11 @@ class AcpExecution(ExecutionPort):
         return ExecutionObservation(state=LIFECYCLE_STATE_RUNNING)
 
     def _daemon_confirmed_dead(
-        self, show: Mapping[str, Any], session_name: str
+        self,
+        show: Mapping[str, Any],
+        session_name: str,
+        *,
+        stream_activity_seen: bool,
     ) -> Optional[dict[str, Any]]:
         # Primary signal: sessions show's own durable session record. Exit
         # zero is idle in acpx's resolveStatusState, not evidence of death.
@@ -621,6 +635,16 @@ class AcpExecution(ExecutionPort):
             status = self._run(["status", "-s", session_name])
         except _AcpxInvocationError:
             return None
+        if status.get("status") == "no-session":
+            prompted = _session_already_prompted(show)
+            if not prompted or not stream_activity_seen:
+                return None
+            return {
+                "reason": "worker-vanished-mid-turn",
+                "status": "no-session",
+                "prompted": True,
+                "stream_activity_seen": True,
+            }
         if status.get("status") != "dead" or status.get("pidAlive") is not False:
             return None
         return {
@@ -735,6 +759,43 @@ class AcpExecution(ExecutionPort):
                 attempt_number = execution.attempt_number
                 break
         return Execution(id=execution_id, work_id=work_id, attempt_number=attempt_number)
+
+
+def _stream_has_outstanding_turn_activity(stream_path: Optional[str]) -> bool:
+    """Whether the latest unterminated turn produced substantive activity.
+
+    Activity before the latest terminal result belongs to an earlier turn and
+    cannot corroborate disappearance of the currently outstanding turn.
+    """
+    if not stream_path:
+        return False
+    path = Path(stream_path)
+    if not path.exists():
+        return False
+    activity_seen = False
+    with path.open("r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            result = record.get("result")
+            if isinstance(result, dict) and isinstance(result.get("stopReason"), str):
+                activity_seen = False
+                continue
+            method = record.get("method")
+            activity = method
+            if method == "session/update":
+                update = record.get("params", {}).get("update", {})
+                activity = update.get("sessionUpdate") if isinstance(update, dict) else None
+            if isinstance(activity, str) and (
+                activity in {"agent_message_chunk", "agent_thought_chunk"}
+                or activity.startswith("tool_call")
+            ):
+                activity_seen = True
+    return activity_seen
 
 
 def _scan_stream_terminal_results(
