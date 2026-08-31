@@ -23,3 +23,4 @@ The pure core must pass these scenarios with scripted/in-memory adapters before 
 11. [`SCN-011`](SCN-011-cancel-work.md) operator cancellation
 12. [`SCN-012`](SCN-012-assurance-audit-base.md) assurance audit base
 13. [`SCN-013`](SCN-013-derived-identity-binding.md) scripted assurance derived-identity binding (issue #180, `CONF-ASSURE-005`)
+14. [`SCN-014`](SCN-014-null-candidate-recovery.md) null candidate recovery by re-identification or legal abandon (issue #191, `CONF-CAND-004`)

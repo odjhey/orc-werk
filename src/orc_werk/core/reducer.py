@@ -427,16 +427,23 @@ def apply_fact(
         # other failed-attempt row already uses -- never a verdict
         # (INV-003/INV-009 intact: no FACT-ASSURE-SETTLED accompanies it).
         conflicted = projection.state == STATE_EXECUTING and projection.candidate_conflict is not None
+        awaiting_candidate = (
+            projection.state == STATE_EXECUTING
+            and projection.current_candidate_id is None
+            and projection.executions
+            and projection.executions[-1].get("outcome") == "completed"
+        )
         unsettleable = (
             projection.state == STATE_ASSURING
             and projection.assurance_started_for_current
             and projection.assurances
             and projection.assurances[-1]["verdict"] is None
         )
-        if not (conflicted or unsettleable):
+        if not (conflicted or awaiting_candidate or unsettleable):
             raise conflict_error(
                 "FACT-ATTEMPT-ABANDONED illegal: no unresolved candidate-observation "
-                "conflict and no unsettled current Assurance (STATE-DELIVERY item 9)",
+                "conflict, settled Execution awaiting candidate, or unsettled current "
+                "Assurance (STATE-DELIVERY item 9)",
                 work_id=projection.work_id,
                 state=projection.state,
             )
