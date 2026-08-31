@@ -12,6 +12,34 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.4.0] — 2026-08-31
+
+No breaking changes. Existing configs and journals need no migration.
+
+### Added
+- **`command` assurance adapter** (#194, `SCN-015`, `CONF-ASSURE-006/007`): an
+  operator-authored, in-repo script can be the verify seat. Set
+  `assurance.adapter = "command"` with a `script` (resolved inside `cwd`), and
+  orc runs it against the bound candidate — exit 0 → accepted, exit 1 →
+  rejected, any other exit / signal / timeout → inconclusive (never guessed).
+  The script receives the candidate identity as JSON on stdin (never argv or
+  shell), and its stdout can only *enrich* evidence, never override the verdict;
+  malformed output is dropped and the drop recorded. Requires `candidate.adapter
+  = "git"`. This is the lightweight path to a script-driven reviewer without a
+  bespoke adapter. `PORT-ASSURANCE` was unchanged.
+- **`executor-identity/v1` is now a registered extension** (docs/extensions/):
+  the seat-identity payload the CLI emits (`model`, `session_ref`, `seat_ref`,
+  `role`) has a normative schema instead of being a bare convention. Still
+  observational — the kernel never branches on it.
+
+### Fixed / Docs
+- **Documentation debt from 0.2.0/0.3.0 repaid** (consolidation pass): the
+  third legal `DEC-ABANDON-ATTEMPT` shape from #191 (the null-candidate rest)
+  now appears consistently in `PROTOCOL-DECISIONS`, the CLI-usage playbook, and
+  the orchestrator docstring; `orc record` is documented in the CLI-usage
+  playbook and the packaged onboarding skill (bumped to v3); `docs/INDEX.md`
+  refreshed; a few dead symbols removed. No behavior change.
+
 ## [0.3.0] — 2026-08-31
 
 No breaking changes. Existing configs and journals need no migration.
