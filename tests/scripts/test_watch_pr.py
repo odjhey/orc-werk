@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.watch_pr import classify, classify_verdict
+from scripts.watch_pr import EXIT_CODES, classify, classify_verdict
 
 
 def snapshot(**changes: object) -> dict[str, object]:
@@ -61,6 +61,20 @@ class ClassifyTest(unittest.TestCase):
     def test_pending_checks_wait(self) -> None:
         result = classify(snapshot(statusCheckRollup=[{"status": "QUEUED", "conclusion": None}]))
         self.assertEqual(result.state, "CI-PENDING")
+
+    def test_uncomputed_merge_state_is_pending(self) -> None:
+        for merge_status in ("UNKNOWN", "", None):
+            with self.subTest(merge_status=merge_status):
+                result = classify(snapshot(mergeStateStatus=merge_status))
+                self.assertEqual(result.state, "CI-PENDING")
+                self.assertEqual(result.reason, "merge state not yet computed by the platform")
+                self.assertEqual(EXIT_CODES[result.state], 7)
+
+    def test_behind_branch_needs_update(self) -> None:
+        result = classify(snapshot(mergeStateStatus="BEHIND"))
+        self.assertEqual(result.state, "NEEDS-UPDATE-BRANCH")
+        self.assertIn("gh pr update-branch", result.reason)
+        self.assertEqual(EXIT_CODES[result.state], 11)
 
     def test_clean_snapshot_is_ready(self) -> None:
         self.assertEqual(classify(snapshot()).state, "READY")
