@@ -12,6 +12,26 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.4.1] — 2026-09-01
+
+No breaking changes. Existing configs and journals need no migration.
+
+### Fixed
+- **acp queue-owner no longer dies mid-run; vanished workers are surfaced**
+  (#206, `SCN-016`, `CONF-EXEC-005`): the acpx queue-owner ran with the 300s
+  idle default, so a long/idle turn could kill the executor mid-run and the
+  adapter reported `EXECUTING` forever. Two changes: (1) a new optional
+  `execution.ttl` config key (non-negative integer, default `0` = keep-alive)
+  emitted as the top-level `--ttl` flag, so the worker no longer dies at idle;
+  (2) when a worker does vanish, the adapter now settles the attempt **failed**
+  under a strict four-condition corroboration — the turn was prompted, `status`
+  reports `no-session`, the stream shows real turn activity that then stopped,
+  and no terminal result exists — recording the evidence in `acp-settlement/v1`.
+  A vanished worker with an *empty* stream stays `RUNNING` (indistinguishable
+  from a session still starting up — the #157 ambiguity rule), so that
+  recovery-verb gap is tracked separately in #203; the keep-alive leak from
+  `ttl=0` is tracked in #207.
+
 ## [0.4.0] — 2026-08-31
 
 No breaking changes. Existing configs and journals need no migration.
