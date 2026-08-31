@@ -13,6 +13,18 @@ from unittest.mock import patch
 
 from orc_werk.cli import main as cli_main
 
+_PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
+
+
+def _declared_version() -> str:
+    """The version pyproject.toml declares — the independent source the CLI
+    must agree with, so a release bump cannot silently diverge from the
+    reported identity (and the test needs no edit per bump)."""
+    for line in _PYPROJECT.read_text(encoding="utf-8").splitlines():
+        if line.startswith("version = "):
+            return line.split('"')[1]
+    raise AssertionError(f"no version line found in {_PYPROJECT}")
+
 
 class CliVersionTest(unittest.TestCase):
     def _run_in(self, cwd: Path) -> tuple[int, str]:
@@ -32,7 +44,7 @@ class CliVersionTest(unittest.TestCase):
             exit_code, output = self._run_in(tmp_path)
 
             self.assertEqual(exit_code, 0)
-            self.assertIn("orc 0.1.0", output)
+            self.assertIn(f"orc {_declared_version()}", output)
             self.assertRegex(output, r"git [0-9a-f]{7,}(?:\+dirty)?")
             self.assertFalse((tmp_path / ".orc").exists())
 
@@ -43,7 +55,7 @@ class CliVersionTest(unittest.TestCase):
                 exit_code, output = self._run_in(tmp_path)
 
             self.assertEqual(exit_code, 0)
-            self.assertIn("orc 0.1.0", output)
+            self.assertIn(f"orc {_declared_version()}", output)
             self.assertIn("git unavailable", output)
             self.assertFalse((tmp_path / ".orc").exists())
 
