@@ -28,6 +28,7 @@ Every real adapter must pass the same conformance requirements as its in-memory 
 - `CONF-CAND-001`: same exact subject yields the same fingerprint.
 - `CONF-CAND-002`: changed subject yields a different fingerprint.
 - `CONF-CAND-003`: current() must not silently return a known-stale candidate.
+- `CONF-CAND-004`: when identification of a settled completed Execution returns no assurable subject, the null observation is non-binding; every subsequent dispatch re-attempts identification with the same attempt-scoped `FX-IDENTIFY-CANDIDATE` idempotency key until a candidate binds or the attempt is legally abandoned. See `SCN-014` and issue #191.
 
 ### Assurance
 - `CONF-ASSURE-001`: settled evidence names the candidate fingerprint.

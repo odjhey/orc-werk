@@ -218,6 +218,10 @@ class Orchestrator:
         self.candidate = candidate
         self.assurance = assurance
         self.config = config or RunConfig()
+        # At most one candidate-identification call per logical effect in a
+        # single dispatch; a later dispatch resets this transient guard and
+        # retries null observations from durable journal state (SCN-014).
+        self._identification_attempted: set[str] = set()
         # Self-healing: rebuild any volatile port-side state a fresh port
         # instance lost across a restart from durable journal history
         # (ARCH-REPOSITORY-STRUCTURE "self-healing boundary").
@@ -408,6 +412,7 @@ class Orchestrator:
         (ACCEPTED/BLOCKED, confirmed) or no further progress is possible.
         Every iteration replays the journal from scratch -- replay IS the
         state source (ADR-0001)."""
+        self._identification_attempted.clear()
         projection = self.projection()
         for _ in range(max_iterations):
             if self._all_terminal(projection):
@@ -498,7 +503,14 @@ class Orchestrator:
         current = next(
             (item for item in wp.executions if item["execution_id"] == wp.current_execution_id), None
         )
-        if current is None or current["outcome"] is not None:
+        if current is None:
+            return False
+        if current["outcome"] == "completed" and wp.current_candidate_id is None:
+            # STATE-DELIVERY item 9 / SCN-014: a prior null candidate
+            # identification is non-binding. A later dispatch retries the
+            # same logical effect and reports progress only if it binds.
+            return self._identify_candidate(work_id, wp.current_execution_id, wp.attempt_number)
+        if current["outcome"] is not None:
             return False
         observation = self.execution.inspect(execution_id=wp.current_execution_id)
         if observation.state != LIFECYCLE_STATE_SETTLED:
@@ -549,19 +561,28 @@ class Orchestrator:
         )
         return True
 
-    def _identify_candidate(self, work_id: str, execution_id: str, attempt_number: int) -> None:
-        """Mechanical `FX-IDENTIFY-CANDIDATE` step (INV-011: no Decision)."""
+    def _identify_candidate(self, work_id: str, execution_id: str, attempt_number: int) -> bool:
+        """Mechanical `FX-IDENTIFY-CANDIDATE` step (INV-011: no Decision).
+
+        Return whether a candidate Fact bound. A null PORT-CAND-001 result
+        is non-binding and is retried on a subsequent dispatch (SCN-014).
+        """
         key = derive_idempotency_key(
             FX_IDENTIFY_CANDIDATE,
             delivery_run_id=self.delivery_run_id,
             work_id=work_id,
             attempt_number=attempt_number,
         )
+        if key in self._identification_attempted:
+            return False
+        self._identification_attempted.add(key)
         history = self.journal.history(delivery_run_id=self.delivery_run_id)
         existing = _find_effect_record(history, key)
-        if existing is not None:
-            dispatch_result = existing["data"].get("dispatch_result", {})
-        else:
+        dispatch_result = existing["data"].get("dispatch_result", {}) if existing is not None else {}
+        # A successful prior result is reconciled by key. A null result is
+        # explicitly non-binding, so re-dispatch invokes the adapter again
+        # with the same logical-effect key (INV-020), like settlement re-poll.
+        if existing is None or dispatch_result.get("candidate") is None:
             try:
                 found = self.candidate.identify(execution_id=execution_id)
                 dispatch_result = {"candidate": found.to_dict() if found is not None else None}
@@ -588,11 +609,9 @@ class Orchestrator:
                     execution_id=execution_id,
                 )
             )
-        # else: the execution produced no assurable subject (PORT-CAND-001).
-        # STATE-DELIVERY has no v0/M0 transition for this case; the Work
-        # remains at EXECUTING(settled completed) and the run loop reports
-        # "no progress possible" once nothing else can advance. No M0
-        # golden scenario exercises this path (see PR body).
+            return True
+        # PORT-CAND-001: no assurable subject is a non-binding observation.
+        return False
 
     # -- operator surface: abandon (TASK-M3B-001, issues #76/#95) -----------
 
@@ -634,6 +653,16 @@ class Orchestrator:
         history = self.journal.history(delivery_run_id=self.delivery_run_id)
         if has_candidate_conflict(wp):
             basis: tuple[Mapping[str, Any], ...] = (dict(wp.candidate_conflict["fact"]),)
+        elif (
+            wp.state == STATE_EXECUTING
+            and wp.current_candidate_id is None
+            and wp.executions
+            and wp.executions[-1].get("outcome") == "completed"
+        ):
+            settled = self._find_fact_record(
+                history, FACT_EXEC_SETTLED, work_id=work_id, execution_id=wp.current_execution_id
+            )
+            basis = (dict(settled),) if settled is not None else ({"work_id": work_id},)
         elif wp.state == STATE_ASSURING and is_pending(wp):
             started = self._find_fact_record(
                 history, FACT_ASSURE_STARTED, work_id=work_id, assurance_id=wp.current_assurance_id
@@ -642,8 +671,8 @@ class Orchestrator:
         else:
             raise validation_error(
                 f"FACT-ATTEMPT-ABANDONED illegal for work {work_id!r} in state {wp.state!r}: "
-                "no unresolved candidate-observation conflict and no unsettled current "
-                "assurance (STATE-DELIVERY item 9)",
+                "no unresolved candidate-observation conflict, settled execution awaiting "
+                "candidate, or unsettled current assurance (STATE-DELIVERY item 9)",
                 work_id=work_id,
                 state=wp.state,
                 next_steps=[f"orc status {self.delivery_run_id}"],
