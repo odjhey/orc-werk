@@ -298,6 +298,34 @@ orc --limit 0
 orc --state active
 ```
 
+### `orc record`
+
+```text
+usage: orc record [-h] --work WORK_ID --verdict {accepted,rejected}
+                  [--evidence-ref REF] [--finding TEXT]
+                  [--derived-identity JSON] [--model M] [--session-ref S]
+                  [--seat-ref S] [--journal DIR]
+                  run-id
+```
+
+Records the current assurance verdict requested for one Work by merge-only,
+atomic update of the run's persisted `config.json` (issue #192). It refuses an
+unknown run/Work, a Work not currently awaiting `assurance-verdict`, or an
+attempt that already carries `assurance`; it never dispatches or advances the
+run. Repeated evidence and finding flags become `evidence_refs` and
+`review-findings/v1`; model/session/seat flags become an
+`executor-identity/v1` payload with `role: verify`; `--derived-identity` must
+parse as a JSON object and is checked by the existing config/binding validation.
+On success it prints proof of the recorded verdict and the exact
+`orc dispatch --run-id ... --journal ...` command as its `next:` affordance.
+Hand editing remains a legal equivalent recording path under
+`PLAYBOOK-AGENT-CLI`; this command adds validation, not new journal semantics.
+
+```bash
+orc record demo-pending --work work-1 --verdict accepted \
+  --evidence-ref audit.log --model pi --session-ref sess-1 --seat-ref verify-1
+```
+
 ### `orc cancel`
 
 ```bash
