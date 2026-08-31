@@ -3,9 +3,12 @@
 
 Exit codes: READY=0, MERGED=0, CLOSED=2, CONFLICTS=3,
 UNRESOLVED-THREADS=4, CI-FAILING=5, MERGE-GATE=6, CI-PENDING=7,
-FETCH-ERROR=8, STALE-VERDICT=9, INDETERMINATE=10. REBASED is an
-informational verdict-staleness result and retains the PR classification's
-exit code. No invocation mutates GitHub or the local repository.
+FETCH-ERROR=8, STALE-VERDICT=9, INDETERMINATE=10,
+NEEDS-UPDATE-BRANCH=11. REBASED is an informational verdict-staleness result
+and retains the PR classification's exit code. CI-PENDING is non-terminal in
+--watch mode; all other classifications are actionable terminals except
+UNRESOLVED-THREADS, which remains watched. No invocation mutates GitHub or the
+local repository.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ EXIT_CODES = {
     "FETCH-ERROR": 8,
     "STALE-VERDICT": 9,
     "INDETERMINATE": 10,
+    "NEEDS-UPDATE-BRANCH": 11,
 }
 FAILURE_CONCLUSIONS = {
     "ACTION_REQUIRED",
@@ -93,6 +97,13 @@ def classify(snapshot: dict[str, Any]) -> Classification:
 
     merge_status = str(snapshot.get("mergeStateStatus") or "").upper()
     mergeable = str(snapshot.get("mergeable") or "").upper()
+    if merge_status == "BEHIND":
+        return Classification(
+            "NEEDS-UPDATE-BRANCH",
+            "branch is behind the base branch; run gh pr update-branch",
+        )
+    if not merge_status or merge_status == "UNKNOWN":
+        return Classification("CI-PENDING", "merge state not yet computed by the platform")
     if merge_status == "CLEAN" or mergeable == "MERGEABLE":
         note = "; review-thread count unavailable" if snapshot.get("reviewThreadsUnknown") else ""
         return Classification("READY", "platform reports the pull request mergeable" + note)
