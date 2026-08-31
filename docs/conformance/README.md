@@ -34,6 +34,7 @@ Every real adapter must pass the same conformance requirements as its in-memory 
 - `CONF-ASSURE-002`: rejected never normalizes to accepted.
 - `CONF-ASSURE-003`: evidence from a different fingerprint is rejected by the kernel.
 - `CONF-ASSURE-004`: inconclusive remains distinct from rejected/accepted.
+- `CONF-ASSURE-005`: at scripted-assurance ingestion, a recorded verdict carrying `derived_identity` that fails subset-equality against the bound candidate's durable `subject_identity` MUST be rejected with `ERR-CONFLICT` before any Fact is journaled; an assurance entry without `derived_identity` binds exactly as before. See `SCN-013` and issue #180.
 
 ### Extensions
 See [extension conformance](extensions.md) for `CONF-EXT-001` through `CONF-EXT-007`.
