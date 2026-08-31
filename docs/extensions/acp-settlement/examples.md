@@ -30,4 +30,21 @@ description: Example acp-settlement/v1 diagnostics payload.
 }
 ```
 
-The sibling extension records why the ACP adapter considered the outstanding result unobservable. The enclosing observation's canonical `state` and `outcome` remain the settlement authority; consumers may ignore this payload.
+The sibling extension records why the ACP adapter considered the outstanding result unobservable. A running observation suppressed by post-result activity instead uses:
+
+```json
+{
+  "extensions": {
+    "acp-settlement/v1": {
+      "suppression": {
+        "stopReason": "end_turn",
+        "resultRecord": 3,
+        "laterRecord": 4,
+        "laterRecordClass": "agent_message_chunk"
+      }
+    }
+  }
+}
+```
+
+The enclosing observation's canonical `state` and `outcome` remain the authority; consumers may ignore either diagnostic payload.
