@@ -1350,5 +1350,6 @@ __all__ = [
     "load_config",
     "load_config_overlay",
     "load_repo_profile",
+    "record_assurance_entry",
     "validate_config",
 ]
