@@ -35,6 +35,7 @@ semantics per its own "Verifies" section (`INV-018`, `INV-020`).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -63,6 +64,33 @@ def _run_cli(tmp_dir: Path, *args: str, timeout: float = 15) -> subprocess.Compl
 
 def _journal_records(tmp_dir: Path, run_id: str):
     return JSONLJournal(tmp_dir / ".orc").history(delivery_run_id=run_id)
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write `content` to `path` via write-temp + `os.replace` (issue #216):
+    the same atomicity `record_assurance_entry`
+    (`orc_werk.cli.config`, `orc record`'s writer) already uses, so a
+    concurrent reader (here, a `--wait` internal pass re-reading the same
+    config file, `SCN-017` Purpose paragraph 3) never observes a
+    partially-written file. This is the fix for the flake issue #216
+    reported: the original delayed-writer thread in
+    `WaitWakesOnMovementTest` used a direct, non-atomic `write_text`, which
+    could race a `--wait` pass's read and hand it a torn/incomplete JSON
+    document -- an `ERR-VALIDATION` indistinguishable, before this task,
+    from a genuinely bad config."""
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 class WaitWakesOnMovementTest(unittest.TestCase):
@@ -94,9 +122,14 @@ class WaitWakesOnMovementTest(unittest.TestCase):
                 # Give the wait loop a couple of idle (empty) internal
                 # passes before the settlement lands, so this test also
                 # exercises step 1's silent-pass behavior, not just an
-                # immediate first-pass wake.
+                # immediate first-pass wake. Issue #216: this write must be
+                # atomic (write-temp + os.replace, `_atomic_write_text`)
+                # -- a direct write_text here previously raced a --wait
+                # pass's own config re-read and flaked the test with a
+                # torn-JSON ERR-VALIDATION.
                 time.sleep(0.2)
-                config_path.write_text(
+                _atomic_write_text(
+                    config_path,
                     json.dumps(
                         {
                             "run_id": "scn017-wake",
@@ -104,7 +137,6 @@ class WaitWakesOnMovementTest(unittest.TestCase):
                             "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "C1"}}]},
                         }
                     ),
-                    encoding="utf-8",
                 )
 
             recorder = threading.Thread(target=_record_settlement_after_delay)
@@ -141,6 +173,198 @@ class WaitWakesOnMovementTest(unittest.TestCase):
             self.assertEqual(fact_ids.count("FACT-EXEC-SETTLED"), 1)
             self.assertEqual(fact_ids.count("FACT-CANDIDATE-OBSERVED"), 1)
             self.assertNotIn("FACT-ASSURE-SETTLED", fact_ids)
+
+
+class WaitTransientConfigTest(unittest.TestCase):
+    """SCN-017 amendment (issue #216): a `--wait` pass whose config
+    load/validate fails transiently (unparseable JSON) is tolerated up to
+    `TRANSIENT_CONFIG_RETRY_LIMIT` (3) CONSECUTIVE failures within one
+    invocation, but a failure on the invocation's very first pass fails
+    fast, exactly as before this task."""
+
+    def _setup_pending(self, tmp_dir: Path, config_path: Path, run_id: str) -> None:
+        config_path.write_text(json.dumps({"run_id": run_id, "max_attempts": 3}), encoding="utf-8")
+        # Same Given-establishing pattern as WaitWakesOnMovementTest: an
+        # ordinary (non-wait) dispatch first reaches the pending/EXECUTING
+        # resting state, so the --wait invocation's baseline is that
+        # already-settled fingerprint rather than an empty one.
+        setup = _run_cli(tmp_dir, "dispatch", "scn017 transient", "--config", str(config_path), "--run-id", run_id)
+        self.assertEqual(setup.returncode, 3, msg=setup.stdout + setup.stderr)
+        self.assertIn("awaiting=execution-outcome", setup.stdout)
+
+    def test_wait_survives_one_or_two_garbage_config_passes_then_wakes(self) -> None:
+        """A brief window of unparseable JSON, landing after the wait's
+        first (successful) pass and cleared well within the
+        3-consecutive-failure cap, does not fail the wait -- it retries
+        and wakes normally once a valid settlement lands (the transient
+        case of the amendment). The poll interval is deliberately larger
+        than the garbage window here (and the garbage/fix writes are
+        cheap, local filesystem ops) so that, even under CI scheduling
+        jitter, at most one or two internal passes can plausibly land
+        inside the window -- comfortably under the 3-consecutive cap that
+        would fail the wait instead."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config_path = tmp_dir / "config.json"
+            run_id = "scn017-transient-recovers"
+            self._setup_pending(tmp_dir, config_path, run_id)
+
+            def _garbage_then_recover() -> None:
+                # Let at least one internal pass complete successfully
+                # first (baseline set) before corrupting the config for a
+                # window well short of one poll interval.
+                time.sleep(0.4)
+                config_path.write_text("{not valid json", encoding="utf-8")
+                time.sleep(0.1)
+                _atomic_write_text(
+                    config_path,
+                    json.dumps(
+                        {
+                            "run_id": run_id,
+                            "max_attempts": 3,
+                            "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "C1"}}]},
+                        }
+                    ),
+                )
+
+            writer = threading.Thread(target=_garbage_then_recover)
+            writer.start()
+            result = _run_cli(
+                tmp_dir,
+                "dispatch",
+                "scn017 transient",
+                "--config",
+                str(config_path),
+                "--run-id",
+                run_id,
+                "--wait",
+                "--timeout",
+                "5",
+                "--poll-interval",
+                "0.25",
+            )
+            writer.join()
+
+            # The wait survived the garbage passes and woke on the
+            # eventual valid settlement -- exit 3 (movement), never exit 2
+            # (the canonical config error the pre-#216 behavior would have
+            # produced for the same garbage window).
+            self.assertEqual(result.returncode, 3, msg=result.stdout + result.stderr)
+            self.assertIn("state=ASSURING", result.stdout)
+            self.assertIn("awaiting=assurance-verdict", result.stdout)
+            self.assertNotIn("wait timeout", result.stdout)
+
+            # A skipped transient-failure pass is silent per the amendment
+            # (step 1's silence extended): nothing about the garbage
+            # window is journaled, so the settled facts still appear
+            # exactly once.
+            history = _journal_records(tmp_dir, run_id)
+            fact_ids = [r["id"] for r in history if r["kind"] == "fact"]
+            self.assertEqual(fact_ids.count("FACT-EXEC-SETTLED"), 1)
+            self.assertEqual(fact_ids.count("FACT-CANDIDATE-OBSERVED"), 1)
+
+    def test_wait_fails_after_3_consecutive_bad_passes(self) -> None:
+        """A config that goes bad mid-wait and never recovers exhausts the
+        3-consecutive-failure cap and fails with the ordinary canonical
+        error -- well before --timeout elapses, proving the cap (not the
+        timeout) ended the wait."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config_path = tmp_dir / "config.json"
+            run_id = "scn017-transient-caps"
+            self._setup_pending(tmp_dir, config_path, run_id)
+
+            def _corrupt_permanently() -> None:
+                # One successful pass first (baseline set), then garbage
+                # that is never fixed -- every subsequent pass fails,
+                # tripping the 3-consecutive cap.
+                time.sleep(0.1)
+                config_path.write_text("{not valid json", encoding="utf-8")
+
+            writer = threading.Thread(target=_corrupt_permanently)
+            writer.start()
+            started = time.monotonic()
+            result = _run_cli(
+                tmp_dir,
+                "dispatch",
+                "scn017 transient",
+                "--config",
+                str(config_path),
+                "--run-id",
+                run_id,
+                "--wait",
+                "--timeout",
+                "10",
+                "--poll-interval",
+                "0.05",
+            )
+            elapsed = time.monotonic() - started
+            writer.join()
+
+            # The ordinary canonical error, exit 2 -- identical to what a
+            # non-`--wait` dispatch of this same bad config would report.
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            error = json.loads(result.stderr)
+            self.assertEqual(error["error"], "ERR-VALIDATION")
+
+            # Cross-check against the ordinary (non-wait) failure this bad
+            # config produces on its own: same canonical error id, same
+            # "not valid JSON" message shape (issue #216 ruling: "fail
+            # with the ordinary canonical error exactly as today").
+            plain = _run_cli(
+                tmp_dir, "dispatch", "scn017 transient", "--config", str(config_path), "--run-id", run_id
+            )
+            self.assertEqual(plain.returncode, 2, msg=plain.stdout + plain.stderr)
+            plain_error = json.loads(plain.stderr)
+            self.assertEqual(plain_error["error"], error["error"])
+            self.assertEqual(plain_error["message"], error["message"])
+
+            # The cap, not the 10s --timeout, ended the wait: 3 consecutive
+            # 0.05s-apart passes is on the order of tenths of a second, not
+            # anywhere near 10s.
+            self.assertLess(elapsed, 5.0)
+
+    def test_wait_first_pass_bad_config_fails_fast(self) -> None:
+        """A config that is already bad when `--wait` is invoked -- before
+        this invocation has completed any pass -- fails immediately, never
+        retried: it is a real config error at wait start, not a race
+        (issue #216 ruling)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config_path = tmp_dir / "config.json"
+            run_id = "scn017-transient-first-pass"
+            self._setup_pending(tmp_dir, config_path, run_id)
+
+            # Corrupt the config BEFORE --wait is ever invoked -- its very
+            # first internal pass sees the bad config.
+            config_path.write_text("{not valid json", encoding="utf-8")
+
+            # A poll interval long enough that any retry (even a single
+            # one) would make the call take noticeably longer than an
+            # immediate failure -- the timing margin that distinguishes
+            # "failed fast" from "retried once, then failed".
+            started = time.monotonic()
+            result = _run_cli(
+                tmp_dir,
+                "dispatch",
+                "scn017 transient",
+                "--config",
+                str(config_path),
+                "--run-id",
+                run_id,
+                "--wait",
+                "--timeout",
+                "30",
+                "--poll-interval",
+                "3",
+            )
+            elapsed = time.monotonic() - started
+
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            error = json.loads(result.stderr)
+            self.assertEqual(error["error"], "ERR-VALIDATION")
+            # No retry/sleep happened -- well under one 3s poll interval.
+            self.assertLess(elapsed, 2.0)
 
 
 class WaitTerminalTest(unittest.TestCase):
