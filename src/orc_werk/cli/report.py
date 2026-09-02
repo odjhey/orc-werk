@@ -232,6 +232,22 @@ def _candidate_subject_identities(
     return result
 
 
+def _execution_artifact_refs(
+    history: Sequence[Mapping[str, Any]], work_id: str, execution_id: Optional[str]
+) -> Any:
+    """`artifact_refs`, when the journaled `FACT-EXEC-SETTLED` record for
+    this candidate's `execution_id` happens to carry one -- read
+    defensively (`.get`), never invented, mirroring `_verdict_evidence_
+    refs` below for the sibling `FACT-ASSURE-SETTLED` case (issue #224)."""
+    for record in history:
+        if record.get("kind") != "fact" or record.get("id") != "FACT-EXEC-SETTLED":
+            continue
+        data = record.get("data", {})
+        if data.get("work_id") == work_id and data.get("execution_id") == execution_id:
+            return data.get("artifact_refs")
+    return None
+
+
 def _verdict_evidence_refs(
     history: Sequence[Mapping[str, Any]], work_id: str, assurance_id: Optional[str]
 ) -> Any:
@@ -542,18 +558,23 @@ def _render_candidates_table(history: Sequence[Mapping[str, Any]], work_id: str,
     for candidate_id, candidate in wp.candidates.items():
         subject_identity = subject_identities.get(candidate_id)
         subject_text = _esc_json(subject_identity) if subject_identity is not None else "-"
+        execution_id = candidate.get("execution_id")
+        artifact_refs = _execution_artifact_refs(history, work_id, execution_id)
+        artifact_text = _esc_json(artifact_refs) if artifact_refs else "-"
         rows.append(
             "<tr>"
             f'<td><code>{html.escape(candidate_id)}</code></td>'
             f'<td><code>{html.escape(str(candidate.get("fingerprint", "")))}</code></td>'
-            f'<td><code>{html.escape(str(candidate.get("execution_id", "")))}</code></td>'
+            f'<td><code>{html.escape(str(execution_id or ""))}</code></td>'
             f"<td>{subject_text}</td>"
+            f"<td>{artifact_text}</td>"
             "</tr>"
         )
     return (
         "<h3>Candidates</h3>"
         '<div class="scroll"><table class="data-table"><thead><tr>'
         "<th>candidate_id</th><th>fingerprint</th><th>execution_id</th><th>subject_identity</th>"
+        "<th>artifact_refs</th>"
         "</tr></thead><tbody>" + "\n".join(rows) + "</tbody></table></div>"
     )
 

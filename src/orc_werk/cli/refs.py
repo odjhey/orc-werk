@@ -17,7 +17,7 @@ adds no new normative semantics of its own; it composes exactly the same
 public `JournalPort` reads (`history`, and this run's persisted dispatch
 config) `orc status`/`orc report` already use.
 
-Four independently optional sources, walked in this order, each rendered
+Five independently optional sources, walked in this order, each rendered
 only when present -- absence is never fabricated (`CLAUDE.md` #3):
 
 1. `execution-session/v1` payloads carried on `FACT-EXEC-SETTLED`'s
@@ -36,7 +36,15 @@ only when present -- absence is never fabricated (`CLAUDE.md` #3):
    <transcript_ref>` -- `EXT-EXECUTION-SESSION-V1-SCHEMA`'s ref-only rule
    guarantees this is an opaque reference the schema documents as
    typically an absolute path, so `cat` works from any cwd).
-2. `FACT-ASSURE-SETTLED`'s `evidence_refs` and optional
+2. `FACT-EXEC-SETTLED`'s `artifact_refs` (`docs/protocol/facts.md`,
+   `PROTOCOL-FACTS`, issue #224): one `artifact` row per entry, value
+   rendered verbatim, using the exact same structural command-field
+   detection as source 3 below (`command`/`*_command`). This is the
+   canonical destination for a ship seat's `orc record --outcome
+   --evidence-ref` values (`PLAYBOOK-AGENT-CLI`); prior to issue #224 these
+   rode `execution-session/v1` instead (source 1), so a journal written
+   during that short window still surfaces its evidence there, not here.
+3. `FACT-ASSURE-SETTLED`'s `evidence_refs` and optional
    `assurance-context/v1` extension (`docs/protocol/facts.md`,
    `PROTOCOL-FACTS`): one `evidence` row per entry, value rendered
    verbatim. When an entry is a structured (mapping) reference carrying an
@@ -51,7 +59,8 @@ only when present -- absence is never fabricated (`CLAUDE.md` #3):
    shapes: an unregistered future provider's evidence entry, or an
    unrecognized field inside a known one, passes through unchanged
    (`CONF-EXT-002`-style tolerance, applied to this CLI-owned projection).
-3. Candidate identity, read the same way `orc report` already does
+   Source 2 above reuses this exact same detection.
+4. Candidate identity, read the same way `orc report` already does
    (`orc_werk.cli.report._candidate_subject_identities`'s sibling
    read -- this module's own `_candidate_subject_identities` walks the
    same journaled `FX-IDENTIFY-CANDIDATE` effect records
@@ -69,7 +78,7 @@ only when present -- absence is never fabricated (`CLAUDE.md` #3):
    opaque (`PORT-CANDIDATE`); these three field names are the ones this
    command was asked to surface, not a claim that every candidate carries
    them.
-4. The Beads mirror block, read from the run's own persisted dispatch
+5. The Beads mirror block, read from the run's own persisted dispatch
    config (`<journal-dir>/<run_id>/config.json`, issue #55 H2's
    `_persist_effective_config`) when both the file and its `mirror` key
    exist: one `mirror` row naming the run label + workspace (resolve:
@@ -525,7 +534,44 @@ def _execution_session_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow
 
 
 # ---------------------------------------------------------------------------
-# Source 2: FACT-ASSURE-SETTLED.evidence_refs
+# Source 2: FACT-EXEC-SETTLED.artifact_refs
+# ---------------------------------------------------------------------------
+
+
+def _artifact_ref_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
+    """`orc record --outcome --evidence-ref` (issue #224) and any other
+    producer of `FACT-EXEC-SETTLED.artifact_refs` -- one `artifact` row per
+    entry, mirroring `_evidence_ref_rows` exactly (verbatim value, the same
+    structural `command`/`*_command` resolve detection via `_command_field`
+    below). Defined ahead of `_command_field` textually but calls it at
+    request time, after both are module-level names."""
+    rows: list[RefRow] = []
+    for record in history:
+        if record.get("kind") != "fact" or record.get("id") != FACT_EXEC_SETTLED:
+            continue
+        data = record.get("data", {})
+        artifact_refs = data.get("artifact_refs")
+        if not artifact_refs:
+            continue
+        for entry in artifact_refs:
+            resolve = ResolveCommand.none()
+            if isinstance(entry, Mapping):
+                command = _command_field(entry)
+                if command is not None:
+                    resolve = ResolveCommand.from_raw_text(command)
+            rows.append(
+                RefRow(
+                    kind="artifact",
+                    provider="-",
+                    value=_display(entry),
+                    resolve=resolve,
+                )
+            )
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Source 3: FACT-ASSURE-SETTLED.evidence_refs
 # ---------------------------------------------------------------------------
 
 
@@ -616,7 +662,7 @@ def _assurance_context_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow
 
 
 # ---------------------------------------------------------------------------
-# Source 3: candidate subject_identity (FX-IDENTIFY-CANDIDATE effect data)
+# Source 4: candidate subject_identity (FX-IDENTIFY-CANDIDATE effect data)
 # ---------------------------------------------------------------------------
 
 
@@ -684,7 +730,7 @@ def _candidate_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
 
 
 # ---------------------------------------------------------------------------
-# Source 4: Beads mirror (persisted dispatch config)
+# Source 5: Beads mirror (persisted dispatch config)
 # ---------------------------------------------------------------------------
 
 
@@ -735,11 +781,13 @@ def _mirror_row(directory: Path, run_id: str) -> Optional[RefRow]:
 
 def collect_refs(directory: Path, run_id: str, history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
     """Every resolvable reference row for one run, in source order
-    (execution-session -> assurance evidence/base -> candidate identity -> mirror).
-    Pure: reads `history` (already loaded by the caller) plus this run's
-    persisted config file; never writes anything."""
+    (execution-session -> execution artifact_refs -> assurance evidence/base
+    -> candidate identity -> mirror). Pure: reads `history` (already loaded
+    by the caller) plus this run's persisted config file; never writes
+    anything."""
     rows: list[RefRow] = []
     rows.extend(_execution_session_rows(history))
+    rows.extend(_artifact_ref_rows(history))
     rows.extend(_evidence_ref_rows(history))
     rows.extend(_assurance_context_rows(history))
     rows.extend(_candidate_rows(history))

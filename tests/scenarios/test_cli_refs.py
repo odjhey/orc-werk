@@ -42,6 +42,7 @@ from orc_werk.cli.refs import (
     RESOLVE_OUTPUT_CAP_BYTES,
     RefRow,
     ResolveCommand,
+    _artifact_ref_rows,
     _assurance_context_rows,
     _candidate_rows,
     _command_field,
@@ -170,6 +171,50 @@ class EvidenceRefRowsUnitTest(unittest.TestCase):
     def test_absent_evidence_refs_yields_no_rows(self) -> None:
         history = [{"kind": "fact", "id": "FACT-ASSURE-SETTLED", "data": {"assurance_id": "a1", "verdict": "accepted"}}]
         self.assertEqual(_evidence_ref_rows(history), [])
+
+
+class ArtifactRefRowsUnitTest(unittest.TestCase):
+    """Issue #224: `FACT-EXEC-SETTLED.artifact_refs`, mirroring
+    `EvidenceRefRowsUnitTest` above exactly for the sibling execution-side
+    field (same structural `command`/`*_command` resolve detection)."""
+
+    def _history(self, artifact_refs) -> list[dict]:
+        return [
+            {
+                "kind": "fact",
+                "id": "FACT-EXEC-SETTLED",
+                "data": {"execution_id": "e1", "outcome": "completed", "artifact_refs": artifact_refs},
+            }
+        ]
+
+    def test_plain_string_entry_renders_verbatim_no_resolve(self) -> None:
+        rows = _artifact_ref_rows(self._history(["gh-pr:42"]))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].kind, "artifact")
+        self.assertEqual(rows[0].provider, "-")
+        self.assertEqual(rows[0].value, "gh-pr:42")
+        self.assertEqual(rows[0].resolve, ResolveCommand.none())
+        self.assertIsNone(rows[0].verdict)
+
+    def test_structured_entry_with_command_field_surfaces_resolve(self) -> None:
+        entry = {"kind": "diff", "path": "a.py", "command": "git show abc123 --stat"}
+        rows = _artifact_ref_rows(self._history([entry]))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].resolve.display, "git show abc123 --stat")
+        self.assertEqual(rows[0].resolve.argv, ("git", "show", "abc123", "--stat"))
+        self.assertIsNone(rows[0].resolve.refusal)
+        self.assertEqual(json.loads(rows[0].value), entry)
+
+    def test_unknown_future_shape_passes_through_never_crashes(self) -> None:
+        entry = {"future_field": "an-unregistered-shape", "nested": {"a": [1, 2, 3]}}
+        rows = _artifact_ref_rows(self._history([entry]))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].resolve, ResolveCommand.none())
+        self.assertEqual(json.loads(rows[0].value), entry)
+
+    def test_absent_artifact_refs_yields_no_rows(self) -> None:
+        history = [{"kind": "fact", "id": "FACT-EXEC-SETTLED", "data": {"execution_id": "e1", "outcome": "completed"}}]
+        self.assertEqual(_artifact_ref_rows(history), [])
 
 
 class AssuranceContextRowsUnitTest(unittest.TestCase):
@@ -499,6 +544,43 @@ class RefsEvidenceAndCandidateCliTest(unittest.TestCase):
             self.assertIn("no-mistakes axi logs --run r1 --step review --full", out)
             self.assertIn("git -C /abs/some-repo show abc123def456 --stat", out)
             self.assertIn("gh pr view 42", out)
+
+
+class RefsArtifactRefsViaRecordOutcomeCliTest(unittest.TestCase):
+    """Issue #224 end-to-end: `orc record --outcome --evidence-ref` values
+    ride the canonical `artifact_refs` field into `FACT-EXEC-SETTLED`, and
+    `orc refs` surfaces them as `artifact` rows -- mirroring
+    `RefsEvidenceAndCandidateCliTest` above for the ship-seat side."""
+
+    def test_artifact_rows_present_with_values_verbatim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal = str(tmp_dir / ".orc")
+            cfg = tmp_dir / "input.json"
+            cfg.write_text("{}")
+            pending = _run_cli(
+                tmp_dir, "dispatch", "refs artifact demo", "--config", str(cfg),
+                "--run-id", "refs-artifact", "--journal", journal,
+            )
+            self.assertEqual(pending.returncode, 3, msg=pending.stdout + pending.stderr)
+
+            recorded = _run_cli(
+                tmp_dir, "record", "refs-artifact", "--work", "work-1", "--outcome", "completed",
+                "--evidence-ref", "gh-pr:99", "--evidence-ref", "head:deadbeef", "--journal", journal,
+            )
+            self.assertEqual(recorded.returncode, 0, msg=recorded.stdout + recorded.stderr)
+
+            settled = _run_cli(tmp_dir, "dispatch", "--run-id", "refs-artifact", "--journal", journal)
+            self.assertEqual(settled.returncode, 3, msg=settled.stdout + settled.stderr)  # now awaiting a verdict
+
+            result = _run_cli(tmp_dir, "refs", "refs-artifact", "--journal", journal)
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            out = result.stdout
+
+            self.assertIn("gh-pr:99", out)
+            self.assertIn("head:deadbeef", out)
+            self.assertIn("artifact", out)
+            self.assertIn("(resolve: -)", out)  # plain-string artifact rows have no resolve command
 
 
 class RefsExecutionSessionCraftedJournalTest(unittest.TestCase):

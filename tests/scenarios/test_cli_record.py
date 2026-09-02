@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orc_werk.adapters.jsonl import layout
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 
@@ -140,8 +142,13 @@ class RecordOutcomeCliTest(unittest.TestCase):
             entry = json.loads(path.read_text())["attempts"]["work-1"][0]
             self.assertEqual(entry["candidate"], {"pr": 7, "head_sha": "abc"})  # untouched
             self.assertEqual(entry["outcome"], "completed")
-            self.assertEqual(entry["extensions"]["execution-session/v1"],
-                             {"evidence_refs": ["gh-pr:7", "head:abc"]})
+            # Issue #224 ruling: --evidence-ref now rides the canonical
+            # attempt-entry artifact_refs field (FACT-EXEC-SETTLED.
+            # artifact_refs), not execution-session/v1 -- that extension is
+            # reserved for real provider session provenance and is no
+            # longer emitted by this verb.
+            self.assertEqual(entry["artifact_refs"], ["gh-pr:7", "head:abc"])
+            self.assertNotIn("execution-session/v1", entry.get("extensions", {}))
             self.assertEqual(entry["extensions"]["executor-identity/v1"], {
                 "model": "pi", "session_ref": "session-1", "seat_ref": "ship-1", "role": "ship"})
             # record never advances the run: only re-dispatch observes it.
@@ -150,6 +157,18 @@ class RecordOutcomeCliTest(unittest.TestCase):
             self.assertIn("state=ASSURING", advanced.stdout)
             self.assertIn("awaiting=assurance-verdict", advanced.stdout)
             self.assertIn("candidate_fingerprint=fp-", advanced.stdout)
+            # End-to-end (issue #224): the re-dispatch's FACT-EXEC-SETTLED
+            # carries artifact_refs verbatim from the recorded evidence.
+            settled_records = [
+                json.loads(line)
+                for line in layout.journal_path(root / ".orc", "outcome-run")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            settled = next(
+                r for r in settled_records if r["kind"] == "fact" and r["id"] == "FACT-EXEC-SETTLED"
+            )
+            self.assertEqual(settled["data"]["artifact_refs"], ["gh-pr:7", "head:abc"])
 
     def test_mutual_exclusion_and_verdict_only_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

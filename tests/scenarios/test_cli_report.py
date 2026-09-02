@@ -228,6 +228,72 @@ class AssuranceEvidenceRefsTransportTest(unittest.TestCase):
             self.assertIn("<td>-</td>", row.group(0))
 
 
+class ExecutionArtifactRefsTransportTest(unittest.TestCase):
+    """Issue #224's `FACT-EXEC-SETTLED.artifact_refs` wiring, mirroring
+    `AssuranceEvidenceRefsTransportTest` above exactly for the sibling
+    execution-side field."""
+
+    def _dispatch_and_report(self, tmp_dir: Path, run_id: str, artifact_refs: list) -> tuple[dict, str]:
+        config = {
+            "run_id": run_id,
+            "attempts": {
+                "work-1": [
+                    {
+                        "outcome": "completed",
+                        "artifact_refs": artifact_refs,
+                        "candidate": {"label": "C1"},
+                        "assurance": {"verdict": "accepted"},
+                    }
+                ]
+            },
+        }
+        config_path = tmp_dir / f"{run_id}.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        dispatch = _run_cli(tmp_dir, "dispatch", "artifact transport", "--config", str(config_path))
+        self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+        records = [
+            json.loads(line)
+            for line in layout.journal_path(tmp_dir / ".orc", run_id)
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        settled = next(
+            record
+            for record in records
+            if record["kind"] == "fact" and record["id"] == "FACT-EXEC-SETTLED"
+        )
+
+        report = _run_cli(tmp_dir, "report", run_id)
+        self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
+        rendered = layout.report_html_path(tmp_dir / ".orc", run_id).read_text(encoding="utf-8")
+        return settled, rendered
+
+    def test_artifact_refs_are_journaled_verbatim_and_rendered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_refs = ["artifact://built-1", {"uri": "https://example.test/artifact/2"}]
+            settled, rendered = self._dispatch_and_report(
+                Path(tmp), "report-with-artifacts", artifact_refs,
+            )
+
+            self.assertEqual(settled["data"]["artifact_refs"], artifact_refs)
+            candidates_section = rendered.split("<h3>Candidates</h3>", 1)[1]
+            row = re.search(r"<tr><td>.*?</tr>", candidates_section)
+            self.assertIsNotNone(row)
+            self.assertIn("artifact://built-1", row.group(0))
+            self.assertNotIn("<td>-</td>", row.group(0))
+
+    def test_absent_artifact_refs_stay_absent_and_render_as_dash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settled, rendered = self._dispatch_and_report(Path(tmp), "report-without-artifacts", [])
+
+            self.assertNotIn("artifact_refs", settled["data"])
+            candidates_section = rendered.split("<h3>Candidates</h3>", 1)[1]
+            row = re.search(r"<tr><td>.*?</tr>", candidates_section)
+            self.assertIsNotNone(row)
+            self.assertIn("<td>-</td>", row.group(0))
+
+
 class PendingCalloutTest(unittest.TestCase):
     def test_pending_run_renders_awaiting_callout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

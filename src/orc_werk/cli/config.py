@@ -47,8 +47,11 @@ the overlay and inherited adapter-agnostic keys remain.
   `subject_identity` content `ScriptedCandidate.identify` returns (its
   canonical-JSON sha256 IS the candidate fingerprint --
   `orc_werk.adapters.scripted.candidate.fingerprint_of`, exported
-  precisely so callers like this one never have to guess it); `assurance`,
-  when present, supplies that candidate's scripted verdict
+  precisely so callers like this one never have to guess it); `artifact_refs`
+  (issue #224), when present, is a portable list of externally resolvable
+  references transported verbatim into `FACT-EXEC-SETTLED.artifact_refs`
+  (`PROTOCOL-FACTS`) -- `orc record --outcome --evidence-ref` writes here;
+  `assurance`, when present, supplies that candidate's scripted verdict
   (`ScriptedAssurance`); `extensions` (#105/#106), when present, is passed
   through verbatim into the scripted execution outcome's own `extensions`
   field (e.g. an `execution-session/v1` payload) -- the same passthrough
@@ -951,22 +954,24 @@ def record_execution_outcome_entry(
     work_id: str,
     attempt_number: int,
     outcome: str,
+    artifact_refs: Optional[Sequence[Any]] = None,
     extensions: Optional[Mapping[str, Any]] = None,
 ) -> Mapping[str, Any]:
     """`orc record --outcome`'s sibling of `record_assurance_entry`: merge one
     ship-seat execution outcome into a persisted config and replace
-    atomically. `extensions` (when non-empty) is the attempt entry's
-    registered push channel (issues #105/#106: config-entry `extensions`
-    transport losslessly into `FACT-EXEC-SETTLED.extensions` per
-    `CONF-EXT-003`): `executor-identity/v1` with `role: "ship"` for seat
-    provenance (the same passthrough `record_assurance_entry` uses for
-    `role: "verify"`), and `execution-session/v1` carrying the ship seat's
-    `evidence_refs` -- `FACT-EXEC-SETTLED` has no canonical
-    `evidence_refs`-shaped field the way `FACT-ASSURE-SETTLED` does, and
-    the attempt entry's `artifact_refs` never reaches the journaled fact,
-    so the extension channel is the durable one. Never writes `candidate`:
-    a real (`git`) candidate is identified by the next dispatch pass, and a
-    scripted candidate's payload stays hand-authored."""
+    atomically. `artifact_refs` (when non-empty; issue #224) is the ship
+    seat's `--evidence-ref` values, written to the attempt entry's
+    canonical `artifact_refs` key -- transported losslessly into
+    `FACT-EXEC-SETTLED.artifact_refs` (`PROTOCOL-FACTS`), mirroring the
+    verdict path's `evidence_refs`->`FACT-ASSURE-SETTLED` precedent.
+    `extensions` (when non-empty) is the attempt entry's registered push
+    channel (issues #105/#106: config-entry `extensions` transport
+    losslessly into `FACT-EXEC-SETTLED.extensions` per `CONF-EXT-003`):
+    `executor-identity/v1` with `role: "ship"` for seat provenance (the
+    same passthrough `record_assurance_entry` uses for `role: "verify"`).
+    Never writes `candidate`: a real (`git`) candidate is identified by the
+    next dispatch pass, and a scripted candidate's payload stays
+    hand-authored."""
     current = load_config(str(path))
     updated = json.loads(json.dumps(current))
     entry = _entry_slot(updated, work_id=work_id, attempt_number=attempt_number)
@@ -977,6 +982,8 @@ def record_execution_outcome_entry(
             attempt_number=attempt_number,
         )
     entry["outcome"] = outcome
+    if artifact_refs:
+        entry["artifact_refs"] = list(artifact_refs)
     if extensions:
         entry["extensions"] = dict(extensions)
     validate_config(updated)  # reuse all outcome/extension/adapter checks
