@@ -12,6 +12,80 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.7.0] — 2026-09-03
+
+No breaking changes. Existing configs and journals need no migration.
+Journals recorded under 0.6.0 that carry the short-lived
+`execution-session/v1` evidence-refs shape (see Changed, below) are
+tolerated as historical passthrough — no migration is offered or needed.
+
+### Added
+- **`--journal` (and every journal-dir-resolving verb) refuses a journal
+  dir that is itself a run directory** (closes #220, #228): pointing
+  `--journal`/`ORC_JOURNAL_DIR`/the default `./.orc` at a directory that
+  is itself a run's own directory (one containing `journal.jsonl` or
+  `config.json` at its root) previously let `dispatch` silently nest a
+  duplicate run underneath it — forking the run's history — and let read
+  verbs misresolve the run's own sidecar files as phantom run ids,
+  sometimes crashing outright. The guard now lives once at the shared
+  `resolve_journal_dir` choke point, so every verb that resolves a
+  journal dir refuses identically, with `next:` guidance pointing at the
+  parent directory and bare `orc` for orientation.
+- **`FACT-EXEC-SETTLED` carries optional canonical `artifact_refs`**
+  (#224, #231): declared on `PROTOCOL-FACTS` mirroring
+  `FACT-ASSURE-SETTLED`'s `evidence_refs` phrasing; the orchestrator
+  folds `ExecutionObservation.artifact_refs` into the fact when non-empty,
+  and `orc show`/`orc refs`/`orc report` surface it alongside the existing
+  evidence-refs treatment.
+- **orc-ledger skill v4 teaches `orc record --outcome`** as the ship-seat
+  recording sugar (#230), matching the verdict path's existing verb
+  documentation.
+- **`orc dispatch --wait` and observer hooks get dogfood concern-tag
+  coverage** (#233): `dogfood/README.md` gains `wait`/`observers` concern
+  tags, with new seeded corpus scenarios `DFS-014` (`--wait`'s movement/
+  timeout/validation exits) and `DFS-015` (observer hooks' fire-once/
+  replay-safety/hung-observer/escaping-command behaviors).
+
+### Changed
+- **`orc record --outcome`'s `--evidence-ref` now rides the canonical
+  attempt-entry `artifact_refs` field instead of an `execution-session/v1`
+  extension payload** (issue #224, #227, #231, `ADR-0005`). The short-lived
+  0.6.0 emission constructed `extensions["execution-session/v1"] =
+  {"evidence_refs": [...]}` — but that extension's registered schema
+  requires `provider`/`native_session_id` and never declared
+  `evidence_refs`, making the 0.6.0 shape schema-nonconforming from the
+  day it shipped (issue #224's schema-hygiene finding). `--evidence-ref`
+  now writes the attempt entry's canonical `artifact_refs` key instead,
+  transported losslessly into `FACT-EXEC-SETTLED.artifact_refs`, mirroring
+  the verdict path's `evidence_refs` → `FACT-ASSURE-SETTLED` precedent
+  exactly. The verb's flag surface (`--evidence-ref`, repeatable) is
+  unchanged and no config/journal migration is needed or offered; 0.6.0
+  journals that already carry the old `execution-session/v1` payload keep
+  it as opaque, tolerated historical passthrough per `CONF-EXT`'s
+  unknown-field tolerance (`docs/extensions/execution-session/README.md`).
+
+### Fixed / Docs
+- `SCN-018` step 11's containment wording corrected — the parenthetical
+  had listed "resolution outside `cwd`" alongside warn-only spawn
+  failures, contradicting the Containment section's eager pre-spawn
+  `ERR-VALIDATION` rejection for that case (matches the merged #225
+  implementation); a stale exit-code-3 docstring ("pending operator
+  input", pre-#212 wording) updated to "pending settlement"; three
+  historical-precedent comments in the Beads mirror adapter reworded so
+  they read as history, not live dependencies (#229).
+- Dogfood-sweep friction repayment, all doc/corpus gaps with zero product
+  bugs found (#233): `orc record`'s docs and the verify-seat protocol now
+  say plainly that `--derived-identity` is checked shape-only at record
+  time, with the real comparison against the bound candidate's identity
+  (and any `ERR-CONFLICT`) surfacing only at the next dispatch; the
+  Observer hooks docs gain a callout that relative `command[0]` resolves
+  against the dispatching process's cwd, not the repo root, so a script
+  that worked at authoring time can silently degrade to the
+  missing-script warning on a later `--run-id-only` resume or `--wait`
+  from elsewhere; `DFS-008`'s corpus now uses the current per-run journal
+  layout and corrects a stale "identical stdout" claim (the normative
+  assertion is the journal line count, not byte-identical stdout).
+
 ## [0.6.0] — 2026-09-02
 
 No breaking changes. Existing configs and journals need no migration.
