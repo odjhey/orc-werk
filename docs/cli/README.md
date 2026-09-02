@@ -381,22 +381,39 @@ orc --state active
 ### `orc record`
 
 ```text
-usage: orc record [-h] --work WORK_ID --verdict {accepted,rejected}
-                  [--evidence-ref REF] [--finding TEXT]
-                  [--derived-identity JSON] [--model M] [--session-ref S]
-                  [--seat-ref S] [--journal DIR]
+usage: orc record [-h] --work WORK_ID [--verdict {accepted,rejected}]
+                  [--outcome {completed,failed}] [--evidence-ref REF]
+                  [--finding TEXT] [--derived-identity JSON] [--model M]
+                  [--session-ref S] [--seat-ref S] [--journal DIR]
                   run-id
 ```
 
-Records the current assurance verdict requested for one Work by merge-only,
-atomic update of the run's persisted `config.json` (issue #192). It refuses an
-unknown run/Work, a Work not currently awaiting `assurance-verdict`, or an
-attempt that already carries `assurance`; it never dispatches or advances the
-run. Repeated evidence and finding flags become `evidence_refs` and
-`review-findings/v1`; model/session/seat flags become an
-`executor-identity/v1` payload with `role: verify`; `--derived-identity` must
-parse as a JSON object and is checked by the existing config/binding validation.
-On success it prints proof of the recorded verdict and the exact
+Records one seat's input for one Work by merge-only, atomic update of the
+run's persisted `config.json`; it never dispatches or advances the run.
+Exactly one of `--verdict`/`--outcome` is required per invocation
+(`ERR-VALIDATION` otherwise — one seat, one recording):
+
+- **`--verdict accepted|rejected`** (issue #192, the verify seat) records the
+  current requested assurance verdict. Repeated evidence and finding flags
+  become `evidence_refs` and `review-findings/v1`; model/session/seat flags
+  become an `executor-identity/v1` payload with `role: verify`;
+  `--derived-identity` must parse as a JSON object and is checked by the
+  existing config/binding validation.
+- **`--outcome completed|failed`** (its ship-seat sibling) records the current
+  requested execution outcome — the push-mode replacement for hand-editing
+  the attempts JSON. Repeated `--evidence-ref` values ride
+  `execution-session/v1` in the attempt entry's `extensions`;
+  model/session/seat flags become `executor-identity/v1` with `role: ship`;
+  `--finding`/`--derived-identity` are verdict-only (`ERR-VALIDATION`).
+  Candidate identity is never settable here: a `git`-candidate run gets
+  identification from the next `orc dispatch` pass, and a scripted-candidate
+  run keeps hand-authoring the entry's `candidate` payload (the verb merges
+  `outcome` into that same hand-authored slot).
+
+Either mode refuses an unknown run/Work (`ERR-NOT-FOUND`), a Work not
+currently awaiting that seat's input (`assurance-verdict` for `--verdict`,
+`execution-outcome` for `--outcome`), or an attempt that already carries the
+recording (`ERR-CONFLICT`), and prints proof of the recording plus the exact
 `orc dispatch --run-id ... --journal ...` command as its `next:` affordance.
 Hand editing remains a legal equivalent recording path under
 `PLAYBOOK-AGENT-CLI`; this command adds validation, not new journal semantics.
@@ -404,6 +421,18 @@ Hand editing remains a legal equivalent recording path under
 ```bash
 orc record demo-pending --work work-1 --verdict accepted \
   --evidence-ref audit.log --model pi --session-ref sess-1 --seat-ref verify-1
+```
+
+A captured `--outcome` recording (scripted candidate hand-authored first;
+run resting at `EXECUTING` awaiting `execution-outcome`):
+
+```console
+$ orc record demo-pending --work work-1 --outcome completed \
+    --evidence-ref gh-pr:42 --evidence-ref head:1f0c2b9 \
+    --model pi --session-ref sess-1 --seat-ref ship-1 --journal ./.orc
+recorded execution outcome: run=demo-pending work=work-1 outcome=completed extensions=[execution-session/v1,executor-identity/v1]
+next:
+  - orc dispatch 'demo pending run' --config /private/tmp/readme-capture/.orc/demo-pending/config.json --journal /private/tmp/readme-capture/.orc --run-id demo-pending
 ```
 
 ### `orc cancel`
