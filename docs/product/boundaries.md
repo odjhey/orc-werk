@@ -33,3 +33,12 @@ description: Product ownership and explicit non-goals.
 - provider-specific UI or terminal hosting.
 
 Those capabilities enter through adapters.
+
+## Explicit non-goals
+
+- Orc Werk never pull-observes another process's lifecycle. Executors are
+  always external and push their observations in — `orc record`,
+  merge-only config edits, or a re-dispatch that replays the journal — and
+  the kernel only ever reacts to what was pushed. It does not poll, scrape,
+  or infer liveness/settlement from a session, stream, or daemon it does
+  not own (`ADR-0005`).

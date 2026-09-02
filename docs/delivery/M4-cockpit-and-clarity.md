@@ -222,12 +222,27 @@ cockpit. The whole milestone is small and mostly composition-layer/docs.
 
 ## Explicitly NOT in M4 (dormant registry, triggers unchanged)
 
+> Amended (`ADR-0005`, 2026-09-02): milestone docs are living records,
+> amended in prose rather than frontmatter. The all-in-on-push-recording
+> ruling adds an autonomous (pull-observed) execution entry below and
+> rewords the AcpAssurance (#126) entry's trigger, since the no-mistakes
+> adapter that entry's original trigger named is removed in 0.5.0. No other
+> entry in this section changes.
+
 - **`orc guide <role>` command** (`TASK-M4C-001`) — HELD dormant (operator,
   2026-08-30); trigger: a proven role-clarity gap the installed skill + the
   mode declaration + the playbook don't close.
 
-- **AcpAssurance** (#126) — dormant; trigger is a review no-mistakes can't
-  do. Fully shaped, reviewed.
+- **AcpAssurance** (#126) — dormant; trigger (reworded, `ADR-0005`,
+  2026-09-02): an assurance review that command assurance (#194/`SCN-015`)
+  cannot express because it requires orc-guaranteed session
+  independence/durability rather than an operator-authored in-repo script.
+  Fully shaped, reviewed.
+- **Autonomous (pull-observed) execution** — descoped by `ADR-0005`, anchor
+  #214. Dormant; trigger: reopen only when BOTH (a) a real consumer
+  demonstrates a need push-recording cannot serve AND (b) a target provider
+  offers a stable, contractually versioned settlement/liveness API.
+  Reopening starts with a fresh spike, never a revival of removed code.
 - **An orc command that reads bd state back at portfolio scope** — collides
   with the write-only boundary (`INV-014`); belongs to the dormant
   multi-repo registry, pulled only if raw `bd list` proves insufficient.
@@ -265,7 +280,8 @@ ports → the #111 note over-fires; low).
 product is thesis-complete and dogfoodable; the next phase is friction-driven
 — keep using orc in real repos and let surfaced friction set priority.
 Dormant registry (AcpAssurance #126, `--json` #53, Beads authority #47, `orc
-guide` #136) stays dormant until a named trigger fires.
+guide` #136, autonomous pull-observed execution — `ADR-0005`, #214) stays
+dormant until a named trigger fires.
 
 ## Acceptance
 

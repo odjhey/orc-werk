@@ -59,9 +59,10 @@ one-dispatching-party-per-run rule intact with no new coordination surface.
 - Work A is pending exactly as at the end of `SCN-007` invocation 1: resting
   at `EXECUTING`, `FACT-EXEC-STARTED` journaled for attempt 1, no settlement
   recorded, exit `3` territory, awaiting `execution-outcome`.
-- The execution provider will eventually settle observably (e.g. the `acp`
-  adapter's `inspect()` path), but nothing about this scenario is
-  adapter-specific — see step 12 for the operator-recorded-only case.
+- The execution provider will eventually settle observably (e.g. a
+  self-observing execution adapter's `inspect()` path), but nothing about
+  this scenario is adapter-specific — see step 12 for the
+  operator-recorded-only case.
 - `max_attempts = 3`.
 
 ## When
