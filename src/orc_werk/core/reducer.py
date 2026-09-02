@@ -22,7 +22,7 @@ idempotency markers (`assurance_started_for_current`, `completed_confirmed`,
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, NamedTuple, Optional
 
 from orc_werk.core.errors import conflict_error, not_found_error, validation_error
 from orc_werk.core.facts import (
@@ -56,6 +56,48 @@ from orc_werk.core.state import (
 )
 
 DEFAULT_MAX_ATTEMPTS = 3
+
+
+class AbandonLegality(NamedTuple):
+    """STATE-DELIVERY mechanical fact sequencing item 9 (TASK-M3B-001,
+    issues #76/#95/#200): the three-way FACT-ATTEMPT-ABANDONED legality
+    predicate, computed once here so the reducer's replay-time check
+    (`apply_fact`) and the orchestrator's operator-facing preflight
+    (`Orchestrator.abandon_attempt`) share a single source of truth
+    instead of re-deriving it independently (consolidation-audit finding
+    6 / issue #200) -- `src/orc_werk/core` stays the only owner; the app
+    layer imports this, never the reverse (CLAUDE.md rule 8)."""
+
+    conflicted: bool
+    awaiting_candidate: bool
+    unsettleable: bool
+
+    @property
+    def legal(self) -> bool:
+        return self.conflicted or self.awaiting_candidate or self.unsettleable
+
+
+def abandon_legality(projection: WorkProjection) -> AbandonLegality:
+    """Compute the `AbandonLegality` three-way predicate for `projection`:
+    an unresolved candidate-observation conflict at EXECUTING, a settled
+    Execution at EXECUTING still awaiting a bound Candidate, or an
+    unsettled current Assurance at ASSURING."""
+    conflicted = projection.state == STATE_EXECUTING and projection.candidate_conflict is not None
+    awaiting_candidate = (
+        projection.state == STATE_EXECUTING
+        and projection.current_candidate_id is None
+        and bool(projection.executions)
+        and projection.executions[-1].get("outcome") == "completed"
+    )
+    unsettleable = (
+        projection.state == STATE_ASSURING
+        and projection.assurance_started_for_current
+        and bool(projection.assurances)
+        and projection.assurances[-1]["verdict"] is None
+    )
+    return AbandonLegality(
+        conflicted=conflicted, awaiting_candidate=awaiting_candidate, unsettleable=unsettleable
+    )
 
 
 def _require_state(fact: Fact, projection: WorkProjection, *expected: str) -> None:
@@ -426,20 +468,8 @@ def apply_fact(
         # as failed via the identical INV-018/INV-019 arithmetic every
         # other failed-attempt row already uses -- never a verdict
         # (INV-003/INV-009 intact: no FACT-ASSURE-SETTLED accompanies it).
-        conflicted = projection.state == STATE_EXECUTING and projection.candidate_conflict is not None
-        awaiting_candidate = (
-            projection.state == STATE_EXECUTING
-            and projection.current_candidate_id is None
-            and projection.executions
-            and projection.executions[-1].get("outcome") == "completed"
-        )
-        unsettleable = (
-            projection.state == STATE_ASSURING
-            and projection.assurance_started_for_current
-            and projection.assurances
-            and projection.assurances[-1]["verdict"] is None
-        )
-        if not (conflicted or awaiting_candidate or unsettleable):
+        legality = abandon_legality(projection)
+        if not legality.legal:
             raise conflict_error(
                 "FACT-ATTEMPT-ABANDONED illegal: no unresolved candidate-observation "
                 "conflict, settled Execution awaiting candidate, or unsettled current "
@@ -452,7 +482,7 @@ def apply_fact(
         else:
             next_state = STATE_BLOCKED
         assurances = projection.assurances
-        if unsettleable:
+        if legality.unsettleable:
             assurances = tuple(
                 {**item, "verdict": "abandoned"} if item is projection.assurances[-1] else item
                 for item in assurances
