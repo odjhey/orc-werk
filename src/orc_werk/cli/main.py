@@ -40,6 +40,7 @@ from orc_werk.adapters.memory.work_graph import MemoryWorkGraph
 from orc_werk.app.orchestrator import Orchestrator, is_pending
 from orc_werk.cli.affordances import redispatch_command, render_next_block
 from orc_werk.cli import config as config_module
+from orc_werk.cli.observers import fire_observers
 from orc_werk.cli.config import (
     _ASSURANCE_ADAPTERS,
     _CANDIDATE_ADAPTERS,
@@ -616,6 +617,24 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
     # ingestion rather than an echo of the config input.
     previous_seq = max((record["seq"] for record in history_before_advance), default=0)
     new_records = [record for record in history if record["seq"] > previous_seq]
+
+    # SCN-018 (issue #193): observer hooks fire ONLY for facts newly
+    # appended by THIS pass (`new_records` above, already seq-sorted) --
+    # never replayed history. Placed after every journal append this pass
+    # will ever make and before dispatch exits (step 6); dispatch does not
+    # wait on any spawned observer (`orc_werk.cli.observers` module
+    # docstring). Firing here, inside `_dispatch_pass`, means a `--wait`
+    # internal pass's own observer warnings (missing/non-executable script,
+    # step 11) are captured/discarded by `_dispatch_wait`'s existing
+    # stdout/stderr buffering exactly like every other per-pass diagnostic
+    # (e.g. the mirror's own "degraded" warning above) -- the ruling for
+    # this scenario's "--wait interaction" clause: a pass that fires an
+    # observer at all is a pass whose fingerprint moved (a settlement,
+    # verdict, or block always advances a Work's pending state), so that
+    # pass's buffered output is flushed, never silently dropped; a
+    # non-`--wait` dispatch prints it immediately, as always.
+    fire_observers(config.get("observers"), new_records=new_records)
+
     settled_assurances = [
         record
         for record in new_records

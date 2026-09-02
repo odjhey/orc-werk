@@ -142,6 +142,36 @@ cannot override verdict, state, or fingerprint. Like every automated
 assurance adapter, command assurance requires a git candidate and forbids
 per-attempt scripted assurance entries. See `ADAPTER-COMMAND-MAPPING`.
 
+## Observer hooks (`SCN-018`, issue #193)
+
+An optional top-level `observers` key spawns operator-authored, PR-reviewed,
+in-repository commands after specific Facts are journaled by the current
+dispatch pass -- a fire-and-forget notification, never a way to steer a run:
+
+```json
+{ "observers": {
+    "on_settle": {"command": ["./scripts/notify-settle.sh"]},
+    "on_verdict": {"command": ["./scripts/notify-verdict.sh"], "timeout_seconds": 10},
+    "on_blocked": {"command": ["./scripts/notify-blocked.sh"]} } }
+```
+
+`on_settle`/`on_verdict`/`on_blocked` are each independent and optional, firing
+once per dispatch pass per matching newly-journaled `FACT-EXEC-SETTLED`/
+`FACT-ASSURE-SETTLED`/`FACT-WORK-BLOCKED` -- never for replayed history, so an
+immediate re-dispatch of an already-settled run fires nothing. `command` is a
+non-empty argv array (never a shell string) whose first element must resolve,
+by path containment, inside the CLI process's own cwd at dispatch time;
+`timeout_seconds` (default 30) bounds the observer's lifetime, enforced by a
+small supervisor process that travels with the observer -- dispatch itself
+never waits on it. The triggering fact's full journal envelope arrives as JSON
+on the observer's stdin, then stdin is closed; the observer's own exit status,
+stdout, and stderr are always opaque -- never journaled, never able to change
+dispatch's exit code or stdout (the same write-only posture `INV-014`
+establishes for the Beads mirror). A missing/non-executable script is a single
+stderr warning, not a failure. See `orc config-schema`'s "Observer hooks"
+section and `orc_werk.cli.observers`' module docstring for the full design
+(supervisor mechanism, replay-safety, the `--wait` interaction ruling).
+
 ## Reading a run
 
 - `status` — per-work terminal state, attempt count, current candidate fingerprint.
