@@ -12,6 +12,67 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.6.0] — 2026-09-02
+
+No breaking changes. Existing configs and journals need no migration.
+
+### Added
+- **`orc dispatch --wait` tolerates transient config races** (`SCN-017`
+  amendment, #216, PR #222): a `--wait` pass whose config load/validate
+  raises `ERR-VALIDATION` mid-wait is now treated as transient — a
+  recorder's non-atomic write can be observed torn mid-write — and is
+  skipped and retried after the poll interval, capped at 3 consecutive
+  failures before surfacing the ordinary canonical error (exit `2`,
+  byte-identical to a non-`--wait` dispatch of the same bad config). A
+  failure on the wait's very first internal pass is never treated as
+  transient — fail-fast on invocation start is unchanged. Also fixes the
+  flake this amendment traces to at its source: the test's own delayed
+  settlement writer now writes atomically (write-temp + `os.replace`,
+  matching `orc record`'s writer) instead of a direct write.
+- **`orc record --outcome completed|failed`** (PR #223): the ship-seat
+  sibling of the `#192` verdict path — records an execution outcome into
+  the run's backing config by the same merge-only, validate-first, atomic
+  write, record-only, never advances the run. Mutually exclusive with
+  `--verdict` (`ERR-VALIDATION` when both or neither given); mirrors the
+  verdict path's refusal taxonomy (`ERR-NOT-FOUND` for unknown run/work,
+  `ERR-CONFLICT` for not-awaiting or already-recorded). `--evidence-ref`
+  rides `execution-session/v1`; `--model`/`--session-ref`/`--seat-ref`
+  become `executor-identity/v1` with `role: "ship"` (the verdict path's
+  `role: "verify"` is undisturbed).
+- **Observer hooks** (`SCN-018`, #193, PRs #219 and #225): config-declared
+  `observers.{on_settle,on_verdict,on_blocked}` fire fire-and-forget,
+  at-most-once, replay-safe on facts newly appended by the current
+  dispatch pass. Each entry is an argv-only command (no shell) run
+  contained inside `cwd`, given the triggering fact as JSON on stdin;
+  optional `timeout_seconds` (default 30) is enforced by a small stdlib
+  supervisor that spawns the observer in its own session/process group,
+  so dispatch blocks only for the spawn and exiting orphans nothing —
+  enforcement travels with the observer's own delegated supervision, not
+  with dispatch's process lifetime. Generalizes the Beads mirror's
+  write-only posture (`INV-014`) and reuses `SCN-015`'s argv-list/
+  no-shell/containment/process-group-timeout discipline. CLI-composition
+  layer only — `src/orc_werk/core` and `src/orc_werk/app` are untouched.
+
+### Changed / Fixed
+- **Abandon-legality predicate single-sourced in core** (#200): the
+  three-way `FACT-ATTEMPT-ABANDONED` legality check (candidate-
+  observation conflict / awaiting-candidate settled execution /
+  unsettleable current assurance) now lives once in
+  `core.reducer.abandon_legality`; the reducer's replay-time check and
+  the orchestrator's `abandon_attempt` preflight both call it instead of
+  each re-deriving the condition independently. Pure dedup, no legality
+  change.
+- **Null-candidate re-derivation journals append-on-change only** (#198):
+  `FX-IDENTIFY-CANDIDATE` re-derivation now journals only when the
+  observation changes (first-ever null, or null → subject), matching the
+  pending-assurance re-poll's no-op-until-change behavior — no more
+  per-dispatch null growth. The port is still re-invoked every dispatch
+  (re-identification is never suppressed by an existing record, per
+  `SCN-014`'s mutation check).
+- **Refs docstrings updated to historical-provider wording** (#221): two
+  stale docstring references to the removed acp adapter reworded per
+  `ADR-0005`. Comment/docstring only — zero functional diff.
+
 ## [0.5.0] — 2026-09-02
 
 ### Breaking
