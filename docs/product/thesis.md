@@ -14,6 +14,8 @@ The name is a playful reference to the Warcraft peon acknowledgement, "work, wor
 
 It binds work-graph systems, durable execution records, agent runtimes, candidate/artifact systems, assurance providers, operator attention, and optional versioned extensions through explicit replaceable ports and contracts.
 
+The product is the ledger and seat protocol itself: the durable, replayable, seat-disciplined coordination substrate that any executor — a person, a scripted job, an agent session — records observations into. Executors are always external to the kernel and push their observations in; the kernel never pull-observes another process's lifecycle to infer them (`ADR-0005`).
+
 > Our semantics are authoritative. Integrations adapt to Orc Werk; Orc Werk does not inherit provider semantics.
 
 The kernel should be usable and fully testable with no Beads, zxro, ACP/acpx, Claude, Codex, GitHub, Git, or no-mistakes installation.
