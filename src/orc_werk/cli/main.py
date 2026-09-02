@@ -74,7 +74,7 @@ from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint, window_b
 from orc_werk.cli.refs import FACT_ASSURE_SETTLED, cmd_refs
 from orc_werk.cli.report import _index_state_rollup, cmd_report, ordered_run_entries
 from orc_werk.cli.show import _render_findings, cmd_show
-from orc_werk.core.errors import CoreError, conflict_error, not_found_error, validation_error
+from orc_werk.core.errors import ERR_VALIDATION, CoreError, conflict_error, not_found_error, validation_error
 from orc_werk.core.state import STATE_ACCEPTED, STATE_ASSURING, STATE_BLOCKED, STATE_EXECUTING, WorkProjection
 from orc_werk.ports.capabilities import validate_capabilities
 
@@ -100,6 +100,17 @@ EXIT_WAIT_TIMEOUT = 4
 # use; tests override --poll-interval down to MIN_POLL_INTERVAL for speed.
 DEFAULT_POLL_INTERVAL = 5.0
 MIN_POLL_INTERVAL = 0.05
+
+# SCN-017 amendment (issue #216): a `--wait` pass whose config load/validate
+# raises `ERR-VALIDATION` (unparseable JSON, a schema violation) is treated
+# as a transient config race -- skipped silently, retried next poll -- up
+# to this many CONSECUTIVE failing passes within one `--wait` invocation. A
+# module-level constant, not a flag, per the watchtower ruling: the cap is
+# implementation policy, not something callers should be tuning per
+# invocation. Exceeding it fails the wait with the ordinary canonical
+# error, exactly as a non-`--wait` dispatch hitting the same bad config
+# would.
+TRANSIENT_CONFIG_RETRY_LIMIT = 3
 
 
 def _work_line(work_id: str, wp: WorkProjection, history: Sequence[Mapping[str, Any]]) -> str:
@@ -695,6 +706,30 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     return _dispatch_wait(args)
 
 
+def _wait_deadline_passed(poll_interval: float, deadline: Optional[float]) -> bool:
+    """`True` if `deadline` has already passed; otherwise sleeps one poll
+    interval (clamped to `deadline`) and returns `False`. Shared by the "no
+    movement" pass and the transient-config-retry path (issue #216) so
+    both sleep/time-out identically; printing the wait-timeout report
+    stays with each caller so output ordering (captured pass output, if
+    any, before the timeout line) is preserved per branch."""
+    if deadline is not None and time.monotonic() >= deadline:
+        return True
+    sleep_for = poll_interval
+    if deadline is not None:
+        sleep_for = max(0.0, min(sleep_for, deadline - time.monotonic()))
+    time.sleep(sleep_for)
+    return False
+
+
+def _print_wait_timeout(args: argparse.Namespace) -> None:
+    print(
+        f"wait timeout: --timeout {args.timeout}s elapsed with the pending fingerprint "
+        "unchanged (SCN-017 step 8) -- the run is exactly as pending as before; "
+        "re-invoking (with or without --wait) is always safe"
+    )
+
+
 def _dispatch_wait(args: argparse.Namespace) -> int:
     """`SCN-017`: block until the run's pending fingerprint moves, the run
     goes terminal, or `--timeout` elapses. Nothing is printed for an
@@ -706,14 +741,43 @@ def _dispatch_wait(args: argparse.Namespace) -> int:
     `fingerprint_before` -- a read-only replay of the journal as it stood
     before this invocation did anything (Purpose paragraph 4): a
     brand-new run's baseline is empty, so that first pass starting work
-    already moves the fingerprint and returns immediately."""
+    already moves the fingerprint and returns immediately.
+
+    SCN-017 amendment (issue #216): a pass whose config load/validate
+    raises `ERR-VALIDATION` (unparseable JSON, or any other config
+    validation failure -- all raised before this invocation's first
+    journal-affecting side effect, per `_dispatch_pass`'s own config-first
+    comment) is transient IF at least one earlier pass of this invocation
+    already completed (`baseline is not None`): the pass is skipped
+    silently and retried after the usual poll interval, up to
+    `TRANSIENT_CONFIG_RETRY_LIMIT` CONSECUTIVE such failures. A failure on
+    the wait's first internal pass -- before this invocation has completed
+    any pass -- is never transient and propagates immediately (a bad
+    config at wait start is a real config error, not a race); so does the
+    `TRANSIENT_CONFIG_RETRY_LIMIT`th consecutive failure, with the same
+    `CoreError` a non-`--wait` dispatch of that same bad config would
+    raise."""
     poll_interval = max(args.poll_interval, MIN_POLL_INTERVAL)
     deadline = None if args.timeout is None else time.monotonic() + args.timeout
     baseline: Optional[frozenset] = None
+    consecutive_config_failures = 0
     while True:
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            result = _dispatch_pass(args)
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                result = _dispatch_pass(args)
+        except CoreError as exc:
+            if baseline is None or exc.to_canonical().get("error") != ERR_VALIDATION:
+                raise
+            consecutive_config_failures += 1
+            if consecutive_config_failures >= TRANSIENT_CONFIG_RETRY_LIMIT:
+                raise
+            if _wait_deadline_passed(poll_interval, deadline):
+                _print_wait_timeout(args)
+                return EXIT_WAIT_TIMEOUT
+            continue
+
+        consecutive_config_failures = 0
         if baseline is None:
             baseline = result.fingerprint_before
 
@@ -724,20 +788,12 @@ def _dispatch_wait(args: argparse.Namespace) -> int:
             sys.stderr.write(err.getvalue())
             return result.exit_code
 
-        if deadline is not None and time.monotonic() >= deadline:
+        if _wait_deadline_passed(poll_interval, deadline):
             sys.stdout.write(out.getvalue())
             sys.stderr.write(err.getvalue())
-            print(
-                f"wait timeout: --timeout {args.timeout}s elapsed with the pending fingerprint "
-                "unchanged (SCN-017 step 8) -- the run is exactly as pending as before; "
-                "re-invoking (with or without --wait) is always safe"
-            )
+            _print_wait_timeout(args)
             return EXIT_WAIT_TIMEOUT
-
-        sleep_for = poll_interval
-        if deadline is not None:
-            sleep_for = max(0.0, min(sleep_for, deadline - time.monotonic()))
-        time.sleep(sleep_for)
+        continue
 
 
 def cmd_record(args: argparse.Namespace) -> int:

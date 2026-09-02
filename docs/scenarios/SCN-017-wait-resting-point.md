@@ -157,6 +157,32 @@ one-dispatching-party-per-run rule intact with no new coordination surface.
     carrying the same eventual outcomes. Waiting is invisible to the
     journal's shape.
 
+### Transient config-load races during a wait pass
+
+14. Amendment (issue #216): because each pass re-reads the backing config
+    (Purpose paragraph 3), a pass whose config load/validate raises an
+    unparseable-JSON or `ERR-VALIDATION` failure is treated as **transient**
+    rather than fatal — the pass is skipped exactly as silently as step 1's
+    no-movement pass (nothing printed, nothing journaled), the poll interval
+    is slept, and the wait retries on the next pass. This tolerance is
+    capped at 3 CONSECUTIVE failing passes (an implementation-chosen
+    constant, not a flag — never appears in canonical data, same as the poll
+    interval itself, step 2); the pass that is the 3rd consecutive failure
+    fails the wait with the ordinary canonical error, exactly as a
+    non-`--wait` dispatch hitting the same bad config would. A failure on
+    the wait's very first internal pass — before this invocation has
+    completed any pass — is never treated as transient and fails fast
+    unconditionally: a bad config at the moment `--wait` is invoked is a
+    real config error to surface immediately, not evidence of a race with a
+    concurrent recorder. Rationale: recorders SHOULD write their config
+    updates atomically (`orc record`'s own writer already does, via
+    write-temp-then-replace) so a reader never observes a torn write, but a
+    hand-editor or naive script mid-write is a foreseeable, non-adversarial
+    case (Given/Then 11-12's "recording into the run's backing config
+    remains legal throughout") that a per-pass config re-read makes newly
+    visible as a wake source (Purpose paragraph 3) — such a writer's
+    transient torn read must not kill an otherwise-healthy wait.
+
 ## Must not be confused with a supervisor
 
 Nothing here makes orc a scheduler, daemon, or notifier (issue #210's
