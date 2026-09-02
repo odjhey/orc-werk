@@ -529,13 +529,13 @@ def _command_field(entry: Mapping[str, Any]) -> Optional[str]:
     """Structural (naming-convention) detection of a command-ish field --
     never an allowlist of specific known provider field names. A key
     ending in `_command` (other than the bare `command` key itself) wins
-    over the generic `command` field when both are present -- the
-    no-mistakes adapter's step-scoped `evidence_refs` entry
-    (`docs/adapters/no-mistakes/mapping.md`) carries both `command` (a
-    status check) and `logs_command` (the fuller, more specific view once
-    already settled), and the more specific one is the more useful resolve
-    action once a verdict has already settled. Deterministic across
-    multiple `_command`-suffixed fields via sorted key order."""
+    over the generic `command` field when both are present -- a
+    historical provider's step-scoped `evidence_refs` entry could carry
+    both `command` (a status check) and `logs_command` (the fuller, more
+    specific view once already settled), and the more specific one is the
+    more useful resolve action once a verdict has already settled.
+    Deterministic across multiple `_command`-suffixed fields via sorted
+    key order."""
     generic: Optional[str] = None
     specific: Optional[str] = None
     for key in sorted(entry):

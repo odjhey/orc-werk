@@ -157,11 +157,8 @@ def agents_block_text(
     while lines and not lines[0].strip():
         lines = lines[1:]
     body = "\n".join(lines).rstrip("\n")
-    execution = profile.get("execution") or {} if profile is not None else {}
     assurance = profile.get("assurance") or {} if profile is not None else {}
-    adapter_driven = execution.get("adapter", "scripted") == "acp" or assurance.get(
-        "adapter", "scripted"
-    ) != "scripted"
+    adapter_driven = assurance.get("adapter", "scripted") != "scripted"
     if adapter_driven:
         mode = "ADAPTER-DRIVEN MODE"
         action = (

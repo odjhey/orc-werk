@@ -3,21 +3,23 @@
 Mirrors `test_cli_refs.py`'s mixed shape -- unit-level coverage of the pure
 derivation helpers (prompt provenance, attempt segmentation, duration,
 findings summarization) plus subprocess-driven CLI wiring/regression
-coverage matching `test_cli_report.py`/`test_cli_acp_wiring.py`'s pattern.
-Fixtures are built fresh inside temp directories -- never by reading this
-repo's live `.orc/` journals -- so these tests never depend on that live
-delivery-ledger content changing shape over time. Real reject-arc and
-verdict-inheritance shapes are driven through `execution.adapter:
-"scripted"` + `candidate.adapter: "git"` (`orc_werk.cli.config`'s
-documented "lesser combination useful for testing the git-candidate wiring
-without a live agent") against a real temporary git repository -- no ACP/
-`acpx` dependency needed for either, since `GitDiffCandidate`'s
-`candidate_id` is a pure function of worktree content (never of
-execution/attempt identity, `src/orc_werk/adapters/git/candidate.py`),
-exactly what makes an unchanged worktree re-observe the same candidate
-across attempts. The one ACP-briefs scenario uses the existing `acpx` stub
-harness (`tests/conformance/support_acpx_stub.py`), matching
-`test_cli_acp_wiring.py`'s own no-live-Pi pattern.
+coverage matching `test_cli_report.py`'s pattern. Fixtures are built fresh
+inside temp directories -- never by reading this repo's live `.orc/`
+journals -- so these tests never depend on that live delivery-ledger
+content changing shape over time. Real reject-arc and verdict-inheritance
+shapes are driven through `execution.adapter: "scripted"` + `candidate.
+adapter: "git"` (`orc_werk.cli.config`'s documented "lesser combination
+useful for testing the git-candidate wiring without a live agent") against
+a real temporary git repository, since `GitDiffCandidate`'s `candidate_id`
+is a pure function of worktree content (never of execution/attempt
+identity, `src/orc_werk/adapters/git/candidate.py`), exactly what makes an
+unchanged worktree re-observe the same candidate across attempts.
+
+0.5.0/`ADR-0005` removed the `acp` `ExecutionPort` adapter, so
+`prompt_provenance` now always renders the generic "no-prompt" kind; one
+unit test below covers that a historical run's persisted config naming
+`execution.adapter == "acp"` still renders gracefully through that same
+generic path (never a dedicated acp-aware renderer, never a crash).
 """
 
 from __future__ import annotations
@@ -28,22 +30,15 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-from orc_werk.adapters.acp.execution import session_name_for_idempotency_key
-from orc_werk.cli.config import _IntentPromptExecution
 from orc_werk.cli.show import (
     _duration_text,
     _finding_id,
     _finding_severity,
     _finding_summary,
     _segment_attempts,
-    _truncate,
     prompt_provenance,
 )
-from orc_werk.core.effects import FX_START_EXECUTION
-from orc_werk.core.idempotency import idempotency_key
-from tests.conformance.support_acpx_stub import AcpxStubWorld
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
@@ -89,95 +84,22 @@ class PromptProvenanceUnitTest(unittest.TestCase):
     def test_scripted_default_is_no_prompt(self) -> None:
         self.assertEqual(prompt_provenance({}, "work-1", "intent"), {"kind": "no-prompt", "adapter": "scripted"})
 
-    def test_explicit_non_acp_adapter_is_no_prompt(self) -> None:
+    def test_explicit_adapter_is_no_prompt(self) -> None:
         config = {"execution": {"adapter": "scripted"}}
         self.assertEqual(prompt_provenance(config, "work-1", "intent")["kind"], "no-prompt")
 
-    def test_acp_with_brief_wins_over_intent(self) -> None:
+    def test_historical_acp_adapter_config_renders_no_prompt_gracefully(self) -> None:
+        # 0.5.0/ADR-0005 removed the `acp` ExecutionPort adapter. A run
+        # dispatched before 0.5.0 may still have a persisted config naming
+        # `execution.adapter == "acp"` (and a now-meaningless `briefs`
+        # entry) -- this must render through the same generic "no-prompt"
+        # path as any other adapter string, never crash, never revive a
+        # dedicated acp-aware rendering.
         config = {"execution": {"adapter": "acp"}, "briefs": {"work-1": "the brief text"}}
         self.assertEqual(
             prompt_provenance(config, "work-1", "the intent text"),
-            {"kind": "brief", "text": "the brief text"},
+            {"kind": "no-prompt", "adapter": "acp"},
         )
-
-    def test_acp_without_brief_entry_falls_back_to_intent(self) -> None:
-        config = {"execution": {"adapter": "acp"}, "briefs": {"other-work": "irrelevant"}}
-        self.assertEqual(
-            prompt_provenance(config, "work-1", "the intent text"),
-            {"kind": "intent", "text": "the intent text"},
-        )
-
-    def test_acp_with_no_briefs_at_all_falls_back_to_intent(self) -> None:
-        config = {"execution": {"adapter": "acp"}}
-        self.assertEqual(prompt_provenance(config, "work-1", "x")["kind"], "intent")
-
-    def test_empty_string_brief_still_wins_present_key_semantics(self) -> None:
-        # dict.get(key, default) semantics: a PRESENT key wins even when its
-        # value is falsy -- this is the issue #111 "stub brief" shape (a
-        # short, non-empty brief also wins the same way; the empty-string
-        # edge case is the sharpest version of the same rule).
-        config = {"execution": {"adapter": "acp"}, "briefs": {"work-1": ""}}
-        self.assertEqual(prompt_provenance(config, "work-1", "intent")["kind"], "brief")
-
-
-class PromptProvenanceAgreesWithDispatchWrapperTest(unittest.TestCase):
-    """Composition-level regression: `show.prompt_provenance`'s derived
-    text must never drift from what `_IntentPromptExecution._filled_request`
-    (the code that ACTUALLY fills a real ACP execution's prompt at dispatch
-    time, issue #82/#83) would have sent. If either derivation's precedence
-    rule changes without the other, this test fails -- the two must always
-    agree, since `show` claims to display the derived prompt provenance
-    honestly, never a guess independent of what dispatch really does."""
-
-    class _NeverCalledInner:
-        def capabilities(self):
-            return frozenset()
-
-        def start(self, **_kwargs):
-            raise AssertionError("not exercised by this test")
-
-        def inspect(self, **_kwargs):
-            raise AssertionError("not exercised by this test")
-
-        def send(self, **_kwargs):
-            raise AssertionError("not exercised by this test")
-
-        def cancel(self, **_kwargs):
-            raise AssertionError("not exercised by this test")
-
-        def resume(self, **_kwargs):
-            raise AssertionError("not exercised by this test")
-
-    def test_brief_and_intent_fallback_agree_for_a_multi_work_config(self) -> None:
-        briefs = {"a": "brief for a", "c": "brief for c"}
-        config = {"execution": {"adapter": "acp", "cwd": "/tmp"}, "briefs": briefs}
-        intent_text = "the run's own intent text"
-        wrapper = _IntentPromptExecution(self._NeverCalledInner(), intent_text=intent_text, briefs=briefs)
-
-        for work_id in ("a", "b", "c"):
-            derived = prompt_provenance(config, work_id, intent_text)
-            actual_prompt = wrapper._filled_request({}, work_id=work_id)["prompt"]
-            self.assertEqual(
-                derived["text"],
-                actual_prompt,
-                msg=f"show's derived prompt for {work_id!r} disagrees with the real dispatch wrapper",
-            )
-        # And the *kind* matches which works actually have a brief entry.
-        self.assertEqual(prompt_provenance(config, "a", intent_text)["kind"], "brief")
-        self.assertEqual(prompt_provenance(config, "b", intent_text)["kind"], "intent")
-        self.assertEqual(prompt_provenance(config, "c", intent_text)["kind"], "brief")
-
-
-class TruncateUnitTest(unittest.TestCase):
-    def test_short_text_not_truncated(self) -> None:
-        shown, truncated, total = _truncate("hello", limit=10)
-        self.assertEqual((shown, truncated, total), ("hello", False, 5))
-
-    def test_long_text_truncated_with_definitive_counts(self) -> None:
-        shown, truncated, total = _truncate("x" * 500, limit=200)
-        self.assertTrue(truncated)
-        self.assertEqual(len(shown), 200)
-        self.assertEqual(total, 500)
 
 
 class SegmentAttemptsUnitTest(unittest.TestCase):
@@ -361,9 +283,9 @@ class ShowRealGitFixtureTest(unittest.TestCase):
     """Reject-arc (two attempts, a genuine worktree change between them)
     and verdict-inheritance (two attempts, an UNCHANGED worktree) real-
     candidate shapes -- `execution.adapter: "scripted"` + `candidate.
-    adapter: "git"` against a real temp git repo, no ACP/`acpx` needed
-    (`GitDiffCandidate`'s `candidate_id` is pure content, `src/orc_werk/
-    adapters/git/candidate.py`)."""
+    adapter: "git"` against a real temp git repo (`GitDiffCandidate`'s
+    `candidate_id` is pure content, `src/orc_werk/adapters/git/
+    candidate.py`)."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -517,90 +439,6 @@ class ShowRealGitFixtureTest(unittest.TestCase):
         self.assertIn("STATE-DELIVERY item 8", out)
         self.assertIn("[high] noop-1: no change made", out)  # inherited findings still shown
         self.assertIn("now at EXECUTING (attempts=3)", out)
-        self.assertNotIn("\x1b", out)
-
-
-class ShowAcpBriefsCliTest(unittest.TestCase):
-    """Full dispatch cycle through the REAL `AcpExecution` port (stubbed
-    `acpx`, no live Pi -- `AcpxStubWorld`, matching `test_cli_acp_wiring.
-    py`'s pattern): a two-work run where one work has a `briefs` entry and
-    the other falls back to the run's intent text, proving `orc show`'s
-    ASKED lines render the real, persisted-config-derived provenance."""
-
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
-        self.repo_a = self.root / "repo-a"
-        self.repo_b = self.root / "repo-b"
-        _init_repo(self.repo_a)
-        _init_repo(self.repo_b)
-        self.world = AcpxStubWorld(self.root / "acpx_world")
-        self.journal_dir = self.root / ".orc"
-        self.run_id = "show-acp-briefs"
-        self.config_path = self.root / "cfg.json"
-
-    def _env(self) -> dict:
-        import os
-
-        env = dict(self.world.env())
-        env["PYTHONPATH"] = str(SRC)
-        env["PATH"] = f"{self.world.bin_dir}{os.pathsep}/usr/bin:/bin"
-        return env
-
-    def _run(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [sys.executable, "-m", "orc_werk.cli", *args],
-            cwd=self.root,
-            env=self._env(),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-    def test_briefs_and_intent_fallback_provenance_render_per_work(self) -> None:
-        # This scenario asserts the ASKED derivation reads the persisted
-        # config honestly -- it does not need the ACP session to ever
-        # settle, so no session is seeded (both works simply stay pending
-        # at EXECUTING, which is itself a legitimate ASKED-rendering case:
-        # provenance is knowable and shown even before EXECUTED/PRODUCED/
-        # JUDGED have anything to say).
-        # Both works dispatch a real (stubbed) acpx session in the same
-        # call (neither declares a dep) -- each needs a seeded script or
-        # the stub's own materializing pre-check crashes; "running" forever
-        # is enough, since this scenario only asserts ASKED, never a
-        # settlement.
-        for work_id in ("work-a", "work-b"):
-            key = idempotency_key(FX_START_EXECUTION, delivery_run_id=self.run_id, work_id=work_id, attempt_number=1)
-            self.world.seed_script(session_name_for_idempotency_key(key), [{"states": ["running"], "outcome": "completed"}])
-
-        long_brief = "In this git worktree, do a very specific and detailed thing: " + ("x" * 250)
-        config = {
-            "execution": {"adapter": "acp", "cwd": str(self.repo_a)},
-            "candidate": {"adapter": "git", "repo_path": str(self.repo_a)},
-            "briefs": {"work-a": long_brief},
-            "plan": {"works": [{"work_id": "work-a", "deps": []}, {"work_id": "work-b", "deps": []}]},
-        }
-        self.config_path.write_text(json.dumps(config), encoding="utf-8")
-
-        long_intent = "the run's own fallback intent text, made deliberately long so its own " + ("y" * 250)
-        dispatch = self._run(
-            "dispatch", long_intent,
-            "--config", str(self.config_path), "--journal", str(self.journal_dir), "--run-id", self.run_id,
-        )
-        self.assertEqual(dispatch.returncode, 3, msg=dispatch.stdout + dispatch.stderr)
-
-        result = self._run("show", self.run_id, "--journal", str(self.journal_dir))
-        self.assertEqual(result.returncode, 3, msg=result.stdout + result.stderr)
-        out = result.stdout
-
-        self.assertIn("prompt = briefs.work-a (persisted config)", out)
-        self.assertIn("truncated, showing 200 of", out)
-        self.assertIn(f"full text: {(self.journal_dir / self.run_id / 'config.json').resolve()} (key: briefs.work-a)", out)
-
-        self.assertIn("prompt = run intent (fallback)", out)
-        self.assertIn("the run's own fallback intent text", out)
-        self.assertIn(f"full text: orc status {self.run_id}", out)
         self.assertNotIn("\x1b", out)
 
 

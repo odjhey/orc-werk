@@ -52,15 +52,20 @@ class RecordCliTest(unittest.TestCase):
             settled = cli(root, "dispatch", "--run-id", "record-run", "--journal", str(root / ".orc"))
             self.assertEqual(settled.returncode, 0, settled.stdout + settled.stderr)
 
-    def test_acp_shape_created_with_only_assurance(self) -> None:
+    def test_real_candidate_entry_created_with_only_assurance(self) -> None:
+        # A5 (ADR-0005): the git-candidate half of this real-adapter shape
+        # survives 0.5.0's acp removal -- `candidate.adapter == "git"`
+        # alone still restricts the attempt entry (real CandidatePort
+        # supplies the subject, so a config-declared `candidate` key would
+        # be silently ignored), while `record`'s own merge-only write still
+        # adds nothing but `assurance` to an entry that started empty.
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); path = self.pending(root, "record-acp")
+            root = Path(tmp); path = self.pending(root, "record-git-candidate")
             data = json.loads(path.read_text())
-            data["execution"] = {"adapter": "acp", "cwd": str(root)}
             data["candidate"] = {"adapter": "git", "repo_path": str(root)}
             data["attempts"]["work-1"][0] = {}
             path.write_text(json.dumps(data))
-            result = cli(root, "record", "record-acp", "--work", "work-1", "--verdict", "rejected",
+            result = cli(root, "record", "record-git-candidate", "--work", "work-1", "--verdict", "rejected",
                          "--journal", str(root / ".orc"))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(set(json.loads(path.read_text())["attempts"]["work-1"][0]), {"assurance"})

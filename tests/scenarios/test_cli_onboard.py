@@ -230,15 +230,18 @@ class OnboardScaffoldTest(unittest.TestCase):
         self.assertIn("configs default via profile `.orc/profile.json`", block.lower())
         self.assertIn("load the installed `orc-ledger` skill", block)
 
-    def test_real_execution_and_assurance_profile_declares_adapter_driven_mode(self):
+    def test_real_assurance_profile_declares_adapter_driven_mode(self):
         profile = self.target / ".orc" / "profile.json"
         profile.parent.mkdir()
         profile.write_text(
             json.dumps(
                 {
-                    "execution": {"adapter": "acp", "cwd": str(self.target)},
                     "candidate": {"adapter": "git", "repo_path": str(self.target)},
-                    "assurance": {"adapter": "no-mistakes", "repo_path": str(self.target)},
+                    "assurance": {
+                        "adapter": "command",
+                        "script": "scripts/assure.sh",
+                        "cwd": str(self.target),
+                    },
                 }
             ),
             encoding="utf-8",

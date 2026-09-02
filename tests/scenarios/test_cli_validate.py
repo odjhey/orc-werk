@@ -68,7 +68,6 @@ class CliValidateTest(unittest.TestCase):
             journal.mkdir()
             (journal / "profile.json").write_text(
                 json.dumps({
-                    "execution": {"adapter": "acp", "agent": "pi", "model": "model-x"},
                     "candidate": {"adapter": "git"},
                     "mirror": {"adapter": "beads", "workspace": "/tmp/beads"},
                 }),
@@ -77,18 +76,17 @@ class CliValidateTest(unittest.TestCase):
             result = self._validate(
                 root,
                 {
-                    "execution": {"cwd": str(root)},
                     "candidate": {"repo_path": str(root)},
                 },
                 "--journal", str(journal),
             )
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
             self.assertIn(
-                f"layers: profile: {(journal / 'profile.json').resolve()} (candidate, execution, mirror) "
+                f"layers: profile: {(journal / 'profile.json').resolve()} (candidate, mirror) "
                 f"+ config: {root / 'config.json'}",
                 result.stdout,
             )
-            self.assertIn("adapters: execution=acp candidate=git assurance=scripted", result.stdout)
+            self.assertIn("adapters: execution=scripted candidate=git assurance=scripted", result.stdout)
 
     def test_adapter_switch_keeps_override_keys_and_unrelated_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -96,30 +94,33 @@ class CliValidateTest(unittest.TestCase):
             journal = root / "ledger"
             journal.mkdir()
             (journal / "profile.json").write_text(json.dumps({
-                "execution": {
-                    "adapter": "acp", "agent": "pi", "model": "m",
-                    "thought_level": "high", "approve_all": True,
+                "assurance": {
+                    "adapter": "command", "script": "scripts/assure.sh",
+                    "cwd": "/tmp", "timeout_s": 120,
                 }
             }), encoding="utf-8")
 
             result = self._validate(
                 root,
-                {"execution": {"adapter": "scripted"}, "briefs": {"work-1": "keep me"}},
+                {"assurance": {"adapter": "scripted"}, "briefs": {"work-1": "keep me"}},
                 "--journal", str(journal),
             )
 
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-            self.assertIn("adapters: execution=scripted", result.stdout)
+            self.assertIn("adapters: execution=scripted candidate=scripted assurance=scripted", result.stdout)
 
     def test_same_adapter_keeps_profile_defaults_composed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             journal = root / "ledger"
             journal.mkdir()
+            script = root / "scripts" / "assure.sh"
+            script.parent.mkdir(parents=True)
+            script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            script.chmod(0o755)
             (journal / "profile.json").write_text(json.dumps({
-                "execution": {
-                    "adapter": "acp", "agent": "pi", "model": "m",
-                    "thought_level": "high", "approve_all": True,
+                "assurance": {
+                    "adapter": "command", "script": "scripts/assure.sh", "timeout_s": 120,
                 },
                 "candidate": {"adapter": "git"},
             }), encoding="utf-8")
@@ -127,14 +128,14 @@ class CliValidateTest(unittest.TestCase):
             result = self._validate(
                 root,
                 {
-                    "execution": {"adapter": "acp", "cwd": str(root)},
+                    "assurance": {"adapter": "command", "cwd": str(root)},
                     "candidate": {"adapter": "git", "repo_path": str(root)},
                 },
                 "--journal", str(journal),
             )
 
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
-            self.assertIn("adapters: execution=acp candidate=git", result.stdout)
+            self.assertIn("adapters: execution=scripted candidate=git assurance=command", result.stdout)
 
     def test_candidate_switch_to_scripted_drops_inherited_git_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -177,19 +178,25 @@ class CliValidateTest(unittest.TestCase):
             journal.mkdir()
             (journal / "profile.json").write_text(
                 json.dumps({
-                    "execution": {"adapter": "acp", "agent": "pi", "cwd": str(root)},
+                    "assurance": {"adapter": "command", "script": "scripts/assure.sh", "cwd": str(root)},
                     "candidate": {"adapter": "git", "repo_path": str(root)},
                 }),
                 encoding="utf-8",
             )
+            # The per-run config alone (adapter selected, but the profile's
+            # `script`/`cwd` completeness dropped since --no-profile skips
+            # composing it in) is missing a REQUIRED command-assurance
+            # field -- proving --no-profile really validates the config
+            # standalone rather than silently still consulting the profile.
             result = self._validate(
                 root,
-                {"execution": {"cwd": str(root)}, "candidate": {"repo_path": str(root)}},
+                {"assurance": {"adapter": "command"}, "candidate": {"adapter": "git", "repo_path": str(root)}},
                 "--journal", str(journal), "--no-profile",
             )
             self.assertEqual(result.returncode, 2)
-            self.assertEqual(json.loads(result.stderr)["error"], "ERR-VALIDATION")
-            self.assertIn("unknown_keys", json.loads(result.stderr)["details"])
+            error = json.loads(result.stderr)
+            self.assertEqual(error["error"], "ERR-VALIDATION")
+            self.assertEqual(error["details"]["path"], "<config>.assurance.script")
 
     def test_missing_profile_keeps_standalone_behavior_and_does_not_create_journal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
