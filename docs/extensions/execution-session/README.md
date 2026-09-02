@@ -28,6 +28,10 @@ Preserve what a provider needs to resume the exact same native session, and what
 
 Per the `CONTRACT-CAPABILITIES` capability-durability amendment: an adapter MUST NOT advertise `CAP-EXEC-RESUME-EXACT` unless it durably persists the `execution-session/v1` provenance required to reconstruct the exact session. See `CONTRACT-DURABILITY` for the full capability -> durable-information -> owner -> contract -> conformance mapping.
 
+## Historical passthrough
+
+Issue #223's short-lived ship-seat `orc record --outcome` implementation routed `--evidence-ref` values through an `{"evidence_refs": [...]}` payload under this extension's key, ahead of that extension's registered schema (which declares `provider`/`native_session_id` required and carries no `evidence_refs` field) -- a schema-nonconforming emission (issue #224). Issue #224 repoints that verb to canonical `artifact_refs` on `FACT-EXEC-SETTLED` (`PROTOCOL-FACTS`) and removes the `execution-session/v1` emission entirely. Journals written during that short window still carry the old payload; per `CONF-EXT` unknown/nonconforming-field tolerance, it is preserved as opaque historical passthrough with no migration, never validated against this schema retroactively.
+
 ## Files
 
 - [Schema](schema.md)

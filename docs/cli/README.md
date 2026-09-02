@@ -472,8 +472,9 @@ Exactly one of `--verdict`/`--outcome` is required per invocation
   existing config/binding validation.
 - **`--outcome completed|failed`** (its ship-seat sibling) records the current
   requested execution outcome — the push-mode replacement for hand-editing
-  the attempts JSON. Repeated `--evidence-ref` values ride
-  `execution-session/v1` in the attempt entry's `extensions`;
+  the attempts JSON. Repeated `--evidence-ref` values ride the attempt
+  entry's canonical `artifact_refs` field, transported losslessly into
+  `FACT-EXEC-SETTLED.artifact_refs` (`PROTOCOL-FACTS`);
   model/session/seat flags become `executor-identity/v1` with `role: ship`;
   `--finding`/`--derived-identity` are verdict-only (`ERR-VALIDATION`).
   Candidate identity is never settable here: a `git`-candidate run gets
@@ -501,7 +502,7 @@ run resting at `EXECUTING` awaiting `execution-outcome`):
 $ orc record demo-pending --work work-1 --outcome completed \
     --evidence-ref gh-pr:42 --evidence-ref head:1f0c2b9 \
     --model pi --session-ref sess-1 --seat-ref ship-1 --journal ./.orc
-recorded execution outcome: run=demo-pending work=work-1 outcome=completed extensions=[execution-session/v1,executor-identity/v1]
+recorded execution outcome: run=demo-pending work=work-1 outcome=completed extensions=[executor-identity/v1]
 next:
   - orc dispatch 'demo pending run' --config /private/tmp/readme-capture/.orc/demo-pending/config.json --journal /private/tmp/readme-capture/.orc --run-id demo-pending
 ```
@@ -707,10 +708,12 @@ DURABILITY`'s disposition sentence, "narrative/report content is
 provider-owned and the ledger journals resolvable references"): lists
 every resolvable reference recorded for one run, one indexed row per
 reference, with columns `kind`, `provider`, `value`, and a runnable
-`resolve` command. Four independently optional sources, each silently
+`resolve` command. Five independently optional sources, each silently
 absent when the run carries none of it -- never fabricated:
 `execution-session/v1` session/resume/transcript refs
-(`EXT-EXECUTION-SESSION-V1-SCHEMA`) off `FACT-EXEC-SETTLED`; assurance
+(`EXT-EXECUTION-SESSION-V1-SCHEMA`) off `FACT-EXEC-SETTLED`; execution
+`artifact_refs` off that same `FACT-EXEC-SETTLED` (`PROTOCOL-FACTS`);
+assurance
 `evidence_refs` off `FACT-ASSURE-SETTLED` (`PROTOCOL-FACTS`); candidate
 identity (`head_sha`/`branch`/`repo_path`/`pr`) off the journaled
 `FX-IDENTIFY-CANDIDATE` effect; and the Beads mirror's run label +
