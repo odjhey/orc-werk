@@ -10,24 +10,29 @@ non-terminal and pending operator input -- a Work is resting at
 recorded yet (`SCN-007`, `STATE-DELIVERY` mechanical fact sequencing item
 7). `3` is the M1a pending/incremental-mode default's distinct in-progress
 exit code, additive to the `0`/`1`/`2` contract, never a replacement of
-it. Errors print the canonical error value (`CONTRACT-ERRORS`) as JSON to
-stderr, never a Python traceback.
+it. `4` is `dispatch --wait --timeout <T>`'s distinct wait-timeout exit
+code (`SCN-017`) -- the fingerprint of pending works did not move within
+`T` seconds; see `dispatch --wait` below. Errors print the canonical error
+value (`CONTRACT-ERRORS`) as JSON to stderr, never a Python traceback.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
 import hashlib
 import importlib.metadata
+import io
 import json
 import os
 import shlex
 import subprocess
 import sys
+import time
 import tomllib
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, NamedTuple, Optional, Sequence
 
 from orc_werk.adapters.jsonl import layout
 from orc_werk.adapters.jsonl.journal import JSONLJournal
@@ -82,6 +87,19 @@ from orc_werk.ports.capabilities import validate_capabilities
 # resting point `_advance_one_phase` cannot progress past).
 EXIT_PENDING = 3
 
+# SCN-017 (issue #210): dispatch --wait's distinct wait-timeout exit code --
+# colliding with none of 0/1/2/3 (step 8). Reported only when --timeout
+# elapses with the pending fingerprint unchanged; a fingerprint move within
+# the timeout still exits EXIT_PENDING (3), the same as an ordinary
+# non-wait dispatch observing the same resting state (step 4).
+EXIT_WAIT_TIMEOUT = 4
+
+# SCN-017 step 2: the poll interval is an implementation detail that must
+# never appear in canonical/journaled data. Defaults chosen for interactive
+# use; tests override --poll-interval down to MIN_POLL_INTERVAL for speed.
+DEFAULT_POLL_INTERVAL = 5.0
+MIN_POLL_INTERVAL = 0.05
+
 
 def _work_line(work_id: str, wp: WorkProjection, history: Sequence[Mapping[str, Any]]) -> str:
     fingerprint = wp.current_candidate_fingerprint() or "-"
@@ -117,6 +135,24 @@ def _summarize_works(projection) -> tuple[bool, bool]:
         if wp.state != STATE_ACCEPTED:
             any_non_accepted = True
     return any_blocked, any_non_accepted
+
+
+def _pending_fingerprint(projection) -> frozenset[tuple[str, int, str]]:
+    """`SCN-017`'s pending fingerprint: the set of `(work_id,
+    attempt_number, awaiting)` tuples across every non-terminal Work
+    currently pending (`is_pending`), where `awaiting` is the same
+    `execution-outcome`/`assurance-verdict` label `dispatch`/`status`
+    output already surfaces (`_awaiting_label`). A Work that is
+    non-terminal but not yet pending (e.g. freshly `READY`, about to be
+    claimed) contributes nothing -- it has no `awaiting` to surface yet.
+    `dispatch --wait` compares this set across passes to detect that the
+    run's resting point moved; nothing about the comparison itself is
+    journaled (determinism hard bar, `DELIVERY-STANCE`)."""
+    return frozenset(
+        (work_id, wp.attempt_number, _awaiting_label(wp))
+        for work_id, wp in projection.works.items()
+        if is_pending(wp)
+    )
 
 
 def _exit_code_for(any_blocked: bool, any_non_accepted: bool) -> int:
@@ -336,7 +372,23 @@ def _warn_candidate_divergence(
         )
 
 
-def cmd_dispatch(args: argparse.Namespace) -> int:
+class _DispatchPassResult(NamedTuple):
+    """One `_dispatch_pass` invocation's outcome, consumed by both the
+    ordinary (non-`--wait`) `cmd_dispatch` and the `--wait` loop
+    (`_dispatch_wait`). `fingerprint_before`/`fingerprint_after` are
+    `SCN-017`'s pending fingerprint computed from the same-pass
+    pre-advance/post-advance projections already built inside the pass --
+    `fingerprint_before` is therefore a read-only replay of the journal as
+    it stood before this pass's own progress (the exact baseline
+    `--wait` needs before its first pass, Purpose/step 1's "replay of the
+    existing journal")."""
+
+    exit_code: int
+    fingerprint_before: frozenset
+    fingerprint_after: frozenset
+
+
+def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
     journal_dir = resolve_journal_dir(args.journal)
     existing_run_ids = set(layout.discover_run_ids(journal_dir))
 
@@ -607,7 +659,84 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
         intent_text=intent_text,
     ):
         print(line)
-    return exit_code
+    return _DispatchPassResult(
+        exit_code=exit_code,
+        fingerprint_before=_pending_fingerprint(pre_advance_projection),
+        fingerprint_after=_pending_fingerprint(projection),
+    )
+
+
+def cmd_dispatch(args: argparse.Namespace) -> int:
+    """`dispatch` entry point (`SCN-017`, issue #210). Validates the
+    `--wait`/`--timeout`/`--abandon-work` flag combination, then either
+    runs one ordinary `_dispatch_pass` (unchanged, byte-identical output to
+    before this task) or loops passes under `_dispatch_wait` until the
+    run's resting point moves, the run goes terminal, or `--timeout`
+    elapses."""
+    if args.timeout is not None and not args.wait:
+        raise validation_error(
+            "--timeout requires --wait (SCN-017); --wait alone waits indefinitely",
+            next_steps=[
+                "add --wait to the same command",
+                "drop --timeout to wait indefinitely under --wait",
+            ],
+        )
+    if args.wait and args.abandon_work is not None:
+        raise validation_error(
+            "--abandon-work and --wait cannot be combined: --abandon-work is a one-shot operator "
+            "verb (TASK-M3B-001), not a semantic for a blocking wait",
+            next_steps=[
+                "run --abandon-work alone first, then re-dispatch (optionally with --wait) separately",
+            ],
+        )
+    if not args.wait:
+        return _dispatch_pass(args).exit_code
+    return _dispatch_wait(args)
+
+
+def _dispatch_wait(args: argparse.Namespace) -> int:
+    """`SCN-017`: block until the run's pending fingerprint moves, the run
+    goes terminal, or `--timeout` elapses. Nothing is printed for an
+    internal pass whose fingerprint does not move (step 1's silence) --
+    each pass's stdout/stderr is captured and discarded until the pass
+    that ends the loop, whose captured output is then emitted verbatim (so
+    a non-wait dispatch and the exiting wait pass print identically for
+    the same resting journal state). The baseline is the FIRST pass's
+    `fingerprint_before` -- a read-only replay of the journal as it stood
+    before this invocation did anything (Purpose paragraph 4): a
+    brand-new run's baseline is empty, so that first pass starting work
+    already moves the fingerprint and returns immediately."""
+    poll_interval = max(args.poll_interval, MIN_POLL_INTERVAL)
+    deadline = None if args.timeout is None else time.monotonic() + args.timeout
+    baseline: Optional[frozenset] = None
+    while True:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            result = _dispatch_pass(args)
+        if baseline is None:
+            baseline = result.fingerprint_before
+
+        terminal = result.exit_code != EXIT_PENDING
+        moved = result.fingerprint_after != baseline
+        if terminal or moved:
+            sys.stdout.write(out.getvalue())
+            sys.stderr.write(err.getvalue())
+            return result.exit_code
+
+        if deadline is not None and time.monotonic() >= deadline:
+            sys.stdout.write(out.getvalue())
+            sys.stderr.write(err.getvalue())
+            print(
+                f"wait timeout: --timeout {args.timeout}s elapsed with the pending fingerprint "
+                "unchanged (SCN-017 step 8) -- the run is exactly as pending as before; "
+                "re-invoking (with or without --wait) is always safe"
+            )
+            return EXIT_WAIT_TIMEOUT
+
+        sleep_for = poll_interval
+        if deadline is not None:
+            sleep_for = max(0.0, min(sleep_for, deadline - time.monotonic()))
+        time.sleep(sleep_for)
 
 
 def cmd_record(args: argparse.Namespace) -> int:
@@ -998,6 +1127,8 @@ exit codes:
   3   run non-terminal, pending settlement observation or operator-recorded
       input -- safe to re-check; re-dispatch itself observes and journals
       adapter-observed settlements (e.g. acp) once the provider's turn ends
+  4   dispatch --wait --timeout <T> only: T seconds elapsed with the
+      pending fingerprint unchanged (SCN-017) -- re-invoking is always safe
 
 - errors are always canonical JSON on stderr, never a Python traceback:
   {"error": "ERR-*", "message": "...", "details": {...}}.
@@ -1088,6 +1219,11 @@ def build_parser() -> argparse.ArgumentParser:
         "    # the re-dispatch itself observes and journals Pi's settlement once the turn\n"
         "    # ends (no hand-recorded outcome needed; issue #210); then record the\n"
         "    # assurance verdict in the config's attempts and re-run again\n\n"
+        '  orc dispatch "reply with the word ping" --config acp-cfg.json --wait --timeout 300\n'
+        "    # SCN-017/issue #210: blocks, re-dispatching internally, until the resting point\n"
+        "    # moves or the run goes terminal -- nothing prints until the wait ends; exit 3 on\n"
+        "    # movement, 0/1 on terminal, 4 if 300s pass with nothing new (--poll-interval\n"
+        "    # controls the internal sleep, default 5s; never journaled)\n\n"
         "  orc dispatch --run-id demo-run --journal ./.orc \\\n"
         '    --abandon-work work-1 --abandon-reason "adapter session orphaned"  # TASK-M3B-001:\n'
         "    # operator-only. Legal only when work-1 rests at an unresolved candidate-\n"
@@ -1123,6 +1259,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="WHO",
         help="operator identity for --abandon-work (default: $USER)",
+    )
+    dispatch_parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="block, re-dispatching internally, until the run's resting point moves or goes "
+        "terminal (SCN-017, issue #210); nothing is printed until the wait ends. Exit 3 on "
+        "movement, 0/1 on terminal, or the wait-timeout code 4 if --timeout elapses first",
+    )
+    dispatch_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="with --wait: give up after this many seconds of an unchanged pending fingerprint "
+        "and exit 4 (SCN-017); requires --wait. Omit to wait indefinitely",
+    )
+    dispatch_parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=DEFAULT_POLL_INTERVAL,
+        metavar="SECONDS",
+        help=f"with --wait: sleep this long between internal passes (default {DEFAULT_POLL_INTERVAL}); "
+        f"never journaled (SCN-017); clamped to a minimum of {MIN_POLL_INTERVAL}",
     )
     dispatch_parser.set_defaults(func=cmd_dispatch)
 
