@@ -180,6 +180,9 @@ but never writes run state or creates the journal directory.
 ```text
 usage: orc dispatch [-h] [--config CONFIG] [--journal JOURNAL]
                      [--max-attempts MAX_ATTEMPTS] [--run-id RUN_ID]
+                     [--abandon-work WORK_ID] [--abandon-reason TEXT]
+                     [--abandon-by WHO] [--wait] [--timeout SECONDS]
+                     [--poll-interval SECONDS]
                      [intent]
 ```
 
@@ -193,6 +196,9 @@ Dispatch an intent and run the delivery state machine to a resting point
 | `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
 | `--max-attempts` | policy default `3` | overrides the run's retry budget |
 | `--run-id` | derived deterministically from the intent text | explicit `delivery_run_id` |
+| `--wait` | off | block, re-dispatching internally, until the run's resting point moves or goes terminal (`SCN-017`, issue #210); see "`orc dispatch --wait`" below |
+| `--timeout` | none (wait indefinitely) | with `--wait`: give up after this many seconds of an unchanged pending fingerprint and exit `4`; requires `--wait` |
+| `--poll-interval` | `5.0` | with `--wait`: seconds slept between internal passes; never journaled |
 
 ```bash
 orc dispatch "ship the widget" --config cfg.json
@@ -222,6 +228,77 @@ next:
   - record the execution outcome for work(s): work-1
   - then re-run: orc dispatch 'pending demo' --config /abs/path/.orc/demo-pending/config.json --journal /abs/path/.orc --run-id demo-pending
 ```
+
+### `orc dispatch --wait`
+
+`SCN-017` (issue #210): instead of the caller re-invoking `dispatch` on a
+timer to poll exit `3`, `--wait` internalizes that loop -- it re-dispatches
+(config re-read included) until the run's **pending fingerprint** (the set
+of `(work_id, attempt_number, awaiting)` tuples across pending works)
+moves from its baseline, or the run goes terminal. Nothing is printed for
+an internal pass that observes no movement; only the pass that ends the
+wait prints its ordinary report, exactly as a non-`--wait` dispatch
+observing that same resting state would. Continuing the pending-demo run
+above with `--wait --timeout 60 --poll-interval 1` while a second
+terminal records the execution settlement mid-wait:
+
+```bash
+orc dispatch --run-id demo-pending --journal ./.orc --wait --timeout 60 --poll-interval 1
+# (concurrently, from another shell: edit .orc/demo-pending/config.json to add
+#  "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "hello"}}]})
+```
+
+```text
+run: demo-pending
+journal: /abs/path/.orc/demo-pending/journal.jsonl
+work work-1: state=ASSURING attempts=1 candidate_fingerprint=fp-30dd7c8c1f588de26f8f26c8 pending=true awaiting=assurance-verdict attempt=1
+pending: run is non-terminal, awaiting settlement observation or operator-recorded input for: work-1
+next:
+  - record the assurance verdict for work(s): work-1 -- needs a different agent than the one that recorded the settlement (canonical playbook discipline: PLAYBOOK-AGENT-CLI)
+  - work work-1's bound assurance is assure-8058cef98e13ac0b (candidate head (unknown)); if it stays pending unexpectedly long, operator recovery is: orc dispatch --run-id demo-pending --journal /abs/path/.orc --config /abs/path/.orc/demo-pending/config.json --abandon-work work-1 --abandon-reason "<why>"
+  - then re-run: orc dispatch 'pending demo' --config /abs/path/.orc/demo-pending/config.json --journal /abs/path/.orc --run-id demo-pending
+```
+
+Exit `3`: the resting point moved from `EXECUTING`/`execution-outcome` to
+`ASSURING`/`assurance-verdict` -- the same distinct in-progress exit code a
+non-`--wait` dispatch of this same journal state would report, just
+reached without the caller re-invoking anything. A caller that only cares
+about terminal states loops on `dispatch --wait`; a watchtower-style caller
+instead interposes here (e.g. dispatching an independent verify seat)
+because `--wait` returns at the *first* movement rather than running
+through to terminal.
+
+Re-running the same command with a short `--timeout` and nothing recorded
+demonstrates the distinct wait-timeout exit:
+
+```bash
+orc dispatch --run-id demo-pending --journal ./.orc --wait --timeout 1 --poll-interval 0.2
+```
+
+```text
+run: demo-pending
+journal: /abs/path/.orc/demo-pending/journal.jsonl
+work work-1: state=ASSURING attempts=1 candidate_fingerprint=fp-30dd7c8c1f588de26f8f26c8 pending=true awaiting=assurance-verdict attempt=1
+pending: run is non-terminal, awaiting settlement observation or operator-recorded input for: work-1
+next:
+  - record the assurance verdict for work(s): work-1 -- needs a different agent than the one that recorded the settlement (canonical playbook discipline: PLAYBOOK-AGENT-CLI)
+  - work work-1's bound assurance is assure-8058cef98e13ac0b (candidate head (unknown)); if it stays pending unexpectedly long, operator recovery is: orc dispatch --run-id demo-pending --journal /abs/path/.orc --config /abs/path/.orc/demo-pending/config.json --abandon-work work-1 --abandon-reason "<why>"
+  - then re-run: orc dispatch 'pending demo' --config /abs/path/.orc/demo-pending/config.json --journal /abs/path/.orc --run-id demo-pending
+wait timeout: --timeout 1.0s elapsed with the pending fingerprint unchanged (SCN-017 step 8) -- the run is exactly as pending as before; re-invoking (with or without --wait) is always safe
+```
+
+Exit `4`: the internal passes over that one second found no movement.
+Nothing about the wait itself -- not the interval, not the timeout, not
+how many internal passes ran -- is journaled (determinism hard bar,
+`DELIVERY-STANCE`): re-running this identical journal state as N manual
+re-dispatches instead of one `--wait` invocation produces a record-for-
+record identical journal (`SCN-017` steps 2, 8, 13). `--timeout` without
+`--wait` is `ERR-VALIDATION`, exit `2`; `--wait` without `--timeout` waits
+indefinitely; combining `--wait` with `--abandon-work` is also
+`ERR-VALIDATION` (`--abandon-work` is a one-shot operator verb, not a wait
+semantic). Killing the waiting process (`SIGINT` or otherwise) loses
+nothing -- every journaled fact was journaled by a completed ordinary pass
+(`SCN-017` step 10).
 
 **Repo profile and precedence (`TASK-M4A-001`)**: the CLI discovers a profile only at `<resolved-journal-dir>/profile.json`--normally `<repo>/.orc/profile.json`. It first resolves the journal directory using `--journal` > `ORC_JOURNAL_DIR` > `./.orc`, then appends `profile.json`; it never searches cwd or ancestors. The profile is a plain JSON object with the same schema as `--config`. Effective precedence is `--config` (deep-merged) > per-run persisted `config.json` > profile > `{}`. Nested objects compose; non-object values replace. At every layer boundary, when a higher layer explicitly selects a different `execution.adapter`, `candidate.adapter`, `assurance.adapter`, or `mirror.adapter` than the composed lower layers, lower-layer keys in that section that are exclusive to the previously selected adapter are dropped (#174). Keys explicitly supplied by the higher layer remain and are validated against the new adapter, while inherited adapter-agnostic keys that are legal for the new adapter continue to compose. The adapter-conditional validator's exclusivity definitions are the single source of truth for which inherited keys are dropped. Selecting the same adapter does not drop any keys. The `--max-attempts` flag retains its existing precedence over the merged config's `max_attempts`.
 
@@ -775,6 +852,7 @@ with `next` guidance (issue #94), exit `2`; every other exit is `0`.
 | `1` | some Work `BLOCKED` (or another non-accepted terminal state) |
 | `2` | usage/config error -- canonical error JSON on stderr: `{"error": "ERR-*", "message": "...", "details": {...}}`, optionally with the additive `"next": ["next-step guidance", "..."]` field |
 | `3` | run non-terminal, pending settlement -- safe to re-check; the current attempt's outcome (`execution-outcome`) or verdict (`assurance-verdict`) has not been observed or recorded yet. Re-dispatch is the poll: for a self-observing adapter (e.g. `acp`) the re-dispatch pass itself observes and journals the settlement once the provider's turn ends -- no hand-recorded `attempts` entry is needed (issue #210); operator-recorded inputs (scripted outcomes, assurance verdicts) must be recorded first, then re-dispatched |
+| `4` | `dispatch --wait --timeout <T>` only -- `T` seconds elapsed with the pending fingerprint unchanged (`SCN-017`, issue #210); re-invoking (with or without `--wait`) is always safe, the run is exactly as pending as before |
 
 Exit `3`'s semantics -- what "pending" means, why nothing is fabricated for
 a missing settlement, and why re-dispatch is the correct and only resume
@@ -782,7 +860,10 @@ mechanism -- are normatively specified in `docs/scenarios/SCN-007-pending-settle
 (`SCN-007`); do not treat this table as more than a pointer to it. `dispatch`/
 `status` output for a pending run always names which Work is waiting and
 for what, followed by a `next:` block naming the exact runnable next
-command.
+command. Exit `4` and `dispatch --wait`'s semantics -- the pending
+fingerprint, baseline computation, and silence-until-exit behavior -- are
+normatively specified in `docs/scenarios/SCN-017-wait-resting-point.md`
+(`SCN-017`); see "`orc dispatch --wait`" below.
 
 Verified exit codes from this document's own runs (see per-command sections
 above for `0` and `3`):
