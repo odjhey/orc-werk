@@ -369,6 +369,62 @@ vocabulary (git diff fingerprinting, command-assurance invocation) lives in
 the adapters' own mapping docs: `docs/adapters/git/mapping.md`,
 `docs/adapters/command/README.md`.
 
+### Observer hooks (`SCN-018`, issue #193)
+
+An optional top-level `observers` key spawns operator-authored commands as a
+fire-and-forget notification after specific Facts are journaled by the
+current dispatch pass -- never a way to steer the run itself. A captured
+real transcript, an `on_settle` observer that appends the triggering fact's
+JSON to a log file:
+
+```bash
+cat > notify-settle.sh <<'SH'
+#!/bin/sh
+read -r fact
+echo "notified: $fact" >> notifications.log
+SH
+chmod +x notify-settle.sh
+cat > cfg.json <<'EOF'
+{
+  "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "x"},
+                            "assurance": {"verdict": "accepted"}}]},
+  "observers": {"on_settle": {"command": ["./notify-settle.sh"]}}
+}
+EOF
+orc dispatch "observer demo" --config cfg.json --journal ./.orc --run-id demo-observers
+```
+
+```text
+run: demo-observers
+journal: /abs/path/.orc/demo-observers/journal.jsonl
+work work-1: state=ACCEPTED attempts=1 candidate_fingerprint=fp-a6fd5c0647f98d41b530afc5
+assurance recorded: work 'work-1' verdict=accepted extensions=[] (seq 16)
+next:
+  - work(s) accepted: work-1 -- see the full run report: orc report demo-observers
+```
+
+`notify-settle.sh` is spawned and released, never waited on -- its output
+lands a moment later, asynchronously:
+
+```text
+$ cat notifications.log
+notified: {"data":{"execution_id":"exec-8e96c29f5ba50592","outcome":"completed","work_id":"work-1"},"delivery_run_id":"demo-observers","extensions":{},"id":"FACT-EXEC-SETTLED","kind":"fact","schema_version":1,"seq":10}
+```
+
+The triggering fact's exact journal envelope (`kind`/`id`/`data`/`seq`/...)
+arrives as one JSON document on the observer's stdin, then stdin is closed --
+never argv, never an environment variable. `on_settle`/`on_verdict`/
+`on_blocked` fire only for facts newly appended by the pass that just ran --
+an immediate re-dispatch of this same (now-terminal) run fires nothing, and
+neither does any later replay of this history. The observer's own exit
+status, stdout, and stderr are always opaque: they can never change
+dispatch's own exit code or stdout, and a missing/non-executable script is a
+single stderr warning, not a failure. Each observer's `timeout_seconds`
+(default 30) is enforced by a small supervisor process that travels with the
+spawned observer -- dispatch itself never waits for one. Full design and the
+config schema: `docs/playbooks/cli-usage.md`'s "Observer hooks" section,
+`orc config-schema`, and `orc_werk.cli.observers`' module docstring.
+
 ### Bare `orc` run index
 
 ```text

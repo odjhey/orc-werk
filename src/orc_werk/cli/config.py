@@ -181,6 +181,68 @@ full design):
   to stderr and returns the SAME exit code the run would have had without
   a mirror configured at all (mirror failures MUST NEVER break the
   delivery loop, per the task card).
+
+## Observer hooks (optional, `SCN-018`, issue #193)
+
+The optional top-level `observers` key declares config-driven, fire-and-
+forget commands the CLI spawns after specific canonical Facts are journaled
+by the current dispatch pass -- the notification half of issue #193 (the
+behavior-modification half is an explicitly separate, unfiled card).
+`orc_werk.cli.observers` is the firing implementation and the fuller design
+note; this is the config schema `orc config-schema` prints:
+
+```json
+{
+  "observers": {
+    "on_settle": {"command": ["./scripts/notify-settle.sh"]},
+    "on_verdict": {"command": ["./scripts/notify-verdict.sh"], "timeout_seconds": 10},
+    "on_blocked": {"command": ["./scripts/notify-blocked.sh"]}
+  }
+}
+```
+
+- `observers` is entirely optional; ABSENT means zero behavior change for
+  every existing config (`orc_werk.cli.observers.fire_observers` is a no-op
+  for a `None`/empty mapping). Its only allowed keys are `on_settle`,
+  `on_verdict`, `on_blocked`, each independently optional -- an operator
+  configures any subset. `on_settle` fires once per dispatch pass for each
+  `FACT-EXEC-SETTLED` newly appended that pass; `on_verdict` the same for
+  `FACT-ASSURE-SETTLED` (a verdict INHERITED via `STATE-DELIVERY` item 8
+  journals no new such Fact, so it is never a trigger); `on_blocked` the
+  same for `FACT-WORK-BLOCKED`.
+- Each trigger's object accepts exactly two keys: `command` (REQUIRED) --
+  a non-empty argv-array of strings, never a shell string, matching command
+  assurance's `script`-only shape (`SCN-015`) -- and `timeout_seconds`
+  (optional, a non-negative number, default `30`): the bounded maximum
+  lifetime of that trigger's spawned observer process, enforced by a
+  supervisor that travels with the spawned process group, never by a later
+  dispatch pass (`orc_werk.cli.observers` module docstring).
+- `command[0]` (relative paths resolve against the CLI process's own actual
+  working directory at dispatch invocation time -- see
+  `orc_werk.cli.observers`' "Ambiguity: the dispatch config's cwd" section
+  for why that reading, absent any `cwd` key of its own here) must resolve,
+  by path containment and not textual prefix matching, INSIDE that
+  directory: an escaping `command[0]` is `ERR-VALIDATION` at config-load
+  time, before any journal write -- the identical containment rejection
+  command assurance's own script uses (`SCN-015`). A command whose script
+  is merely missing or non-executable at fire time is NOT a load-time
+  rejection -- it is a single stderr warning per dispatch pass, per
+  triggering fact, and the run is otherwise entirely unaffected (`SCN-018`
+  step 11): observers are a supplementary side channel, never load-bearing
+  for delivery the way a real assurance adapter's script is.
+- The triggering fact's own journal envelope (exactly as journaled: `kind`/
+  `id`/`data`/`seq`/`extensions`/...) is written as one JSON document to the
+  spawned observer's standard input, then standard input is closed -- never
+  argv, never an environment variable. The observer's own exit status,
+  stdout, and stderr are always opaque: never journaled, never inspected,
+  and never able to change dispatch's own exit code or stdout (the same
+  write-only posture `INV-014` already establishes for the Beads mirror).
+- Delivery is explicitly **at-most-once**, CLI-local, and unjournaled: a
+  hook fires only for facts newly appended by the CURRENT dispatch pass,
+  never for replayed history and never again on any later pass or
+  reconstruction of the same journal (`SCN-018` steps 13-15). No kernel
+  semantics exist for this at all -- `src/orc_werk/core` never knows
+  observers exist.
 """
 
 from __future__ import annotations
@@ -195,6 +257,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 from orc_werk.adapters.beads.mirror import BeadsMirror
 from orc_werk.adapters.command.assurance import CommandAssurance
 from orc_werk.adapters.git.candidate import GitDiffCandidate
+from orc_werk.cli.observers import DEFAULT_TIMEOUT_SECONDS, OBSERVER_TRIGGERS, resolve_command_path
 from orc_werk.adapters.scripted.assurance import ScriptedAssurance
 from orc_werk.adapters.scripted.candidate import ScriptedCandidate, fingerprint_of
 from orc_werk.adapters.scripted.execution import ScriptedExecution
@@ -231,10 +294,17 @@ _TOP_LEVEL_KEYS = frozenset(
         "assurance",
         "mirror",
         "briefs",
+        "observers",
     }
 )
 _ATTEMPT_ENTRY_KEYS = frozenset({"outcome", "candidate", "assurance", "states", "artifact_refs", "extensions"})
 _ASSURANCE_ENTRY_KEYS = frozenset({"verdict", "states", "evidence_refs", "extensions", "derived_identity"})
+# `observers` (`SCN-018`, issue #193): each trigger entry accepts EXACTLY
+# `command`/`timeout_seconds` -- no `args`-appended-to-command, no inline
+# script text, no environment key, matching command assurance's
+# `script`/`cwd`-only shape's own restraint (module docstring, "Observer
+# hooks" section).
+_OBSERVER_ENTRY_KEYS = frozenset({"command", "timeout_seconds"})
 
 # `execution`/`candidate`/`assurance` real-port selection (module
 # docstring, "Real-port selection" section). `execution` has no adapter
@@ -681,6 +751,81 @@ def _validate_briefs(value: Any) -> None:
             )
 
 
+def _validate_observer_entry(entry: Any, *, path: str, cwd: Path) -> None:
+    if not isinstance(entry, Mapping):
+        raise validation_error(
+            f"config value at {path} must be a JSON object, got {type(entry).__name__}", path=path
+        )
+    unknown = sorted(set(entry) - _OBSERVER_ENTRY_KEYS)
+    if unknown:
+        raise validation_error(
+            f"config value at {path} has unknown key(s): {', '.join(unknown)}",
+            path=path,
+            unknown_keys=unknown,
+            known_keys=sorted(_OBSERVER_ENTRY_KEYS),
+        )
+    command = entry.get("command")
+    if (
+        not isinstance(command, list)
+        or not command
+        or not all(isinstance(item, str) for item in command)
+        or not command[0]
+    ):
+        raise validation_error(
+            f"config value at {path}.command must be a non-empty array of strings with a "
+            "non-empty first element (never a bare shell string)",
+            path=f"{path}.command",
+        )
+    if "timeout_seconds" in entry:
+        timeout = entry["timeout_seconds"]
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout < 0:
+            raise validation_error(
+                f"config value at {path}.timeout_seconds must be a non-negative number, got {timeout!r} "
+                f"(default {DEFAULT_TIMEOUT_SECONDS})",
+                path=f"{path}.timeout_seconds",
+                timeout_seconds=timeout,
+            )
+    # SCN-018 "Containment and seat checks": rejected before spawn, at
+    # config-load time, before any journal write -- the identical
+    # containment rule command assurance uses for its own script
+    # (`_validate_assurance_config` above); a MISSING/non-executable script
+    # is deliberately NOT checked here (module docstring, "Observer hooks"
+    # section) -- that is a fire-time-only stderr warning
+    # (`orc_werk.cli.observers._spawn_one`), never a load-time rejection.
+    try:
+        resolve_command_path(command, cwd=cwd)
+    except ValueError as exc:
+        raise validation_error(
+            f"config observer command at {path}.command must resolve inside cwd",
+            path=f"{path}.command",
+            cwd=str(cwd),
+        ) from exc
+
+
+def _validate_observers_config(value: Any) -> None:
+    """`observers` (`SCN-018`, issue #193): entirely optional, no built-in
+    default -- ABSENT means no observer configured at all, zero behavior
+    change (module docstring, "Observer hooks" section)."""
+    if value is None:
+        return
+    if not isinstance(value, Mapping):
+        raise validation_error(
+            f"config value at <config>.observers must be a JSON object, got {type(value).__name__}",
+            path="<config>.observers",
+        )
+    unknown = sorted(set(value) - OBSERVER_TRIGGERS)
+    if unknown:
+        raise validation_error(
+            f"config value at <config>.observers has unknown key(s): {', '.join(unknown)}",
+            path="<config>.observers",
+            unknown_keys=unknown,
+            known_keys=sorted(OBSERVER_TRIGGERS),
+        )
+    cwd = Path.cwd().resolve()
+    for trigger, entry in value.items():
+        _validate_observer_entry(entry, path=f"<config>.observers.{trigger}", cwd=cwd)
+
+
 def _validate_assurance_candidate_combo(assurance_cfg: Any, candidate_cfg: Any) -> None:
     """The one real assurance adapter (`command`) REQUIRES
     `candidate.adapter == 'git'`.
@@ -723,6 +868,7 @@ def validate_config(data: Mapping[str, Any]) -> Mapping[str, Any]:
     _validate_assurance_config(data.get("assurance"))
     _validate_mirror_config(data.get("mirror"))
     _validate_briefs(data.get("briefs"))
+    _validate_observers_config(data.get("observers"))
     _validate_assurance_candidate_combo(data.get("assurance"), data.get("candidate"))
     execution_adapter = (data.get("execution") or {}).get("adapter", "scripted")
     candidate_adapter = (data.get("candidate") or {}).get("adapter", "scripted")
