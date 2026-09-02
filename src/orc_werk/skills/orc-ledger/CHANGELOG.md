@@ -1,5 +1,12 @@
 # orc-ledger skill changelog
 
+## v4 -- 2026-09-02
+
+- Teach `orc record --outcome completed|failed` (#223) as the ship-seat recording sugar, parallel to the existing `--verdict` verify-seat sentence: validates, appends the attempt entry atomically (merge-only), auto-emits `executor-identity/v1` with the seat's role, prints the resume command without running it.
+- Demote hand-editing to the explicit fallback for when no verb fits; the manual executor-identity payload is now framed as the no-verb fallback, since the record verbs emit it automatically.
+
+content-sha256: 58e3c509883be7822e0f2ace37f09c507ae8a2276fdeed0b1836ef215a77047d
+
 ## v3 -- 2026-08-31
 
 - Prefer `orc record` for validated assurance-verdict recording while retaining hand-editing as legal merge-only config recording.

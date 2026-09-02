@@ -1,6 +1,6 @@
 ---
 name: orc-ledger
-version: 3
+version: 4
 description: Onboard to and operate within a repository whose delivery is tracked by an orc ledger (an .orc/ directory of run journals). Use when a session starts work in such a repo, when the user mentions orc runs, the ledger, dispatch, pending runs, settlements, or verdicts, or before recording anything into a run.
 ---
 
@@ -54,23 +54,30 @@ here so a fresh session needs no other file:
 
 ## 4. Recording mechanics
 
-Prefer `orc record <run-id> --work <work-id> --verdict <accepted|rejected>`
-for assurance verdicts: it validates and atomically performs the same
-merge-only backing-config update, then prints the resume command without
-running it. Hand-editing remains legal; this verb is recording sugar, not a
-new journal semantic.
+`orc record <run-id> --work <work-id> --verdict <accepted|rejected> ...`
+(verify seat) and its ship-seat sibling `orc record <run-id> --work
+<work-id> --outcome <completed|failed> [--evidence-ref ...] [--model M
+--session-ref S --seat-ref S]` are the two recording verbs — exactly one
+per invocation, never both for the same candidate. Each validates the
+current requested attempt, appends the attempt entry atomically via the
+same merge-only backing-config update, auto-emits `executor-identity/v1`
+carrying the seat's own role, and prints the resume command without
+running it.
 
-Outcomes are recorded into the run's backing config (the JSON file named in
-the run's `next:` affordance), then advanced by re-running the same dispatch
-command. Merge-only edits: append your own work's attempt entries; never
-touch sibling works' entries or the `plan` key. Concurrent dispatch of the
-same run is forbidden — one party re-dispatches at a time. If no adapter
-journals your seat, identify your model/tool, session reference, and role in
-a small payload under your execution attempt entry's `extensions` key — it
-transports losslessly into the settled fact and is visible via `orc
-history`/`orc refs` (the external `PLAYBOOK-AGENT-CLI`, canonical in the
-orc-werk repository/package, §2, "Executor identity when no adapter records
-the seat").
+Hand-editing the backing config (the JSON file named in the run's `next:`
+affordance) remains legal — the fallback for when no verb fits (e.g.
+hand-authoring a scripted-candidate run's `candidate` payload, which
+`--outcome` merges into rather than sets). Merge-only edits: append your own
+work's attempt entries; never touch sibling works' entries or the `plan`
+key. Concurrent dispatch of the same run is forbidden — one party
+re-dispatches at a time. When no record verb applies and no adapter
+journals your seat, identify your model/tool, session reference, and role
+by hand in a small payload under your execution attempt entry's
+`extensions` key — the record verbs emit this automatically, so this manual
+payload is the no-verb fallback. It transports losslessly into the settled
+fact and is visible via `orc history`/`orc refs` (the external
+`PLAYBOOK-AGENT-CLI`, canonical in the orc-werk repository/package, §2,
+"Executor identity when no adapter records the seat").
 
 ## 5. New work
 
