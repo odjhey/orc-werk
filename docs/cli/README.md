@@ -300,6 +300,21 @@ semantic). Killing the waiting process (`SIGINT` or otherwise) loses
 nothing -- every journaled fact was journaled by a completed ordinary pass
 (`SCN-017` step 10).
 
+**Transient config races during a wait (`SCN-017` amendment, issue #216)**:
+because each internal pass re-reads the backing config, a concurrent
+recorder (`orc record`, or a merge-only hand edit) is the expected wake
+mechanism, not a conflict -- recorders should write atomically
+(write-temp-then-`os.replace`, the same pattern `orc record`'s own writer
+already uses) so a `--wait` pass never observes a torn write. As a safety
+net beyond that, `--wait` tolerates up to 3 consecutive internal passes
+whose config load/validate fails with unparseable JSON or `ERR-VALIDATION`:
+each is skipped silently and retried at the next poll interval. A 4th
+consecutive failure fails the wait with the ordinary canonical error, exit
+`2` -- identical to what a non-`--wait` dispatch of the same bad config
+would report. A failure on the wait's very first internal pass is never
+tolerated and fails fast immediately, since a bad config at the moment
+`--wait` is invoked is a real config error, not a race.
+
 **Repo profile and precedence (`TASK-M4A-001`)**: the CLI discovers a profile only at `<resolved-journal-dir>/profile.json`--normally `<repo>/.orc/profile.json`. It first resolves the journal directory using `--journal` > `ORC_JOURNAL_DIR` > `./.orc`, then appends `profile.json`; it never searches cwd or ancestors. The profile is a plain JSON object with the same schema as `--config`. Effective precedence is `--config` (deep-merged) > per-run persisted `config.json` > profile > `{}`. Nested objects compose; non-object values replace. At every layer boundary, when a higher layer explicitly selects a different `execution.adapter`, `candidate.adapter`, `assurance.adapter`, or `mirror.adapter` than the composed lower layers, lower-layer keys in that section that are exclusive to the previously selected adapter are dropped (#174). Keys explicitly supplied by the higher layer remain and are validated against the new adapter, while inherited adapter-agnostic keys that are legal for the new adapter continue to compose. The adapter-conditional validator's exclusivity definitions are the single source of truth for which inherited keys are dropped. Selecting the same adapter does not drop any keys. The `--max-attempts` flag retains its existing precedence over the merged config's `max_attempts`.
 
 **Config persistence and run-id-only resume**: on a run's first `dispatch`,
