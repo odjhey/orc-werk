@@ -101,6 +101,8 @@ the checker runs the union.
 | `cli-output` | Legibility/completeness of `status`/`history` output. |
 | `adversarial` | Hostile or degenerate payloads (NaN, huge/unicode input, deep nesting). |
 | `real-work` | A realistic end-to-end task, not a synthetic minimal example. |
+| `wait` | `dispatch --wait`'s blocking-poll internalization: movement wake, timeout wake, and `--timeout`-without-`--wait` rejection. |
+| `observers` | Config-declared observer hooks: fire-once-per-trigger delivery, idempotent silence on replay, bounded hung-observer lifetime, and load-time containment of an escaping command path. |
 
 ## Process
 
@@ -154,6 +156,8 @@ for a filed reason (#16-18), the scenario says so explicitly.
 | [`DFS-011`](scenarios/DFS-011-adversarial-payloads/scenario.md) | Adversarial payloads: NaN, unicode/emoji + 100k intent, deep nesting | `adversarial` |
 | [`DFS-012`](scenarios/DFS-012-real-work-docs-page/scenario.md) | Real-work simulation: "write docs page" with structured candidate + assurance findings | `real-work`, `cli-output` |
 | [`DFS-013`](scenarios/DFS-013-journal-layout-cli-surface/scenario.md) | Issue-#55 journal layout, precedence, durable resume, and pipe-safe output | `journal-layout`, `cli-output`, `idempotency` |
+| [`DFS-014`](scenarios/DFS-014-wait-blocking-poll/scenario.md) | `dispatch --wait`: movement wake, timeout wake, `--timeout`-without-`--wait` rejected | `wait` |
+| [`DFS-015`](scenarios/DFS-015-observer-hooks/scenario.md) | Observer hooks: fire-once, idempotent silence on replay, bounded hung-observer lifetime, escaping-command rejection | `observers` |
 
 #16, #17, #18 (and #23) — the round-1 issues referenced by DFS-006/007/009/010
 above — are now `CLOSED`, resolved by PR #32 (`TASK-M1-003`); see each

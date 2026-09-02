@@ -321,7 +321,10 @@ tolerated and fails fast immediately, since a bad config at the moment
 the effective config is durably copied into that run's own directory,
 `<journal-dir>/<run_id>/config.json`. The blessed resume form omits both the
 redundant positional intent and `--config`; the journal supplies the durable
-intent and the run directory supplies the config:
+intent and the run directory supplies the config (resuming from a different
+directory than the original dispatch also changes any configured observer's
+`command[0]` resolution -- see the Observer hooks cwd footgun callout
+below):
 
 ```bash
 orc dispatch --run-id demo-pending --journal ./.orc
@@ -425,6 +428,20 @@ spawned observer -- dispatch itself never waits for one. Full design and the
 config schema: `docs/playbooks/cli-usage.md`'s "Observer hooks" section,
 `orc config-schema`, and `orc_werk.cli.observers`' module docstring.
 
+> **Footgun: relative `command[0]` resolves against the dispatching
+> process's cwd, not the repo root or the config file's location**
+> (`orc_werk.cli.observers`'s "Ambiguity: the dispatch config's cwd"
+> ruling). A relative path like `./notify-settle.sh`, authored and working
+> while you dispatched from the repo root, silently degrades to the
+> one-line missing-script stderr warning above -- never a hard failure, so
+> it is easy to miss -- once the *same run* is resumed from a different
+> directory via the blessed `--run-id`-only form (see "Config persistence
+> and run-id-only resume" below) or via `--wait` invoked elsewhere. Safe
+> patterns: always dispatch (including every resume) from one consistent
+> directory, conventionally the repo root; or give `command[0]` a path that
+> resolves correctly from wherever you actually invoke `orc dispatch`
+> (an absolute path, or one relative to that invocation site).
+
 ### Bare `orc` run index
 
 ```text
@@ -469,7 +486,12 @@ Exactly one of `--verdict`/`--outcome` is required per invocation
   become `evidence_refs` and `review-findings/v1`; model/session/seat flags
   become an `executor-identity/v1` payload with `role: verify`;
   `--derived-identity` must parse as a JSON object and is checked by the
-  existing config/binding validation.
+  existing config/binding validation -- that check is shape-only (valid JSON
+  object) at `orc record` time; the actual comparison against the bound
+  candidate's identity, and any `ERR-CONFLICT` mismatch (quoting both the
+  asserted and bound identities with recovery guidance), only happens at the
+  *next* `orc dispatch` (`docs/playbooks/cli-usage.md`'s "Scripted assurance
+  entry" section).
 - **`--outcome completed|failed`** (its ship-seat sibling) records the current
   requested execution outcome — the push-mode replacement for hand-editing
   the attempts JSON. Repeated `--evidence-ref` values ride the attempt

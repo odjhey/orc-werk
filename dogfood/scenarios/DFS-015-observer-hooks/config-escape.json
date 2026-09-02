@@ -1,0 +1,9 @@
+{
+  "attempts": {
+    "work-1": [
+      {"outcome": "completed", "candidate": {"label": "x"},
+       "assurance": {"verdict": "accepted"}}
+    ]
+  },
+  "observers": {"on_settle": {"command": ["../outside-escape.sh"]}}
+}

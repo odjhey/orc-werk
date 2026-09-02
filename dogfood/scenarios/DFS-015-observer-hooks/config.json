@@ -1,0 +1,9 @@
+{
+  "attempts": {
+    "work-1": [
+      {"outcome": "completed", "candidate": {"label": "x"},
+       "assurance": {"verdict": "accepted"}}
+    ]
+  },
+  "observers": {"on_settle": {"command": ["./dogfood/scenarios/DFS-015-observer-hooks/notify-settle.sh"]}}
+}
