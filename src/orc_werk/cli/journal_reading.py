@@ -42,6 +42,53 @@ DEFAULT_JOURNAL_DIR = ".orc"
 ORC_JOURNAL_DIR_ENV = "ORC_JOURNAL_DIR"
 
 
+def _run_directory_markers(directory: Path) -> list[str]:
+    """New-layout per-run marker filenames (`layout.JOURNAL_FILENAME`/
+    `layout.CONFIG_FILENAME`) present directly at `directory`'s own root.
+    This is the structural test issue #220 asks for: "IS `directory` itself
+    one run's own directory" (i.e. `<journal_root>/<run_id>/`), as opposed
+    to a journal root that merely CONTAINS run subdirectories one level
+    down. Deliberately narrow -- an unrelated `profile.json` (a legal
+    operator-authored config-overlay file that lives at a journal root,
+    issue #220's "stray config.json" edge case) or any other file at root
+    never matches; only these two reserved new-layout filenames do, and
+    only at root (a marker one level down, inside an actual run
+    subdirectory, is exactly what a real journal root looks like and must
+    not trip this)."""
+    return sorted(
+        name
+        for name in (layout.JOURNAL_FILENAME, layout.CONFIG_FILENAME)
+        if (directory / name).is_file()
+    )
+
+
+def _reject_journal_dir_if_run_directory(directory: Path) -> None:
+    """Issue #220: refuse a resolved journal dir that is itself a run
+    directory instead of silently nesting a duplicate run under it (the
+    reported footgun -- `--journal .orc/<run-id>/` made `dispatch` create
+    `.orc/<run-id>/<run-id>/`, forking that run's history) or, for read
+    verbs routed through the same resolution, misreading the run's own
+    sidecar files as phantom run ids (`journal`/`times` from
+    `journal.jsonl`/`times.jsonl`) and in some cases crashing outright.
+    Canonical `ERR-VALIDATION`, `next` pointing at the parent directory --
+    the likely intended journal root -- and `orc (bare)` for orientation."""
+    markers = _run_directory_markers(directory)
+    if not markers:
+        return
+    abs_directory = directory.resolve()
+    raise validation_error(
+        f"journal dir {str(directory)!r} is itself a run directory (it contains "
+        f"{' and '.join(markers)} at its root), not a journal root",
+        path=str(directory),
+        markers=markers,
+        next_steps=[
+            f"orc --journal {abs_directory.parent} ... -- the parent directory is the likely "
+            "intended journal root",
+            "orc (bare) to orient: lists every run id under whichever journal dir is resolved",
+        ],
+    )
+
+
 def resolve_journal_dir(explicit: Optional[str] = None) -> Path:
     """The one place journal-dir precedence (issue #55 H2) is decided:
     `explicit` (a command's own `--journal` flag value, when it has one and
@@ -49,13 +96,20 @@ def resolve_journal_dir(explicit: Optional[str] = None) -> Path:
     otherwise the existing `./.orc` default. Every CLI entry point that
     previously wrote `Path(args.journal) if args.journal else
     Path(DEFAULT_JOURNAL_DIR)` inline now calls this instead, so the
-    precedence order can never drift between commands."""
+    precedence order can never drift between commands.
+
+    Also the one place issue #220's guard is decided: the resolved
+    directory is refused (`_reject_journal_dir_if_run_directory` above)
+    when it is itself a run directory, regardless of which of the three
+    precedence sources produced it -- every caller of this function, write
+    or read, benefits identically rather than re-deriving the check."""
     if explicit:
-        return Path(explicit)
-    env_value = os.environ.get(ORC_JOURNAL_DIR_ENV)
-    if env_value:
-        return Path(env_value)
-    return Path(DEFAULT_JOURNAL_DIR)
+        candidate = Path(explicit)
+    else:
+        env_value = os.environ.get(ORC_JOURNAL_DIR_ENV)
+        candidate = Path(env_value) if env_value else Path(DEFAULT_JOURNAL_DIR)
+    _reject_journal_dir_if_run_directory(candidate)
+    return candidate
 
 
 def _awaiting_label(wp: WorkProjection) -> str:
