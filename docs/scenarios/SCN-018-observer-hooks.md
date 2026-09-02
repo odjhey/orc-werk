@@ -40,6 +40,14 @@ section) and the command assurance script (`SCN-015`). The config schema
 and the firing mechanism are CLI-owned, not core (`CLAUDE.md` rule 8): the
 canonical `journal`/`fold` path is unaware observers exist.
 
+**Naming ruling.** Issue #193's working title "observer hooks" maps to the
+`observers` config key: `observers` is the ruled name, chosen for its
+observer-pattern lineage (a pure, write-only observer of transitions,
+`INV-014`) and to avoid collision with generic "hook" terminology in
+adopter tooling. Nothing shipped under the old name, so there is no
+compatibility surface — this is a pre-implementation naming decision,
+recorded here.
+
 ## Given
 
 - A CLI dispatch config carries a top-level `observers` key alongside the
@@ -49,7 +57,7 @@ canonical `journal`/`fold` path is unaware observers exist.
   {
     "observers": {
       "on_settle": {"command": ["./scripts/notify-settle.sh"]},
-      "on_verdict": {"command": ["./scripts/notify-verdict.sh"]},
+      "on_verdict": {"command": ["./scripts/notify-verdict.sh"], "timeout_seconds": 10},
       "on_blocked": {"command": ["./scripts/notify-blocked.sh"]}
     }
   }
@@ -57,6 +65,11 @@ canonical `journal`/`fold` path is unaware observers exist.
 
   Each of `on_settle`, `on_verdict`, `on_blocked` is optional and
   independent; an operator may configure any subset.
+- Each `observers.<trigger>` object accepts an optional `timeout_seconds`
+  key: a non-negative number, in seconds, defaulting to `30` — the bounded
+  maximum lifetime of each observer process spawned for that trigger
+  (enforced per the fire-and-forget section below). `command` and
+  `timeout_seconds` are the only keys of an observer entry.
 - `command` is a non-empty argv-array of strings, never a shell string.
   There is no inline-script-text, `args`-appended-to-command, or
   environment key — matching command assurance's `script`/`cwd`-only
@@ -103,10 +116,17 @@ canonical `journal`/`fold` path is unaware observers exist.
    journals no new `FACT-ASSURE-SETTLED` for a re-observed candidate — so
    an inherited verdict does not re-fire `on_verdict`. Only a fresh
    settlement Fact, actually appended this pass, is a trigger.
+6. **Firing lifecycle.** Observers for a pass's newly-appended facts are
+   spawned after the pass completes its journal appends and before
+   dispatch exits: one invocation per triggering fact, spawned in the
+   triggering facts' `seq` order. There is no ordering guarantee across
+   triggers beyond that `seq` order, and no guarantee about the relative
+   completion order of the spawned processes themselves (they are not
+   waited on, step 9).
 
 ### Fact delivery: JSON on stdin, never argv or environment
 
-6. The triggering fact — the journaled fact envelope exactly as it now
+7. The triggering fact — the journaled fact envelope exactly as it now
    exists in the journal (kind, data, attribution, `seq`, and any other
    envelope fields the journal adapter carries) — is serialized as one
    portable JSON document and written to the spawned process's standard
@@ -115,43 +135,49 @@ canonical `journal`/`fold` path is unaware observers exist.
    discipline command assurance's "Trust boundary and invocation" section
    states for candidate data, and `orc refs --resolve`'s hostile-input
    posture for journal-derived content in general.
-7. The command runs as the configured argv list with `shell=False`; no
+8. The command runs as the configured argv list with `shell=False`; no
    shell interpolation of any fact field is possible because no fact field
    ever reaches a shell.
 
 ### Fire-and-forget: non-blocking, pure egress
 
-8. Dispatch spawns the observer process and does not wait on it beyond
+9. Dispatch spawns the observer process and does not wait on it beyond
    confirming the spawn itself succeeded — a short, bounded step, not a
    wait for the observer's own exit. The dispatch pass's remaining work
    (further passes, output, exit code) proceeds without depending on
    whether or when the observer process exits.
-9. The observer's exit status, stdout, and stderr are never inspected for
-   effect on the run: they cannot set state, cannot be journaled as a
-   fact, cannot influence a Decision, and cannot change dispatch's own
-   exit code or stdout — pure egress, the same write-only posture the
-   Beads mirror already establishes for its own effect on the kernel
-   (`INV-014`, `docs/adapters/beads/mapping.md`'s "Degraded mirror"
-   section: a mirror failure is stderr-only and never alters dispatch's
-   exit code or stdout; observer hooks make the identical promise).
-10. A hook whose command spawn itself fails (missing or non-executable
+10. The observer's exit status, stdout, and stderr are never inspected for
+    effect on the run: they cannot set state, cannot be journaled as a
+    fact, cannot influence a Decision, and cannot change dispatch's own
+    exit code or stdout — pure egress, the same write-only posture the
+    Beads mirror already establishes for its own effect on the kernel
+    (`INV-014`, `docs/adapters/beads/mapping.md`'s "Degraded mirror"
+    section: a mirror failure is stderr-only and never alters dispatch's
+    exit code or stdout; observer hooks make the identical promise).
+11. A hook whose command spawn itself fails (missing or non-executable
     script, resolution outside `cwd`) is a one-line stderr warning per
     dispatch pass, per triggering fact — never a raised error, never a
     changed exit code. The run is unaffected; dispatch proceeds exactly as
     if the observer had not been configured.
-11. A spawned observer process that never exits is bounded by an
-    implementation-chosen maximum process lifetime (analogous to command
-    assurance's `timeout_s`, `SCN-015`), after which its process group is
-    killed (mirroring command assurance's own process-group discipline,
-    `docs/adapters/command/mapping.md`'s "Exit-status mapping" timeout
-    row: a new session/process group at spawn so the whole group can be
-    reaped). Enforcing that bound is itself non-blocking with respect to
-    the dispatch pass (step 8) — it never turns a hook into something the
-    pass waits on.
+12. **Bounded lifetime by delegated supervision** (semantics, not
+    implementation). Each observer runs in its own session/process group,
+    and its bounded lifetime — the entry's `timeout_seconds`, default 30 —
+    is enforced without dispatch waiting: dispatch blocks only for the
+    spawn (step 9) and delegates timeout enforcement to the spawned
+    supervision itself, which travels with the observer's process group.
+    Dispatch exiting does not orphan the enforcement; an observer that
+    outlives its bound is killed — the whole process group — by that
+    supervision, never by a later dispatch pass. The kill semantics
+    (new session/process group at spawn so the whole group can be reaped)
+    mirror command assurance's process-group discipline
+    (`docs/adapters/command/mapping.md`'s "Exit-status mapping" timeout
+    row, `SCN-015`); the non-waiting delegation is the clause that is new
+    here — command assurance waits for its verdict, an observer is never
+    waited on.
 
 ### Replay safety and the at-most-once contract
 
-12. Hooks fire only for facts **newly appended by the current process's
+13. Hooks fire only for facts **newly appended by the current process's
     fold/append step this pass** — never for facts already present in the
     journal before this pass began, and never again on any later replay
     or reconstruction of the same history. A dispatch pass that replays
@@ -159,13 +185,13 @@ canonical `journal`/`fold` path is unaware observers exist.
     this, `INV-020`) does not re-fire observers for history it is merely
     reconstructing; only the genuinely new tail this pass itself appends
     is eligible.
-13. Consequence, stated honestly as the v1 contract: delivery is
+14. Consequence, stated honestly as the v1 contract: delivery is
     **at-most-once**. A crash between a fact's append and the
     corresponding observer's spawn loses that notification permanently —
     the fact is durably journaled (it happened), but nothing re-fires the
     hook for it on any later pass, because a later pass's replay of that
-    same fact is exactly the history-reconstruction case step 12 excludes.
-14. **At-least-once (journaled hook effects, retried until confirmed
+    same fact is exactly the history-reconstruction case step 13 excludes.
+15. **At-least-once (journaled hook effects, retried until confirmed
     delivery) is explicitly rejected for v1.** Making hook delivery durable
     would require either journaling a hook-dispatch Effect (a provider-
     vocabulary leak into the canonical journal that `INV-014` exists to
@@ -184,14 +210,16 @@ canonical `journal`/`fold` path is unaware observers exist.
 ## Must not be confused with a plugin system or a supervisor
 
 Nothing here makes orc a scheduler, event bus, or plugin host. An observer
-cannot steer a run (no kernel semantics, step-Purpose), cannot be composed
+cannot steer a run (no kernel semantics, per Purpose), cannot be composed
 into chains or pipelines by orc itself, and its presence or absence never
 changes what the journal contains. `SCN-017`'s "must not be confused with
-a supervisor" caveat applies identically: an observer hook holds no state
-outside the spawning dispatch pass, owns no lifecycle beyond the bounded
-spawn step, and a hook that never runs (because the process crashed first,
-step 13) is indistinguishable from a hook that was never configured — the
-run's own correctness never depends on which occurred.
+a supervisor" caveat applies identically: dispatch holds no observer state
+beyond the spawning pass and owns no observer lifecycle beyond the spawn
+step itself (the bounded-lifetime enforcement travels with the spawned
+process group, step 12 — it is never a later dispatch pass's job), and a
+hook that never runs (because the process crashed first, step 14) is
+indistinguishable from a hook that was never configured — the run's own
+correctness never depends on which occurred.
 
 ## Containment and seat checks
 
@@ -201,6 +229,8 @@ run's own correctness never depends on which occurred.
 - `command` must be a non-empty list of strings; a bare string (implying
   shell interpretation) is rejected — argv-array form only, never
   shell-interpolated, ever.
+- `timeout_seconds`, when present, must be a non-negative number; anything
+  else (negative, non-numeric) is rejected. Absent, it is 30.
 - No observer configuration can cause a fact to be journaled, a state to
   change, or dispatch's exit code/stdout to differ from the identical
   dispatch with no `observers` key configured at all.
@@ -212,7 +242,9 @@ Treating observer exit status/stdout/stderr as anything other than opaque
 code/stdout), placing fact data in argv or environment instead of stdin,
 accepting a bare shell string for `command`, allowing a `command` path to
 escape `cwd`, blocking a dispatch pass on an observer's actual completion,
-re-firing an observer for a replayed (not newly appended) fact, or
+enforcing an observer's `timeout_seconds` from a later dispatch pass
+instead of the spawned supervision, re-firing an observer for a replayed
+(not newly appended) fact, or
 journaling anything about a hook's dispatch or outcome makes this scenario
 fail.
 
@@ -228,8 +260,10 @@ fail.
 - `CONTRACT-EXTENSIONS` — observer configuration and firing stay CLI-owned
   composition, never a core/canonical schema; nothing here is a registered
   extension because nothing here touches the journal.
-- `SCN-015` — the containment, argv-list/no-shell, and process-group
-  timeout discipline observer hooks reuse verbatim from command assurance.
+- `SCN-015` — the containment, argv-list/no-shell, and process-group kill
+  semantics observer hooks reuse from command assurance; the non-waiting
+  delegation of that enforcement to the spawned group (step 12) is this
+  scenario's own new clause.
 - `SCN-017` — the complementary push/pull halves of the same "tell the
   caller the resting point moved" story; observer hooks add no kernel
   semantics, exactly as `SCN-017`'s wait mode adds none.
