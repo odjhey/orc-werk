@@ -130,14 +130,14 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
             starts = [r for r in history if r["kind"] == "effect" and r["id"] == "FX-START-EXECUTION"]
             self.assertEqual(len(starts), 1)
 
-    def test_abandon_briefed_acp_run_does_not_construct_provider_ports(self) -> None:
+    def test_abandon_real_candidate_run_does_not_construct_provider_ports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             config_path = tmp_dir / "cfg.json"
             config_path.write_text(
                 json.dumps(
                     {
-                        "run_id": "abandon-acp",
+                        "run_id": "abandon-git",
                         "max_attempts": 2,
                         "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "A"}}]},
                     }
@@ -149,20 +149,24 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
             config_path.write_text(
                 json.dumps(
                     {
-                        "execution": {"adapter": "acp", "cwd": str(tmp_dir)},
                         "candidate": {"adapter": "git", "repo_path": str(tmp_dir)},
-                        "briefs": {"work-1": "provider-only brief"},
                         "attempts": {"work-1": []},
                     }
                 ),
                 encoding="utf-8",
             )
 
+            # --abandon-work always takes the scripted-ports fast path
+            # (main.py) regardless of the config's adapter selection, so
+            # this never constructs a real GitDiffCandidate against
+            # `tmp_dir` (not an actual git repository) -- the surviving
+            # A5 git-candidate half of the removed acp+git real-port combo
+            # (ADR-0005).
             result = _run_cli(
                 tmp_dir,
                 "dispatch",
                 "--run-id",
-                "abandon-acp",
+                "abandon-git",
                 "--config",
                 str(config_path),
                 "--abandon-work",
@@ -172,8 +176,7 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 3, msg=result.stdout + result.stderr)
-            self.assertNotIn("note: work", result.stderr)
-            history = JSONLJournal(tmp_dir / ".orc").history(delivery_run_id="abandon-acp")
+            history = JSONLJournal(tmp_dir / ".orc").history(delivery_run_id="abandon-git")
             self.assertTrue(any(r["kind"] == "decision" and r["id"] == DEC_ABANDON_ATTEMPT for r in history))
             self.assertTrue(any(r["kind"] == "fact" and r["id"] == FACT_ATTEMPT_ABANDONED for r in history))
 

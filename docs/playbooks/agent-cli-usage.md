@@ -28,7 +28,7 @@ If you are unsure which seat you are in, stop and ask rather than guess — reco
 
 ### Executor identity when no adapter journals the seat
 
-When a seat's execution is not adapter-journaled with `execution-session/v1` provenance — for example, a ship agent working outside the ACP adapter — put an `executor-identity/v1` payload (model/tool, session reference, per-seat reference, role) under the `extensions` key. A ship seat puts it on that Work's execution attempt entry in the dispatch config (`attempts.<work_id>[n].extensions`; `orc config-schema` prints the full, current attempt-entry key set); a verify seat puts the same extension on its assurance entry as described in §4. Config-entry `extensions` transport losslessly into the corresponding settled Fact per `CONF-EXT-003` (issues #105/#106), so the identity payload becomes part of the durable journal and is visible via `orc history`/`orc refs` — read-only, no new recording mechanism. Agents populate the registered `executor-identity/v1` extension according to `EXT-EXECUTOR-IDENTITY-V1` (for example, `"executor-identity/v1": {"model": "...", "session_ref": "...", "seat_ref": "...", "role": "ship"}`). `seat_ref` is an agent- or thread-level identifier — such as a subagent id, spawn reference, or per-seat nonce — that is stable for that seat and distinct between seats. The ship seat's and verify seat's identity payloads for the same candidate must be distinguishable from the journal alone; `session_ref` by itself is insufficient when both seats run as subagent threads of one orchestrating session, as occurred in issue #182. The registered schema defines the payload shape, which is transported unchanged and cannot override canonical core fields (`EXT-003`, `EXT-007`). This gives blind reconstruction the executor identity that an adapter-managed execution would otherwise have journaled — the `crew-report/v1` sidecar this section used to point at is removed (`EXT-CREW-REPORT-V1`, superseded, issue #100 part 2).
+When a seat's execution is not adapter-journaled with `execution-session/v1` provenance — for example, a ship agent working as an external executor that pushes its own observation in (the ordinary case since `ADR-0005`) — put an `executor-identity/v1` payload (model/tool, session reference, per-seat reference, role) under the `extensions` key. A ship seat puts it on that Work's execution attempt entry in the dispatch config (`attempts.<work_id>[n].extensions`; `orc config-schema` prints the full, current attempt-entry key set); a verify seat puts the same extension on its assurance entry as described in §4. Config-entry `extensions` transport losslessly into the corresponding settled Fact per `CONF-EXT-003` (issues #105/#106), so the identity payload becomes part of the durable journal and is visible via `orc history`/`orc refs` — read-only, no new recording mechanism. Agents populate the registered `executor-identity/v1` extension according to `EXT-EXECUTOR-IDENTITY-V1` (for example, `"executor-identity/v1": {"model": "...", "session_ref": "...", "seat_ref": "...", "role": "ship"}`). `seat_ref` is an agent- or thread-level identifier — such as a subagent id, spawn reference, or per-seat nonce — that is stable for that seat and distinct between seats. The ship seat's and verify seat's identity payloads for the same candidate must be distinguishable from the journal alone; `session_ref` by itself is insufficient when both seats run as subagent threads of one orchestrating session, as occurred in issue #182. The registered schema defines the payload shape, which is transported unchanged and cannot override canonical core fields (`EXT-003`, `EXT-007`). This gives blind reconstruction the executor identity that an adapter-managed execution would otherwise have journaled — the `crew-report/v1` sidecar this section used to point at is removed (`EXT-CREW-REPORT-V1`, superseded, issue #100 part 2).
 
 ## 3. Ship-agent protocol
 
@@ -113,9 +113,12 @@ and the ledger journals a durable, resolvable *reference* to it instead of
 a copy. Use the existing reference-carrying surfaces:
 
 - **`execution-session/v1`** (`EXT-EXECUTION-SESSION-V1`), when your
-  provider is adapter-managed (e.g. the ACP adapter) — session/resume/
-  transcript references are already journaled onto `FACT-EXEC-SETTLED`'s
-  `extensions` automatically.
+  provider is adapter-managed — session/resume/transcript references are
+  already journaled onto `FACT-EXEC-SETTLED`'s `extensions` automatically.
+  As of 0.5.0 no shipped `ExecutionPort` adapter does this for a real
+  provider (`ADR-0005` removed the `acp` adapter, the one that did); an
+  external executor instead pushes this same extension shape itself via a
+  config-entry `extensions` payload (next bullet).
 - **`evidence_refs`** on the assurance verdict (`FACT-ASSURE-SETTLED`),
   for a verification agent's audit trail (§4 item 4 above).
 - **A config-entry `extensions` payload** on the execution attempt, for

@@ -37,10 +37,10 @@ description: Flat documentation index.
 - [`review-findings/v1`](extensions/review-findings/README.md)
 - [`execution-session/v1`](extensions/execution-session/README.md)
 - [`assurance-context/v1`](extensions/assurance-context/README.md)
-- [`acp-settlement/v1`](extensions/acp-settlement/README.md)
 - [`git-candidate-identification/v1`](extensions/git-candidate-identification/README.md)
 - [`executor-identity/v1`](extensions/executor-identity/v1/README.md)
 - [`crew-report/v1`](extensions/crew-report/README.md) (superseded — removed, historical reference only)
+- [`acp-settlement/v1`](extensions/acp-settlement/README.md) (superseded — removed, historical reference only, ADR-0005)
 
 ## Verification
 - [Golden scenarios](scenarios/README.md)
@@ -57,9 +57,10 @@ description: Flat documentation index.
 ## Initial adapter slots
 - [Beads](adapters/beads/README.md)
 - [zxro](adapters/zxro/README.md)
-- [ACP/acpx](adapters/acp/README.md)
-- [no-mistakes](adapters/no-mistakes/README.md)
 - [Git candidate](adapters/git/README.md)
+- [Command assurance](adapters/command/README.md)
+- [ACP/acpx](adapters/acp/README.md) (superseded — removed, historical reference only, ADR-0005)
+- [no-mistakes](adapters/no-mistakes/README.md) (superseded — removed, historical reference only, ADR-0005)
 
 ## Decisions
 - [ADR-0001 Pure core](decisions/ADR-0001-pure-core.md)
@@ -100,14 +101,14 @@ description: Flat documentation index.
 - [TASK-M1-002](delivery/task-cards/TASK-M1-002-pending-mode.md)
 - [TASK-M1-003](delivery/task-cards/TASK-M1-003-cli-ux.md)
 - [TASK-M1-004](delivery/task-cards/TASK-M1-004-durability-contract.md)
-- [TASK-M1-005](delivery/task-cards/TASK-M1-005-acp-adapter.md)
+- [TASK-M1-005](delivery/task-cards/TASK-M1-005-acp-adapter.md) (execution half superseded, ADR-0005; git CandidatePort half remains current)
 - [TASK-M1-006](delivery/task-cards/TASK-M1-006-agent-cli-playbook.md)
 - [TASK-M1-007](delivery/task-cards/TASK-M1-007-crew-report-log.md)
 - [TASK-M1-008](delivery/task-cards/TASK-M1-008-run-report-renderer.md)
 
 ## M2 task cards
-- [TASK-M2-001](delivery/task-cards/TASK-M2-001-no-mistakes-assurance.md)
-- [TASK-M2-002](delivery/task-cards/TASK-M2-002-second-agent-provider-swap.md) (deferred out of M2)
+- [TASK-M2-001](delivery/task-cards/TASK-M2-001-no-mistakes-assurance.md) (superseded, ADR-0005)
+- [TASK-M2-002](delivery/task-cards/TASK-M2-002-second-agent-provider-swap.md) (deferred out of M2; now moot/superseded, ADR-0005)
 - [TASK-M2-003](delivery/task-cards/TASK-M2-003-multi-work-real-dags.md)
 - [TASK-M2-004](delivery/task-cards/TASK-M2-004-second-repo-adoption.md)
 - [TASK-M2-005](delivery/task-cards/TASK-M2-005-policy-parameterization.md) (deferred out of M2)
@@ -115,7 +116,7 @@ description: Flat documentation index.
 
 ## M3 task cards
 - [TASK-M3B-001](delivery/task-cards/TASK-M3B-001-verdict-inheritance-abandon.md)
-- [TASK-M3B-002](delivery/task-cards/TASK-M3B-002-nm-inspect-guard.md)
+- [TASK-M3B-002](delivery/task-cards/TASK-M3B-002-nm-inspect-guard.md) (superseded, ADR-0005)
 - [TASK-M3C-001](delivery/task-cards/TASK-M3C-001-orc-show.md)
 - [TASK-M3C-002](delivery/task-cards/TASK-M3C-002-refs-resolve.md)
 - [TASK-M3D-001](delivery/task-cards/TASK-M3D-001-orc-onboard.md)

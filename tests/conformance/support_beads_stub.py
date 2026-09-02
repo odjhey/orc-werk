@@ -4,7 +4,7 @@
 No real `bd`/Dolt dependency: the fake binary is a small self-contained
 Python script (stdlib only) written to a temp directory and passed
 directly as `BeadsMirror(bd_bin=<path>)` -- achieving the same hermetic
-isolation `support_acpx_stub.py` gets from a `PATH`-shadowing fake, without
+isolation a `PATH`-shadowing fake subprocess gets, without
 needing to mutate `PATH` itself (`BeadsMirror._invoke` always spawns
 `[self._bd_bin, ...]`, so an absolute path works identically to a `PATH`
 lookup).

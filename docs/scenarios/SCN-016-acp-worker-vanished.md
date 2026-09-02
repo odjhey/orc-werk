@@ -1,10 +1,12 @@
 ---
 id: SCN-016
 type: scenario
-status: current
+status: superseded
 authority: normative
 description: ACP worker disappearance fails only after prompted current-turn activity corroborates no-session.
 ---
+
+> **Superseded** (operator ruling ADR-0005, issue #214). The `acp` `ExecutionPort` adapter this scenario describes was **removed** in 0.5.0, pre-1.0, no backward compatibility; the last release carrying it is v0.4.1. See `docs/decisions/ADR-0005-push-recording-not-pull-observation.md` (ruling A6); push-shaped pending-settlement semantics now live in `docs/scenarios/SCN-007-pending-settlement.md` and `docs/scenarios/SCN-017-wait-resting-point.md`. Retained as historical reference only.
 
 # SCN-016 — ACP worker vanished mid-turn
 

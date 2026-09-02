@@ -30,8 +30,8 @@ of scope for this adapter.
 
 - `bd version` == `1.2.2` (Homebrew, `/opt/homebrew/bin/bd` at
   implementation time) -- `orc_werk.adapters.beads.mirror.BD_VERSION_PIN`.
-  Informative only, matching the acp/no-mistakes adapters' own version-pin
-  precedent: this adapter shells out to whatever `bd` is actually
+  Informative only, matching the version-pin precedent set by the
+  since-superseded acp/no-mistakes adapters (`ADR-0005`): this adapter shells out to whatever `bd` is actually
   configured (`mirror.bd_bin`, default `"bd"` resolved via `PATH`), never
   version-gates at runtime.
 - `bd` is an adapter-local dependency (`src/orc_werk/core` remains
@@ -43,8 +43,10 @@ of scope for this adapter.
 ### Direct CLI invocations, subprocess-per-operation
 
 `bd --json <verb> -C <workspace> ...`, one process per operation --
-matching the acp/no-mistakes adapters' established subprocess pattern
-(`docs/adapters/acp/mapping.md`). `bd` is the "easy instance" of this
+matching the subprocess-per-operation pattern the since-superseded
+acp/no-mistakes adapters established (`docs/adapters/acp/mapping.md`;
+also `docs/adapters/command/mapping.md`'s single-script-subprocess
+invocation). `bd` is the "easy instance" of this
 pattern (task card): no daemon, no streams, fully synchronous ops. Every
 `BeadsMirror.project_run` call re-syncs full current state (create-or-
 upsert every Work, then re-issue the status/metadata update for every
@@ -181,9 +183,10 @@ updates title/description/labels in place (`updated_at` advances,
 state/already closed. This is what lets `BeadsMirror.project_run` always
 re-sync FULL current state on every call rather than tracking "what did I
 already write" -- the same "always re-derive, never trust in-process
-memory as the correctness path" discipline the acp/no-mistakes adapters
-already establish for their own settled observations, applied here to
-writes instead of reads.
+memory as the correctness path" discipline `docs/adapters/git/mapping.md`'s
+"Idempotency behavior" already establishes for its own reads (`GitDiffCandidate`
+re-reads real git state on every call rather than caching identity), applied
+here to writes instead of reads.
 
 ### Plan-validation pre-flight
 
@@ -350,8 +353,9 @@ touched by a degraded mirror; only stderr gains the note.
 
 `BeadsMirror` is write-only and never raises a canonical `ERR-*` error
 from a `bd`-call failure at all (see "Degraded mirror" above) -- there is
-no canonical error translation table here the way the acp/no-mistakes
-adapters have one, because this adapter has no `PORT-EXECUTION`/
+no canonical error translation table here the way `docs/adapters/git/
+mapping.md`'s "Error translation" or `docs/adapters/command/mapping.md`'s
+"Canonical error translation" have one, because this adapter has no `PORT-EXECUTION`/
 `PORT-ASSURANCE`/`PORT-WORK-GRAPH` conformance obligation whose contract
 requires one. Every `bd`-call failure (non-zero exit, missing binary,
 timeout, bad workspace) is uniformly recorded as `MirrorCallResult(ok=
@@ -377,8 +381,8 @@ See `docs/adapters/beads/capabilities.md`.
 
 - `docs/delivery/task-cards/TASK-M2-006-beads-mirror.md`
 - `docs/adapters/README.md`
-- `docs/adapters/acp/mapping.md`
-- `docs/adapters/no-mistakes/mapping.md`
+- `docs/adapters/git/mapping.md`
+- `docs/adapters/command/mapping.md`
 - `docs/contracts/durability-responsibilities.md`
 - `docs/contracts/invariants.md` (`INV-014`, `INV-015`, `INV-020`)
 - `docs/domain/state-machines/delivery.md`

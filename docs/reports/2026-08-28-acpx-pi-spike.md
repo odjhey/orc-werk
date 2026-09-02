@@ -1,10 +1,12 @@
 ---
 id: REPORT-2026-08-28-ACPX-PI-SPIKE
 type: report
-status: current
+status: archived
 authority: informative
 description: M1b spike report — acpx driving Pi as the PORT-EXECUTION target (crash-mid-turn observability, native agentSessionId presence).
 ---
+
+> **Archived** (operator ruling ADR-0005, issue #214, ruling A4). The `acp` `ExecutionPort` adapter this spike investigated was removed in 0.5.0. Retained as historical/archived context; informative, not normative.
 
 # M1b spike report — `acpx pi` as the `PORT-EXECUTION` target
 

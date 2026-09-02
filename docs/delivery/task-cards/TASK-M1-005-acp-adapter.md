@@ -1,7 +1,7 @@
 ---
 id: TASK-M1-005
 type: task-card
-status: current
+status: superseded
 authority: normative
 description: Implement the acpx (ACP) ExecutionPort adapter driving Pi as the first agent, and a real-artifact CandidatePort, conformance-tested.
 implements:
@@ -16,6 +16,8 @@ verifies:
   - CONF-CAND-002
   - CONF-CAND-003
 ---
+
+> **Superseded** (operator ruling ADR-0005, issue #214, ruling A5). The `acp` `ExecutionPort` adapter was **removed** in 0.5.0, pre-1.0, no backward compatibility; the last release carrying it is v0.4.1. See `docs/decisions/ADR-0005-push-recording-not-pull-observation.md` and `docs/adapters/acp/README.md`. The acp-execution half of this task card is removed; the git `CandidatePort` half (`CONF-CAND-001` through `CONF-CAND-003`, `GitDiffCandidate`) remains delivered and current — it is not superseded. This page's execution-adapter content is retained as historical reference only.
 
 # TASK-M1-005 — ACP (acpx) adapter driving Pi
 

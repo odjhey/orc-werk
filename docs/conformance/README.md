@@ -23,7 +23,7 @@ Every real adapter must pass the same conformance requirements as its in-memory 
 - `CONF-EXEC-002`: repeated start with the same effect/idempotency key does not create two logical executions.
 - `CONF-EXEC-003`: inspect distinguishes running from terminal settlement.
 - `CONF-EXEC-004`: unsupported resume strength fails explicitly.
-- `CONF-EXEC-005`: exit-status honesty for an ACP vanished worker — with no terminal result, `no-session` settles failed only when the durable session is prompted and the outstanding turn's stream has substantive agent/tool activity; an empty/no-substantive startup stream remains running. See `SCN-016`, issue #206, and the issue #157 ambiguous-evidence precedent.
+- `CONF-EXEC-005` (**superseded**, operator ruling ADR-0005 ruling A6, issue #214): exit-status honesty for an ACP vanished worker — with no terminal result, `no-session` settles failed only when the durable session is prompted and the outstanding turn's stream has substantive agent/tool activity; an empty/no-substantive startup stream remains running. This requirement only has meaning for a pull-observing execution adapter; the `acp` adapter that exercised it was removed in 0.5.0 (last release carrying it: v0.4.1). Retained, not deleted — see `SCN-016`'s supersession note, issue #206, and the issue #157 ambiguous-evidence precedent.
 
 ### Candidate
 - `CONF-CAND-001`: same exact subject yields the same fingerprint.

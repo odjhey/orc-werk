@@ -1126,7 +1126,8 @@ exit codes:
   2   usage/config error (canonical error JSON on stderr)
   3   run non-terminal, pending settlement observation or operator-recorded
       input -- safe to re-check; re-dispatch itself observes and journals
-      adapter-observed settlements (e.g. acp) once the provider's turn ends
+      adapter-observed settlements (e.g. an external execution adapter)
+      once the provider's turn ends
   4   dispatch --wait --timeout <T> only: T seconds elapsed with the
       pending fingerprint unchanged (SCN-017) -- re-invoking is always safe
 
@@ -1212,14 +1213,15 @@ def build_parser() -> argparse.ArgumentParser:
         '  orc dispatch "ship the widget" --config cfg.json\n'
         '  orc dispatch "ship the widget" --config cfg.json --journal ./.orc --max-attempts 3\n'
         "  orc dispatch --run-id demo-run --journal ./.orc  # resume an existing run\n"
-        '  orc dispatch "reply with the word ping" --config acp-cfg.json  # real Pi execution:\n'
-        '    # acp-cfg.json: {"execution": {"adapter": "acp", "cwd": "/abs/worktree"},\n'
-        '    #                "candidate": {"adapter": "git", "repo_path": "/abs/worktree"}}\n'
-        "    # exits 3 (pending) while Pi works; re-run the identical command to poll --\n"
-        "    # the re-dispatch itself observes and journals Pi's settlement once the turn\n"
-        "    # ends (no hand-recorded outcome needed; issue #210); then record the\n"
-        "    # assurance verdict in the config's attempts and re-run again\n\n"
-        '  orc dispatch "reply with the word ping" --config acp-cfg.json --wait --timeout 300\n'
+        '  orc dispatch "ship the widget" --config real-cfg.json  # real git/command adapters:\n'
+        '    # real-cfg.json: {"candidate": {"adapter": "git", "repo_path": "/abs/worktree"},\n'
+        '    #                 "assurance": {"adapter": "command", "script": "scripts/assure.sh",\n'
+        '    #                               "cwd": "/abs/worktree"}}\n'
+        "    # exits 3 (pending) until an external executor pushes an outcome in (ADR-0005);\n"
+        "    # re-run the identical command to poll -- the re-dispatch itself observes and\n"
+        "    # journals the command assurance verdict once it settles; run `orc record` to\n"
+        "    # push an execution outcome for the next re-dispatch to observe\n\n"
+        '  orc dispatch "ship the widget" --config real-cfg.json --wait --timeout 300\n'
         "    # SCN-017/issue #210: blocks, re-dispatching internally, until the resting point\n"
         "    # moves or the run goes terminal -- nothing prints until the wait ends; exit 3 on\n"
         "    # movement, 0/1 on terminal, 4 if 300s pass with nothing new (--poll-interval\n"
@@ -1346,7 +1348,8 @@ def build_parser() -> argparse.ArgumentParser:
         "identity, the Beads mirror when configured), each indexed and shown with a resolve "
         "command. --resolve/--resolve-all (TASK-M3C-002) execute that SAME command -- never a "
         "second command vocabulary -- vetted read-only at construction (cat; git show/--stat; "
-        "acpx sessions history/show; bd list/show; no-mistakes axi status/logs -- nothing else); "
+        "bd list/show; historical providers' acpx sessions history/show and axi status/logs "
+        "resolvers for journals predating 0.5.0 -- nothing else); "
         "an unvetted or malformed command REFUSES to execute and prints the manual command "
         "instead. A resolution failure (refused, missing binary, nonzero exit, timeout after 30s) "
         "never fails this command -- the ref itself remains valid; exit stays 0. Plain listing is "
@@ -1429,8 +1432,8 @@ def build_parser() -> argparse.ArgumentParser:
         "show",
         help="the run narrative: per work, per attempt -- asked/executed/produced/judged, next",
         description="Terminal narrative view of one run (TASK-M3C-001): for each work (or the one "
-        "named), per attempt -- ASKED (derived prompt provenance, briefs vs intent fallback, "
-        "issue #111), EXECUTED (provider/session/duration), PRODUCED (candidate identity), "
+        "named), per attempt -- ASKED (derived prompt provenance; no adapter fills in a per-work "
+        "prompt since 0.5.0/ADR-0005), EXECUTED (provider/session/duration), PRODUCED (candidate identity), "
         "JUDGED (verdict, findings summary, or inheritance basis per STATE-DELIVERY item 8), and "
         "NEXT/DEEPER (resolve commands, reusing orc refs's builders). Pure composition of the "
         "journal, this run's persisted dispatch config, and the times sidecar -- no new "

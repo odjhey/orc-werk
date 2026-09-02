@@ -42,39 +42,39 @@ class RepoProfileTest(unittest.TestCase):
         self.assertEqual(persisted["attempts"]["work-1"][0]["candidate"], {"from": "profile"})
 
     def test_dispatch_loader_defers_profile_completeness_until_composition(self):
+        script = self.root / "assure.sh"
+        script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        script.chmod(0o755)
         profile_path = self.root / ".orc" / "profile.json"
         profile_path.parent.mkdir()
         profile_path.write_text(json.dumps({
-            "execution": {"adapter": "acp", "agent": "pi", "model": "model-x"},
             "candidate": {"adapter": "git"},
-            "assurance": {"adapter": "no-mistakes"},
+            "assurance": {"adapter": "command"},
             "mirror": {"adapter": "beads", "workspace": "/board"},
         }), encoding="utf-8")
 
         profile = load_repo_profile(self.root / ".orc")
         merged = validate_config(deep_merge_config(profile or {}, {
-            "execution": {"cwd": "/repo"},
             "candidate": {"repo_path": "/repo"},
-            "assurance": {"repo_path": "/repo"},
+            "assurance": {"script": str(script), "cwd": str(self.root)},
         }))
-        self.assertEqual(merged["execution"]["model"], "model-x")
-        self.assertEqual(merged["execution"]["cwd"], "/repo")
-        self.assertEqual(merged["assurance"]["adapter"], "no-mistakes")
+        self.assertEqual(merged["candidate"]["repo_path"], "/repo")
+        self.assertEqual(merged["assurance"]["adapter"], "command")
         self.assertEqual(merged["mirror"]["workspace"], "/board")
 
-    def test_dispatch_adapter_switch_drops_inherited_acp_keys(self):
+    def test_dispatch_adapter_switch_drops_inherited_command_keys(self):
         profile = self.root / ".orc" / "profile.json"
         profile.parent.mkdir()
         profile.write_text(json.dumps({
-            "execution": {
-                "adapter": "acp", "agent": "pi", "model": "m",
-                "thought_level": "high", "approve_all": True,
+            "assurance": {
+                "adapter": "command", "script": "scripts/assure.sh",
+                "cwd": "/repo", "timeout_s": 120,
             }
         }), encoding="utf-8")
         config_path = self.root / "run.json"
         config_path.write_text(json.dumps({
             "plan": {"works": [{"work_id": "w", "deps": []}]},
-            "execution": {"adapter": "scripted"},
+            "assurance": {"adapter": "scripted"},
         }), encoding="utf-8")
 
         result = _run(
@@ -84,7 +84,7 @@ class RepoProfileTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 3, result.stderr)
         persisted = json.loads((self.root / ".orc" / "switch-run" / "config.json").read_text())
-        self.assertEqual(persisted["execution"], {"adapter": "scripted"})
+        self.assertEqual(persisted["assurance"], {"adapter": "scripted"})
 
     def test_absent_profile_preserves_empty_scripted_default(self):
         self.assertIsNone(load_repo_profile(self.root / ".orc"))

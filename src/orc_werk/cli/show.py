@@ -24,26 +24,17 @@ command journals or persists itself. It reuses:
   block.
 
 **Prompt provenance (issue #111's "briefs footgun" incident, the task
-card's second non-negotiable).** `orc_werk.cli.config._IntentPromptExecution.
-_filled_request` derives an ACP execution's prompt as
-`self._briefs.get(work_id, self._intent_text)` -- a `briefs[work_id]` entry,
-however short, always wins over the run's own intent text (the issue #82/
-#83 precedence rule). This module mirrors that exact `dict.get` semantics
-against the run's own persisted config (`<journal-dir>/<run_id>/
-config.json`) to derive which text ACTUALLY became the prompt, rather than
-guessing: `work_id in briefs` -> `"briefs.<work_id> (persisted config)"`,
-absent -> `"run intent (fallback)"`. When `execution.adapter` is not
-`"acp"` (the default `"scripted"`, or any other non-ACP adapter), no
-per-work request is ever filled in -- `orc_werk.app.Orchestrator` always
-calls `start()` with an opaque, empty `execution_request`, and only the ACP
-composition wrapper fills in a prompt -- so this renders the honest
-`"scripted execution -- no prompt sent to the executor"` rather than
-inventing one. The full prompt/intent text is never dumped here (a
-narrative view, not a payload viewer): a preview is shown, truncated with a
-definitive count and a pointer at the full text's actual source (the
-persisted config path for a brief, `orc status <run>` for the intent
-fallback) -- never an ambiguous "...more" (issue #113's listing
-convention, `PLAYBOOK-CLI-USAGE`'s Design principles).
+card's second non-negotiable).** 0.5.0/`ADR-0005` removed the `acp`
+`ExecutionPort` adapter -- the only adapter that ever filled in a per-work
+prompt from `briefs`/the run intent text -- so `execution.adapter` is
+always `"scripted"` now: `orc_werk.app.Orchestrator` always calls
+`start()` with an opaque, empty `execution_request`, and nothing fills in
+a prompt anymore. This module renders the honest
+`"scripted execution -- no prompt sent to the executor"` for every run,
+including a run dispatched before 0.5.0 whose persisted config still
+names `execution.adapter == "acp"` -- read through the same generic path
+as any other adapter string, never a dedicated acp-aware renderer, so a
+historical journal renders gracefully instead of crashing.
 
 **Attempt segmentation.** A Work's per-attempt story is read by slicing its
 journaled records at each `FX-START-EXECUTION` effect record, whose own
@@ -114,14 +105,6 @@ from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, STATE_CANCELLED, 
 # for its own subcommand wiring) to avoid a cycle -- `orc_werk.cli.report`
 # carries its own `_summarize_states` for the identical reason.
 _EXIT_PENDING = 3
-
-# Narrative preview cap for a prompt's shown text (issue #113 listing
-# convention: a definitive count plus a same-content escape hatch -- here,
-# the pointer at the actual full-text source -- never an ambiguous
-# "...more"). Chosen to keep a per-attempt block terminal-scannable while
-# still showing enough of a brief/intent to judge whether it looks like the
-# issue #111 "stub brief" shape.
-_PROMPT_PREVIEW_CHARS = 200
 
 # Findings-list cap per attempt (issue #113 listing convention applied to
 # `review-findings/v1`'s otherwise-unbounded `findings` array -- the one
@@ -215,69 +198,50 @@ def _duration_text(
 # ---------------------------------------------------------------------------
 
 
-def _truncate(text: str, *, limit: int = _PROMPT_PREVIEW_CHARS) -> tuple[str, bool, int]:
-    total = len(text)
-    if total <= limit:
-        return text, False, total
-    return text[:limit], True, total
-
-
 def prompt_provenance(config: Optional[Mapping[str, Any]], work_id: str, intent_text: Optional[str]) -> dict:
     """The derived source of the text that actually became (or would
-    become) this work's ACP execution prompt -- mirroring `orc_werk.cli.
-    config._IntentPromptExecution._filled_request`'s own `self._briefs.
-    get(work_id, self._intent_text)` precedence exactly (issue #82/#83),
-    read from the run's own persisted config rather than guessed. Returns
+    become) this work's execution prompt, read from the run's own
+    persisted config rather than guessed.
+
+    0.5.0/`ADR-0005` removed the `acp` `ExecutionPort` adapter -- the only
+    adapter that ever filled in a per-work prompt -- so `execution.adapter`
+    is always `"scripted"` now and no per-work request is ever filled in;
+    this always renders the generic `"no-prompt"` kind. A run's persisted
+    config from before 0.5.0 may still show `execution.adapter == "acp"`
+    (or carry a now-meaningless `briefs` entry for prompt purposes); that
+    is read here exactly like any other adapter string -- through the same
+    generic path, never a dedicated acp-aware renderer -- so a historical
+    journal renders gracefully instead of crashing. `work_id`/`intent_text`
+    are accepted for interface stability but no longer consulted. Returns
     one of:
 
     - `{"kind": "unavailable"}` -- no persisted config found for this run
       (a legacy pre-#55H2 run, or a best-effort persist that never wrote).
-    - `{"kind": "no-prompt", "adapter": <str>}` -- `execution.adapter` is
-      not `"acp"` (default `"scripted"`): no per-work request is ever
-      filled in, so no prompt is sent at all.
-    - `{"kind": "brief", "text": <str>}` -- `work_id` is a key in the
-      persisted config's `briefs` mapping (`dict.get` semantics: present,
-      however short or empty, always wins).
-    - `{"kind": "intent", "text": <str-or-None>}` -- no `briefs` entry for
-      `work_id`: falls back to the run's own intent text.
+    - `{"kind": "no-prompt", "adapter": <str>}` -- no per-work request is
+      ever filled in, so no prompt is sent at all; `adapter` is whatever
+      string the persisted config names (current or historical).
     """
     if config is None:
         return {"kind": "unavailable"}
     execution_cfg = config.get("execution")
     adapter = execution_cfg.get("adapter", "scripted") if isinstance(execution_cfg, Mapping) else "scripted"
-    if adapter != "acp":
-        return {"kind": "no-prompt", "adapter": adapter}
-    briefs = config.get("briefs")
-    if isinstance(briefs, Mapping) and work_id in briefs and isinstance(briefs[work_id], str):
-        return {"kind": "brief", "text": briefs[work_id]}
-    return {"kind": "intent", "text": intent_text}
+    return {"kind": "no-prompt", "adapter": adapter}
 
 
 def _render_asked(
     provenance: Mapping[str, Any], *, work_id: str, run_id: str, config_path: Path
 ) -> list[str]:
+    """0.5.0/`ADR-0005`: `prompt_provenance` only ever returns `"unavailable"`
+    or `"no-prompt"` now (no adapter fills in a per-work prompt anymore),
+    so this renders just those two kinds -- including for a historical
+    run whose persisted config still names `execution.adapter == "acp"`,
+    which renders through the same generic `"no-prompt"` branch rather
+    than a dedicated acp-aware renderer. `work_id`/`run_id`/`config_path`
+    are accepted for interface stability but no longer consulted."""
     kind = provenance["kind"]
     if kind == "unavailable":
         return ["  ASKED: prompt provenance unavailable -- no persisted dispatch config found for this run"]
-    if kind == "no-prompt":
-        return [f"  ASKED: scripted execution ({provenance['adapter']}) -- no prompt sent to the executor"]
-    text = provenance.get("text")
-    if kind == "brief":
-        lines = [f"  ASKED: prompt = briefs.{work_id} (persisted config)"]
-        pointer = f"{config_path} (key: briefs.{work_id})"
-    else:
-        lines = ["  ASKED: prompt = run intent (fallback)"]
-        pointer = f"orc status {run_id}"
-    if text is None:
-        lines.append("    text: (no intent text recorded)")
-        return lines
-    shown, truncated, total = _truncate(text)
-    shown = " ".join(shown.split())
-    if truncated:
-        lines.append(f"    text: {shown}... [truncated, showing {len(shown)} of {total} chars; full text: {pointer}]")
-    else:
-        lines.append(f"    text: {shown}")
-    return lines
+    return [f"  ASKED: scripted execution ({provenance['adapter']}) -- no prompt sent to the executor"]
 
 
 # ---------------------------------------------------------------------------

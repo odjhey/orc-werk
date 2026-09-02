@@ -1,13 +1,15 @@
 ---
 id: TASK-M2-002
 type: task-card
-status: current
+status: superseded
 authority: normative
 description: acpx claude as a second agent through the existing acp PORT-EXECUTION adapter, zero adapter code change — the P-001 provider-swap proof.
 implements:
   - P-001
 verifies: []
 ---
+
+> **Superseded** (operator ruling ADR-0005, issue #214). Moot: this card's whole premise was swapping which agent drives the `acp` `ExecutionPort` adapter, and that adapter was **removed** in 0.5.0, pre-1.0, no backward compatibility (last release carrying it: v0.4.1). See `docs/decisions/ADR-0005-push-recording-not-pull-observation.md` and `docs/adapters/acp/README.md`. Retained as historical reference only.
 
 # TASK-M2-002 — Second agent, same adapter (P-001 proof)
 

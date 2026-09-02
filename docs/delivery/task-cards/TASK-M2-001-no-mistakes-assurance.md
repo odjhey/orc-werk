@@ -1,13 +1,15 @@
 ---
 id: TASK-M2-001
 type: task-card
-status: current
+status: superseded
 authority: normative
 description: Real PORT-ASSURANCE adapter backed by no-mistakes, returning review-findings/v1, proven by CONF-ASSURE.
 implements:
   - PORT-ASSURANCE
 verifies: []
 ---
+
+> **Superseded** (operator ruling ADR-0005, issue #214). The no-mistakes `AssurancePort` adapter was **removed** in 0.5.0, pre-1.0, no backward compatibility; the last release carrying it is v0.4.1. See `docs/adapters/command/README.md` (`ADAPTER-COMMAND`) for the push-shaped command assurance adapter and `docs/scenarios/SCN-015-command-assurance.md` (issue #194). Retained as historical reference only.
 
 # TASK-M2-001 — no-mistakes AssurancePort
 
