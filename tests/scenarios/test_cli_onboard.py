@@ -156,7 +156,7 @@ class CanonicalOriginTest(unittest.TestCase):
             self.assertIn(section, block)
         # the YAML frontmatter and the H1 title are gone
         self.assertNotIn("name: orc-ledger", block)
-        self.assertNotIn("version: 2", block)
+        self.assertNotIn(f"version: {_packaged_skill_version()}", block)
         self.assertNotIn("# Working with the orc delivery ledger", block)
         # but the ledger's own intro paragraph (context-free content) survives
         self.assertIn("This repository tracks delivery through orc", block)
