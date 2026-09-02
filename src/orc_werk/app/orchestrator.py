@@ -79,7 +79,7 @@ from orc_werk.core.facts import (
 from orc_werk.core.idempotency import idempotency_key as derive_idempotency_key
 from orc_werk.core.models import Candidate
 from orc_werk.core.policy import decide
-from orc_werk.core.reducer import DEFAULT_MAX_ATTEMPTS, apply_fact, reduce
+from orc_werk.core.reducer import DEFAULT_MAX_ATTEMPTS, abandon_legality, apply_fact, reduce
 from orc_werk.core.serialization import KIND_EFFECT, KIND_FACT, fact_from_envelope
 from orc_werk.core.state import (
     STATE_ACCEPTED,
@@ -582,20 +582,30 @@ class Orchestrator:
         # A successful prior result is reconciled by key. A null result is
         # explicitly non-binding, so re-dispatch invokes the adapter again
         # with the same logical-effect key (INV-020), like settlement re-poll.
+        # Append-on-change (issue #198): journal a fresh record only when
+        # the re-derived observation differs from the last one recorded
+        # under this key -- the first-ever observation, or a null->subject
+        # transition. A re-derivation that is still null is a no-op read
+        # and appends nothing, mirroring `_poll_assurance`'s
+        # no-journal-until-settled re-poll -- otherwise every dispatch of a
+        # run parked on a genuinely absent subject would append another
+        # redundant null record forever (unbounded journal growth).
         if existing is None or dispatch_result.get("candidate") is None:
             try:
                 found = self.candidate.identify(execution_id=execution_id)
-                dispatch_result = {"candidate": found.to_dict() if found is not None else None}
+                new_result = {"candidate": found.to_dict() if found is not None else None}
             except CoreError as exc:
-                dispatch_result = exc.to_canonical()
-            effect = make_effect(
-                FX_IDENTIFY_CANDIDATE,
-                delivery_run_id=self.delivery_run_id,
-                work_id=work_id,
-                idempotency_key=key,
-                data={"execution_id": execution_id},
-            )
-            self.journal.append_effect_record(effect, dispatch_result=dispatch_result)
+                new_result = exc.to_canonical()
+            if existing is None or new_result != dispatch_result:
+                effect = make_effect(
+                    FX_IDENTIFY_CANDIDATE,
+                    delivery_run_id=self.delivery_run_id,
+                    work_id=work_id,
+                    idempotency_key=key,
+                    data={"execution_id": execution_id},
+                )
+                self.journal.append_effect_record(effect, dispatch_result=new_result)
+            dispatch_result = new_result
 
         candidate_data = dispatch_result.get("candidate") if isinstance(dispatch_result, Mapping) else None
         if candidate_data:
@@ -634,12 +644,13 @@ class Orchestrator:
         """Operator-only recording surface (`docs/playbooks/cli-usage.md`,
         never the ship/verify agent path): journals `DEC-ABANDON-ATTEMPT` +
         `FACT-ATTEMPT-ABANDONED` for `work_id` (`STATE-DELIVERY` mechanical
-        fact sequencing item 9). Legal only when the Work currently rests
-        at an unresolved candidate-observation conflict
-        (`has_candidate_conflict`), at `EXECUTING` after its Execution
-        settled completed with no bound Candidate, or at `ASSURING` with
-        its current Assurance still unsettled (`is_pending`) -- anything else raises
-        `ERR-VALIDATION`, never silently no-ops. `reason`/`by` become the
+        fact sequencing item 9). Legality is the single `core.reducer.
+        abandon_legality` predicate (issue #200): the Work currently rests
+        at an unresolved candidate-observation conflict, at `EXECUTING`
+        after its Execution settled completed with no bound Candidate, or
+        at `ASSURING` with its current Assurance still unsettled --
+        anything else raises `ERR-VALIDATION`, never silently no-ops.
+        `reason`/`by` become the
         Decision's `data`/`attribution` (`INV-011`/`INV-012`); the Fact
         itself only carries `reason` (mirrors `FACT-WORK-BLOCKED`'s
         shape -- `PROTOCOL-FACTS`)."""
@@ -652,19 +663,19 @@ class Orchestrator:
                 next_steps=[f"orc status {self.delivery_run_id}"],
             )
         history = self.journal.history(delivery_run_id=self.delivery_run_id)
-        if has_candidate_conflict(wp):
+        # Single source of truth for the three-way legality question
+        # (issue #200): `abandon_legality` lives in core and is also what
+        # the reducer's replay-time check uses, so this preflight can never
+        # drift from what a subsequent replay will accept.
+        legality = abandon_legality(wp)
+        if legality.conflicted:
             basis: tuple[Mapping[str, Any], ...] = (dict(wp.candidate_conflict["fact"]),)
-        elif (
-            wp.state == STATE_EXECUTING
-            and wp.current_candidate_id is None
-            and wp.executions
-            and wp.executions[-1].get("outcome") == "completed"
-        ):
+        elif legality.awaiting_candidate:
             settled = self._find_fact_record(
                 history, FACT_EXEC_SETTLED, work_id=work_id, execution_id=wp.current_execution_id
             )
             basis = (dict(settled),) if settled is not None else ({"work_id": work_id},)
-        elif wp.state == STATE_ASSURING and is_pending(wp):
+        elif legality.unsettleable:
             started = self._find_fact_record(
                 history, FACT_ASSURE_STARTED, work_id=work_id, assurance_id=wp.current_assurance_id
             )
