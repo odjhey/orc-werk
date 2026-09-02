@@ -307,6 +307,139 @@ class JournalDirPrecedenceTest(unittest.TestCase):
             self.assertIn("FACT-INTENT-SUBMITTED", history.stdout)
 
 
+class JournalDirIsRunDirGuardTest(unittest.TestCase):
+    """Issue #220: a resolved journal dir (`--journal` > `ORC_JOURNAL_DIR` >
+    `./.orc`, `resolve_journal_dir`'s precedence) that is itself a run
+    directory (contains `journal.jsonl`/`config.json` at its own root) is
+    refused with `ERR-VALIDATION`/exit 2 instead of silently nesting a
+    duplicate run underneath it."""
+
+    def _dispatch_one(self, tmp_dir: Path, journal_dir: Path, run_id: str) -> None:
+        config_path = tmp_dir / f"{run_id}.config.json"
+        config_path.write_text(json.dumps(_accepted_config(run_id)), encoding="utf-8")
+        result = _run_cli(
+            tmp_dir, "dispatch", f"guard fixture {run_id}", "--config", str(config_path),
+            "--journal", str(journal_dir), "--run-id", run_id,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    def test_dispatch_refuses_the_exact_issue_220_repro(self) -> None:
+        """`--journal .orc/<run-id>/` (the run's own directory) must refuse
+        rather than create `.orc/<run-id>/<run-id>/`, a nested duplicate run
+        forking the original run's history -- the exact footgun reported."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_dir = tmp_dir / ".orc"
+            self._dispatch_one(tmp_dir, journal_dir, "outer-run")
+            run_dir = layout.run_dir(journal_dir, "outer-run")
+
+            nested = _run_cli(
+                tmp_dir, "dispatch", "nested duplicate attempt", "--journal", str(run_dir),
+                "--run-id", "outer-run",
+            )
+            self.assertEqual(nested.returncode, 2, msg=nested.stdout + nested.stderr)
+            self.assertIn("ERR-VALIDATION", nested.stderr)
+            self.assertIn("is itself a run directory", nested.stderr)
+            self.assertIn(str(journal_dir.resolve()), nested.stderr)
+            # The bug: no nested duplicate run directory was created.
+            self.assertFalse((run_dir / "outer-run").exists())
+
+    def test_dispatch_refuses_when_only_journal_jsonl_marker_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_dir = tmp_dir / ".orc"
+            self._dispatch_one(tmp_dir, journal_dir, "solo-journal-run")
+            run_dir = layout.run_dir(journal_dir, "solo-journal-run")
+            (run_dir / layout.CONFIG_FILENAME).unlink()
+
+            result = _run_cli(tmp_dir, "dispatch", "x", "--journal", str(run_dir))
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            self.assertIn("ERR-VALIDATION", result.stderr)
+            self.assertIn("journal.jsonl", result.stderr)
+
+    def test_dispatch_refuses_when_only_config_json_marker_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_dir = tmp_dir / ".orc"
+            pending = journal_dir / "pending-run"
+            pending.mkdir(parents=True)
+            (pending / layout.CONFIG_FILENAME).write_text("{}", encoding="utf-8")
+
+            result = _run_cli(tmp_dir, "dispatch", "x", "--journal", str(pending))
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            self.assertIn("ERR-VALIDATION", result.stderr)
+            self.assertIn("config.json", result.stderr)
+
+    def test_dispatch_refuses_via_env_var_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_dir = tmp_dir / ".orc"
+            self._dispatch_one(tmp_dir, journal_dir, "env-guard-run")
+            run_dir = layout.run_dir(journal_dir, "env-guard-run")
+
+            result = _run_cli(
+                tmp_dir, "dispatch", "env nested attempt", "--run-id", "env-guard-run",
+                env_extra={"ORC_JOURNAL_DIR": str(run_dir)},
+            )
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            self.assertIn("ERR-VALIDATION", result.stderr)
+
+    def test_record_write_path_also_refuses(self) -> None:
+        """The mandatory write path other than dispatch: `record` editing
+        the persisted config must not silently operate through a
+        misresolved nested journal either."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_dir = tmp_dir / ".orc"
+            self._dispatch_one(tmp_dir, journal_dir, "record-guard-run")
+            run_dir = layout.run_dir(journal_dir, "record-guard-run")
+
+            result = _run_cli(
+                tmp_dir, "record", "record-guard-run", "--work", "work-1", "--outcome", "completed",
+                "--journal", str(run_dir),
+            )
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            self.assertIn("ERR-VALIDATION", result.stderr)
+
+    def test_stray_profile_json_at_root_does_not_trigger_the_guard(self) -> None:
+        """A legal operator-authored `profile.json` at a journal root
+        (config-overlay composition, unrelated to the two new-layout run
+        markers) must never be mistaken for a run directory."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_dir = tmp_dir / ".orc"
+            journal_dir.mkdir()
+            (journal_dir / "profile.json").write_text("{}", encoding="utf-8")
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(_accepted_config("profile-ok-run")), encoding="utf-8")
+
+            result = _run_cli(
+                tmp_dir, "dispatch", "profile coexistence fixture", "--config", str(config_path),
+                "--journal", str(journal_dir),
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertTrue((journal_dir / "profile-ok-run" / "journal.jsonl").exists())
+
+    def test_empty_new_journal_dir_still_works(self) -> None:
+        """A legitimately-empty, brand-new journal dir (no run has ever
+        been dispatched into it yet) must dispatch cleanly -- the guard
+        only fires on the two reserved marker filenames, never on an empty
+        or nonexistent directory."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_dir = tmp_dir / "brand-new-journal-dir"
+            journal_dir.mkdir()
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(_accepted_config("first-run")), encoding="utf-8")
+
+            result = _run_cli(
+                tmp_dir, "dispatch", "empty dir fixture", "--config", str(config_path),
+                "--journal", str(journal_dir),
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertTrue((journal_dir / "first-run" / "journal.jsonl").exists())
+
+
 class ConfigPersistenceTest(unittest.TestCase):
     """H2 config persistence: dispatch persists the effective config into
     the run dir on first dispatch; a later dispatch may be invoked with
