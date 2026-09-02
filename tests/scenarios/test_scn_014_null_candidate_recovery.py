@@ -83,6 +83,55 @@ class NullCandidateRecoveryScenarioTest(unittest.TestCase):
         self.assertEqual(sum(r["id"] == "FACT-EXEC-STARTED" for r in journal.history(delivery_run_id="scn014-abandon")), 1)
         self.assertEqual(orchestrator.projection().to_dict(), abandoned.to_dict())
 
+    def test_repeated_null_redispatch_appends_on_change_not_per_dispatch(self) -> None:
+        """Issue #198: while a subject never materializes, re-derivation
+        must still occur on every dispatch (the port is re-invoked and the
+        Work never wedges), but the journal only grows when the observation
+        CHANGES -- the first-ever null, or a later null->subject
+        transition. Three re-dispatches that all observe no subject must
+        append exactly one null record, not one per dispatch."""
+        candidate = SequencedCandidate([None, None, None])
+        orchestrator, journal = build(candidate, run_id="scn014-append-on-change")
+
+        orchestrator.run()
+        orchestrator.run()
+        orchestrator.run()
+
+        self.assertEqual(len(candidate.calls), 3, "port must still be re-invoked every dispatch")
+        records = [
+            r for r in journal.history(delivery_run_id="scn014-append-on-change") if r["id"] == FX_IDENTIFY_CANDIDATE
+        ]
+        self.assertEqual(len(records), 1, "repeated identical null observations must not re-append")
+        self.assertIsNone(records[0]["data"]["dispatch_result"]["candidate"])
+
+        wp = orchestrator.projection().works["work-1"]
+        self.assertEqual(wp.state, STATE_EXECUTING)
+        self.assertIsNone(wp.current_candidate_id)
+
+    def test_null_then_present_after_several_null_redispatches_appends_exactly_twice(self) -> None:
+        """A run parked on null for several dispatches, then healing, must
+        append exactly two FX-IDENTIFY-CANDIDATE records total: the first
+        null and the null->subject transition -- not one per intervening
+        no-op dispatch."""
+        candidate = SequencedCandidate([None, None, None, {"commit": "now-present"}])
+        orchestrator, journal = build(candidate, run_id="scn014-append-on-change-heal")
+
+        orchestrator.run()
+        orchestrator.run()
+        orchestrator.run()
+        healed = orchestrator.run()
+
+        self.assertEqual(len(candidate.calls), 4)
+        self.assertEqual(healed.works["work-1"].state, STATE_ACCEPTED)
+        records = [
+            r
+            for r in journal.history(delivery_run_id="scn014-append-on-change-heal")
+            if r["id"] == FX_IDENTIFY_CANDIDATE
+        ]
+        self.assertEqual(len(records), 2)
+        self.assertIsNone(records[0]["data"]["dispatch_result"]["candidate"])
+        self.assertIsNotNone(records[1]["data"]["dispatch_result"]["candidate"])
+
     def test_normal_first_identification_is_unchanged(self) -> None:
         candidate = SequencedCandidate([{"commit": "now-present"}])
         orchestrator, journal = build(candidate, run_id="scn014-regression")

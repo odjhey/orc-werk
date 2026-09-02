@@ -24,8 +24,11 @@ only when present -- absence is never fabricated (`CLAUDE.md` #3):
    `extensions` (one settlement per execution): a `session` row for
    `native_session_id` (resolve: the provider's own inspection tool form,
    derived conservatively from the opaque `provider` string -- e.g.
-   `acpx-pi` yields `acpx pi sessions history <ref>`, per
-   `docs/adapters/acp/mapping.md`'s `provider` field convention; an
+   `acpx-pi` yields `acpx pi sessions history <ref>`, per the historical
+   `acp` provider's `docs/adapters/acp/mapping.md`'s `provider` field
+   convention (`ADR-0005`; the adapter itself is removed, but journaled
+   settlements from before the removal still carry this shape and must
+   stay resolvable); an
    unrecognized provider string renders the ref with resolve `-`, never a
    guessed command); a `resume` row for `resume.ref` (no adapter-neutral
    resolve command is defined for this schema field, so resolve is always
@@ -451,9 +454,10 @@ _ACPX_PROVIDER_PREFIX = "acpx-"
 
 def _session_resolve(provider: Any, ref: str) -> ResolveCommand:
     """Conservative, `docs/adapters/acp/mapping.md`-derived tool form: a
-    provider string exactly matching `acpx-<agent>` (the only convention
-    any adapter in this codebase currently emits, `AcpExecution.
-    _session_provenance`) yields `acpx <agent> sessions history <ref>`.
+    provider string exactly matching `acpx-<agent>` (the convention the
+    historical `acp` `ExecutionPort` adapter emitted before its removal,
+    `ADR-0005` -- retained here so settlements journaled while it was
+    live stay resolvable) yields `acpx <agent> sessions history <ref>`.
     Any other provider string -- including one merely resembling this
     convention -- renders with resolve `-` rather than a guessed command;
     inventing a tool form for an unrecognized provider would be exactly
