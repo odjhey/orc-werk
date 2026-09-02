@@ -12,6 +12,44 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.5.0] — 2026-09-02
+
+### Breaking
+- **`acp` `ExecutionPort` adapter and no-mistakes `AssurancePort` adapter
+  REMOVED** (`ADR-0005`, #214, #217): orc goes all-in on push recording —
+  executors are always external and push observations in; orc never
+  pull-observes another process's lifecycle. Removed with the adapters:
+  `execution.ttl` and the acp-exclusive execution config keys (`agent`,
+  `cwd`, `thought_level`, `model`, `approve_all`). A config naming the
+  removed `"acp"` or `"no-mistakes"` adapter now fails with the canonical
+  `ERR-VALIDATION`, carrying migration guidance in its `next` hint.
+  `CONF-EXEC-005` and `SCN-016` are superseded in place (annotated, not
+  deleted — past journals and docs referencing them stay interpretable);
+  the `acp-settlement/v1` extension is superseded. **Escape hatch:** pin
+  `v0.4.1`, the last release carrying the adapters. **Migration:** run
+  executors externally and record observations in — `orc record`,
+  merge-only config edits, `orc dispatch --wait` as the wake — per
+  `PLAYBOOK-AGENT-CLI`; the `command` assurance adapter (`SCN-015`, #194)
+  is the in-repo verify-seat replacement for the no-mistakes adapter's
+  role. See `docs/decisions/ADR-0005-push-recording-not-pull-observation.md`
+  for the full ruling. Anchor issue: **#214**.
+
+### Added / Changed
+- **`orc dispatch --wait`** (`SCN-017`, #210, #213): `--wait
+  [--timeout SECONDS] [--poll-interval SECONDS]` internalizes the
+  re-dispatch poll loop until the run's pending fingerprint moves or the
+  run goes terminal, then exits `3`/`0`/`1` exactly as an equivalent
+  non-`--wait` dispatch would. An unchanged fingerprint after `--timeout`
+  seconds exits a new code, `4`. Waiting journals nothing beyond what its
+  internal ordinary passes would have.
+- **Pending wording now names settlement observation, not just operator
+  input** (#210, #212): exit `3`'s message no longer implies only a human
+  can supply the missing outcome — an external executor's pushed
+  observation, picked up on re-dispatch, resolves it too.
+- **`ADR-0005` accepted** (#214, #215): the operator ruling that motivates
+  this release's Breaking section — recorded as the canonical decision
+  document.
+
 ## [0.4.1] — 2026-09-01
 
 No breaking changes. Existing configs and journals need no migration.
