@@ -308,16 +308,30 @@ class WaitTransientConfigTest(unittest.TestCase):
             self.assertEqual(error["error"], "ERR-VALIDATION")
 
             # Cross-check against the ordinary (non-wait) failure this bad
-            # config produces on its own: same canonical error id, same
-            # "not valid JSON" message shape (issue #216 ruling: "fail
-            # with the ordinary canonical error exactly as today").
+            # config produces on its own (issue #216 ruling: "fail with
+            # the ordinary canonical error exactly as today"): the COMPLETE
+            # stderr byte stream, the complete stdout byte stream, and the
+            # exit code must all be identical, with NO normalization --
+            # any drift in the error surface (a changed message, an added/
+            # dropped detail or next-step, reordered keys, a stray extra
+            # line) fails this comparison. No segment of either stream is
+            # nondeterministic across the two invocations: the canonical
+            # error is printed by `_print_error` as
+            # `json.dumps(error, sort_keys=True)` (stable key order, no
+            # timestamps/PIDs/tracebacks -- CONTRACT-ERRORS' portable
+            # shape), and its only environment-derived content is the
+            # absolute config path, which is the SAME file in both
+            # invocations here. stdout is byte-identical too (empty:
+            # config load fails before any dispatch output in the plain
+            # case, and every earlier internal wait pass's captured
+            # output is discarded per step 1's silence).
             plain = _run_cli(
                 tmp_dir, "dispatch", "scn017 transient", "--config", str(config_path), "--run-id", run_id
             )
-            self.assertEqual(plain.returncode, 2, msg=plain.stdout + plain.stderr)
-            plain_error = json.loads(plain.stderr)
-            self.assertEqual(plain_error["error"], error["error"])
-            self.assertEqual(plain_error["message"], error["message"])
+            self.assertEqual(plain.returncode, result.returncode)
+            self.assertEqual(plain.stderr, result.stderr)
+            self.assertEqual(plain.stdout, result.stdout)
+            self.assertEqual(result.stdout, "")
 
             # The cap, not the 10s --timeout, ended the wait: 3 consecutive
             # 0.05s-apart passes is on the order of tenths of a second, not
