@@ -24,9 +24,10 @@ recon.
 Design summary (full rationale: the mapping doc):
 
 - Direct `bd --json <verb>` CLI subprocess invocations, one process per
-  operation -- matching the established acp/no-mistakes adapter pattern.
-  No daemon, no streams, synchronous ops (`bd` is the "easy instance" of
-  this pattern per the task card).
+  operation -- matching the historical acp/no-mistakes adapter pattern
+  those since-removed adapters established (`ADR-0005`). No daemon, no
+  streams, synchronous ops (`bd` is the "easy instance" of this pattern
+  per the task card).
 - Deterministic `--id <delivery_run_id>--<work_id>` on every `bd create`
   (`INV-020` replay-stable naming; `bd`'s own generated ids are random).
   `bd create --id <id>` REQUIRES `--force` whenever `<id>` does not start
@@ -197,8 +198,9 @@ class BeadsMirror:
 
     `workspace` is the directory `bd init` was already run in (this
     adapter never runs `bd init` itself -- provisioning the shared
-    database is an operator/deployment concern, matching the `no-mistakes`
-    adapter's own "adapter never `no-mistakes init`s a repo" precedent).
+    database is an operator/deployment concern, matching the same
+    "adapter never `no-mistakes init`s a repo" precedent the now-removed
+    `no-mistakes` adapter established (`ADR-0005`)).
     Every invocation passes `-C <workspace>` so `bd` resolves the intended
     database regardless of this process's own cwd -- but `-C` alone is NOT
     containment (`bd` walks up to an ancestor `.beads` when `workspace`
@@ -246,8 +248,8 @@ class BeadsMirror:
         re-syncs full current state rather than diffing against
         previously-observed state -- the same "always re-derive, never
         trust in-process memory as the correctness path" discipline the
-        acp/no-mistakes adapters already establish for their own settled
-        observations.
+        now-removed acp/no-mistakes adapters established for their own
+        settled observations (`ADR-0005`).
 
         Never raises on a `bd` invocation failure -- every failure is
         recorded in the returned `MirrorReport` instead (module
