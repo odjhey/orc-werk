@@ -241,8 +241,23 @@ class ObserverContainmentTest(unittest.TestCase):
 
 class ObserverHungObserverTest(unittest.TestCase):
     """Step 12: bounded lifetime by delegated supervision -- a hung
-    observer's whole process group is killed once `timeout_seconds`
-    elapses, without dispatch itself ever waiting for it."""
+    observer's whole (own, separate) process group is killed and REAPED by
+    the surviving supervisor once `timeout_seconds` elapses, without
+    dispatch itself ever waiting for it.
+
+    Kill-topology probes (PR #225 attempt-2 verify finding): the observer
+    runs in its own session/process group, separate from the supervisor's,
+    so the post-timeout FINAL state is deterministic: both probes below
+    must reach ESRCH (gone) within the deadline. EPERM from `killpg` is
+    tolerated only as a TRANSIENT in-progress signal: on darwin,
+    `killpg(pgid, 0)` against a group whose sole member is a zombie
+    (SIGKILL delivered, supervisor's reap still pending) returns EPERM --
+    an empirically confirmed macOS kernel artifact of probing a zombie
+    group, not a reused/mixed-state pgid. PERSISTENT EPERM past the
+    deadline IS the failure (a supervisor that killed but never reaped),
+    and the poll's failure message names the stuck state explicitly. The
+    separate no-zombie assertion works because a zombie still answers
+    `os.kill(pid, 0)`: only a fully reaped observer raises ESRCH."""
 
     def test_hung_observer_killed_by_its_own_supervision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -256,9 +271,10 @@ class ObserverHungObserverTest(unittest.TestCase):
                 "time.sleep(60)\n"
             )
             hang.chmod(0o755)
+            timeout_seconds = 0.5
             config = {
                 **_SETTLED_CONFIG,
-                "observers": {"on_settle": {"command": ["./hang.py"], "timeout_seconds": 1.0}},
+                "observers": {"on_settle": {"command": ["./hang.py"], "timeout_seconds": timeout_seconds}},
             }
             (root / "config.json").write_text(json.dumps(config))
 
@@ -272,16 +288,51 @@ class ObserverHungObserverTest(unittest.TestCase):
             pidinfo_path = root / "pidinfo.json"
             self.assertTrue(_poll_until(lambda: pidinfo_path.exists(), timeout=8.0))
             info = json.loads(pidinfo_path.read_text())
+            # New kill topology: the observer is its own session leader, so
+            # its pgid is its own pid -- never the supervisor's group.
+            self.assertEqual(info["pid"], info["pgid"],
+                              "observer must run as its own session/process-group leader")
+
+            last_group_state = ["unprobed"]
 
             def _group_gone() -> bool:
                 try:
                     os.killpg(info["pgid"], 0)
-                    return False
+                    last_group_state[0] = "alive"
+                    return False  # group still alive; keep polling
                 except ProcessLookupError:
-                    return True
+                    last_group_state[0] = "gone (ESRCH)"
+                    return True  # ESRCH: gone -- success
+                except PermissionError:
+                    # darwin zombie-probe artifact (class docstring):
+                    # SIGKILL delivered, reap pending. Transiently legal;
+                    # persistently, it is the killed-but-never-reaped
+                    # failure and the deadline below reports it as such.
+                    last_group_state[0] = "zombie awaiting reap (EPERM)"
+                    return False
 
-            self.assertTrue(_poll_until(_group_gone, timeout=8.0),
-                             "observer's whole process group must be gone after timeout_seconds")
+            # Deterministic bound: gone within timeout_seconds + epsilon
+            # (epsilon covers supervisor scheduling + kill + reap, generous
+            # for a loaded CI machine but still a hard deadline).
+            self.assertTrue(
+                _poll_until(_group_gone, timeout=timeout_seconds + 6.0),
+                "observer's whole process group must be gone after timeout_seconds; "
+                f"stuck at: {last_group_state[0]}",
+            )
+
+            def _fully_reaped() -> bool:
+                try:
+                    os.kill(info["pid"], 0)
+                    return False  # still exists -- possibly a zombie
+                except ProcessLookupError:
+                    return True  # ESRCH: reaped, no zombie
+                except PermissionError:
+                    self.fail("EPERM probing the observer pid: pid reused by another user's process")
+
+            self.assertTrue(
+                _poll_until(_fully_reaped, timeout=4.0),
+                "observer must be reaped by its supervisor -- no zombie may remain",
+            )
 
 
 class ObserverFailingExitTest(unittest.TestCase):

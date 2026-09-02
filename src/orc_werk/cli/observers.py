@@ -53,12 +53,18 @@ every eligible observer's spawn has been confirmed (or warned-and-skipped),
 never blocking on an observer's own completion. Bounded lifetime enforcement
 (the entry's `timeout_seconds`, default `DEFAULT_TIMEOUT_SECONDS`) is
 delegated to a small stdlib supervisor process this module spawns in its
-own session/process group (`_SUPERVISOR_SOURCE`): the supervisor execs the
-observer as its own child (inheriting the supervisor's process group), waits
-up to the deadline, and -- on timeout -- kills the whole group with
-``SIGKILL``. Dispatch exiting does not orphan that enforcement; it travels
-with the spawned group, never a later dispatch pass's job (`SCN-018` step
-12).
+own session/process group (`_SUPERVISOR_SOURCE`): the supervisor spawns the
+observer as its own child in a SECOND, separate session/process group, waits
+up to the deadline, and -- on timeout -- kills the observer's whole group
+with ``SIGKILL``, reaps it, and exits normally. The supervisor outlives the
+kill (it never kills its own group), so the post-timeout state is
+deterministic: observer group gone, no zombie left behind. Dispatch exiting
+does not orphan that enforcement; it travels with the spawned supervision,
+never a later dispatch pass's job (`SCN-018` step 12). See
+`_SUPERVISOR_SOURCE`'s comment for the full kill-topology rationale
+(verify-seat finding, PR #225 attempt 2) and the honest bounding scope: a
+cooperative-but-hung observer is bounded; a hostile observer calling
+``setsid()`` itself is out of SCN-018's scope.
 
 A hook whose command spawn itself fails (missing or non-executable script)
 is a one-line stderr warning, never a raised error -- the run is unaffected,
@@ -115,18 +121,45 @@ OBSERVER_TRIGGERS = frozenset(TRIGGER_BY_FACT_ID.values())
 
 # A small stdlib supervisor (`-c` script, no extra file to ship/resolve):
 # reads the fact envelope from ITS OWN stdin (forwarded by this module,
-# already closed once written -- see `_spawn_one`), execs the configured
-# observer command as its own child (inheriting this process's own
-# session/process group, established by `start_new_session=True` at THIS
-# supervisor's own spawn below), and enforces `timeout_seconds` locally via
-# `subprocess.communicate(timeout=...)`. On timeout it kills its own whole
-# process group with SIGKILL -- the observer child and itself together --
-# never leaving an orphaned enforcement for a later dispatch pass to find
-# (`SCN-018` step 12). A spawn failure for the observer command itself
-# (e.g. deleted between this module's pre-flight check and the supervisor's
-# own exec -- an inherent TOCTOU window, never widened by design) exits the
-# supervisor quietly: observer spawn failure is CLI-warned synchronously by
-# the pre-flight check in `_spawn_one` below, not asynchronously by the
+# already closed once written -- see `_spawn_one`), spawns the configured
+# observer command as its own child IN ITS OWN, SEPARATE session/process
+# group (`start_new_session=True` on the OBSERVER's Popen below), and
+# enforces `timeout_seconds` locally via
+# `subprocess.communicate(timeout=...)`.
+#
+# Kill topology (verify-seat finding, PR #225 attempt 2): the supervisor
+# OUTLIVES the kill. Supervisor and observer live in SEPARATE process
+# groups precisely so that on timeout the supervisor can
+# `killpg(observer's pgid, SIGKILL)` -- the observer's whole group, never
+# its own -- then REAP the observer (`child.wait()`) and exit 0 normally.
+# The earlier design (observer sharing the supervisor's group, timeout
+# handled by killpg'ing that shared group, supervisor included) made the
+# post-timeout teardown ordering uncontrolled and externally observable: a
+# probe of the group could catch it half-torn-down, and a `killpg` probe
+# against a reused/mixed-state pgid raises EPERM. With the supervisor
+# surviving to reap, the post-timeout state is deterministic: observer
+# group gone, no zombie (the supervisor reaped it), supervisor exits 0.
+# `ProcessLookupError` (ESRCH -- group already gone, e.g. the observer
+# exited between the timeout and the kill) is tolerated as success.
+#
+# `SCN-018` step 12's semantics are unchanged by this topology: enforcement
+# still travels with the spawned supervision (the supervisor itself, still
+# spawned detached in its own session by `_spawn_one` so dispatch exiting
+# orphans nothing), dispatch still blocks only for spawn + the stdin
+# handoff, and no later dispatch pass ever owns any observer lifecycle.
+#
+# Bounding scope, stated honestly: this bounds a COOPERATIVE-but-hung
+# observer (SCN-018's contract). A hostile observer that itself calls
+# setsid() escapes its own process group and therefore this group kill --
+# SCN-018 does not require defeating a hostile observer, only bounding a
+# hung one, and the config is operator-authored and PR-reviewed (Given
+# section) precisely so hostility is out of scope.
+#
+# A spawn failure for the observer command itself (e.g. deleted between
+# this module's pre-flight check and the supervisor's own spawn -- an
+# inherent TOCTOU window, never widened by design) exits the supervisor
+# quietly: observer spawn failure is CLI-warned synchronously by the
+# pre-flight check in `_spawn_one` below, not asynchronously by the
 # supervisor, which dispatch is never waiting on to hear back from.
 _SUPERVISOR_SOURCE = """
 import os, signal, subprocess, sys
@@ -144,6 +177,7 @@ def _main():
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             shell=False,
+            start_new_session=True,
         )
     except OSError:
         return
@@ -151,9 +185,10 @@ def _main():
         child.communicate(input=payload, timeout=timeout)
     except subprocess.TimeoutExpired:
         try:
-            os.killpg(os.getpgrp(), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # observer group already gone between timeout and kill
+        child.wait()  # reap: no zombie survives the supervisor
 
 _main()
 """
