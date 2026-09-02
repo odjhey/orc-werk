@@ -104,8 +104,14 @@ no-mistakes `AssurancePort` adapter).
 
 - `execution.adapter`: `"scripted"` only. There is no real `ExecutionPort`
   adapter to select in 0.5.0+; a deployment that still needs a real
-  executor runs it externally and pushes the outcome in via `orc record`
-  (`ADR-0005`, `PLAYBOOK-AGENT-CLI`).
+  executor runs it externally and pushes the outcome in via
+  `orc record <run> --work <id> --outcome completed|failed` (`ADR-0005`,
+  `PLAYBOOK-AGENT-CLI`) -- the ship-seat sibling of the verdict path's
+  `orc record <run> --work <id> --verdict accepted|rejected` (issue #192).
+  Candidate identity is never settable through `--outcome`: a `git`
+  candidate gets identified by the next `orc dispatch` pass, and a
+  `scripted` candidate's `attempts[work_id][n].candidate` stays
+  hand-authored in the config.
 - `candidate.adapter`: `"scripted"` (default) or `"git"`. `"git"` selects
   `orc_werk.adapters.git.candidate.GitDiffCandidate(repo_path=...)`.
   `repo_path` is REQUIRED when `adapter == "git"`.
@@ -734,12 +740,11 @@ def load_config(path: str) -> Mapping[str, Any]:
     return validate_config(_read_config_mapping(Path(path)))
 
 
-def record_assurance_entry(
-    path: Path, *, work_id: str, attempt_number: int, assurance: Mapping[str, Any]
-) -> Mapping[str, Any]:
-    """Merge one assurance entry into a persisted config and replace atomically."""
-    current = load_config(str(path))
-    updated = json.loads(json.dumps(current))
+def _entry_slot(updated: dict[str, Any], *, work_id: str, attempt_number: int) -> dict[str, Any]:
+    """Shared by `record_assurance_entry`/`record_execution_outcome_entry`:
+    locate (creating if this is the next unwritten slot) the mutable
+    `attempts[work_id][attempt_number - 1]` entry a `record` recording
+    merges into."""
     attempts = updated.setdefault("attempts", {})
     entries = attempts.setdefault(work_id, [])
     index = attempt_number - 1
@@ -750,16 +755,13 @@ def record_assurance_entry(
         )
     if len(entries) == index:
         entries.append({})
-    entry = entries[index]
-    if "assurance" in entry:
-        raise conflict_error(
-            f"attempt {attempt_number} of work {work_id!r} already has a recorded assurance entry",
-            work_id=work_id,
-            attempt_number=attempt_number,
-        )
-    entry["assurance"] = dict(assurance)
-    validate_config(updated)  # reuse all assurance/extension/adapter checks
+    return entries[index]
 
+
+def _atomic_replace_config(path: Path, updated: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Shared by `record_assurance_entry`/`record_execution_outcome_entry`:
+    write `updated` to `path` via a same-directory temp file + `os.replace`
+    (atomic on POSIX), never a partially-written config."""
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -777,6 +779,62 @@ def record_assurance_entry(
             pass
         raise
     return updated
+
+
+def record_assurance_entry(
+    path: Path, *, work_id: str, attempt_number: int, assurance: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Merge one assurance entry into a persisted config and replace atomically."""
+    current = load_config(str(path))
+    updated = json.loads(json.dumps(current))
+    entry = _entry_slot(updated, work_id=work_id, attempt_number=attempt_number)
+    if "assurance" in entry:
+        raise conflict_error(
+            f"attempt {attempt_number} of work {work_id!r} already has a recorded assurance entry",
+            work_id=work_id,
+            attempt_number=attempt_number,
+        )
+    entry["assurance"] = dict(assurance)
+    validate_config(updated)  # reuse all assurance/extension/adapter checks
+    return _atomic_replace_config(path, updated)
+
+
+def record_execution_outcome_entry(
+    path: Path,
+    *,
+    work_id: str,
+    attempt_number: int,
+    outcome: str,
+    extensions: Optional[Mapping[str, Any]] = None,
+) -> Mapping[str, Any]:
+    """`orc record --outcome`'s sibling of `record_assurance_entry`: merge one
+    ship-seat execution outcome into a persisted config and replace
+    atomically. `extensions` (when non-empty) is the attempt entry's
+    registered push channel (issues #105/#106: config-entry `extensions`
+    transport losslessly into `FACT-EXEC-SETTLED.extensions` per
+    `CONF-EXT-003`): `executor-identity/v1` with `role: "ship"` for seat
+    provenance (the same passthrough `record_assurance_entry` uses for
+    `role: "verify"`), and `execution-session/v1` carrying the ship seat's
+    `evidence_refs` -- `FACT-EXEC-SETTLED` has no canonical
+    `evidence_refs`-shaped field the way `FACT-ASSURE-SETTLED` does, and
+    the attempt entry's `artifact_refs` never reaches the journaled fact,
+    so the extension channel is the durable one. Never writes `candidate`:
+    a real (`git`) candidate is identified by the next dispatch pass, and a
+    scripted candidate's payload stays hand-authored."""
+    current = load_config(str(path))
+    updated = json.loads(json.dumps(current))
+    entry = _entry_slot(updated, work_id=work_id, attempt_number=attempt_number)
+    if "outcome" in entry:
+        raise conflict_error(
+            f"attempt {attempt_number} of work {work_id!r} already has a recorded execution outcome",
+            work_id=work_id,
+            attempt_number=attempt_number,
+        )
+    entry["outcome"] = outcome
+    if extensions:
+        entry["extensions"] = dict(extensions)
+    validate_config(updated)  # reuse all outcome/extension/adapter checks
+    return _atomic_replace_config(path, updated)
 
 
 def load_config_overlay(path: str) -> Mapping[str, Any]:
@@ -1176,5 +1234,6 @@ __all__ = [
     "load_config_overlay",
     "load_repo_profile",
     "record_assurance_entry",
+    "record_execution_outcome_entry",
     "validate_config",
 ]

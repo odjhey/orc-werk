@@ -54,6 +54,7 @@ from orc_werk.cli.config import (
     load_config_overlay,
     load_repo_profile,
     record_assurance_entry,
+    record_execution_outcome_entry,
     validate_config,
 )
 from orc_werk.cli.hyperlink import hyperlink_path
@@ -796,7 +797,26 @@ def _dispatch_wait(args: argparse.Namespace) -> int:
 
 
 def cmd_record(args: argparse.Namespace) -> int:
-    """Record, but never dispatch, the current requested assurance verdict."""
+    """Record, but never dispatch, the current requested assurance verdict
+    (issue #192) or, its ship-seat sibling, the current requested execution
+    outcome (`--outcome`). Exactly one of `--verdict`/`--outcome` is legal
+    per invocation -- one seat, one recording."""
+    if (args.verdict is None) == (args.outcome is None):
+        raise validation_error(
+            "orc record requires exactly one of --verdict or --outcome (one seat, one recording "
+            "per invocation)",
+            next_steps=[
+                "verify seat: orc record <run> --work <id> --verdict accepted|rejected",
+                "ship seat: orc record <run> --work <id> --outcome completed|failed",
+            ],
+        )
+    if args.outcome is not None and (args.finding or args.derived_identity is not None):
+        raise validation_error(
+            "--finding/--derived-identity are assurance-only (--verdict); they do not apply to "
+            "--outcome",
+            next_steps=["drop --finding/--derived-identity, or record a --verdict instead"],
+        )
+
     directory, run_id = _resolve_journal(args.target, args.journal)
     _require_journal_file(directory, run_id, target=args.target)
     journal = JSONLJournal(directory)
@@ -810,42 +830,6 @@ def cmd_record(args: argparse.Namespace) -> int:
             work_id=args.work,
             next_steps=[f"actual work ids: {', '.join(sorted(projection.works))}"],
         )
-    if work.state != STATE_ASSURING or not is_pending(work):
-        actual = _awaiting_label(work) if is_pending(work) else work.state
-        raise conflict_error(
-            f"work {args.work!r} is not awaiting an assurance verdict (actual pending state: {actual})",
-            delivery_run_id=run_id,
-            work_id=args.work,
-            actual_pending_state=actual,
-        )
-
-    derived = None
-    if args.derived_identity is not None:
-        try:
-            derived = json.loads(args.derived_identity)
-        except json.JSONDecodeError as exc:
-            raise validation_error("--derived-identity must be a JSON object", value=args.derived_identity) from exc
-        if not isinstance(derived, Mapping):
-            raise validation_error("--derived-identity must be a JSON object", value=args.derived_identity)
-
-    extensions: dict[str, Any] = {}
-    if args.finding:
-        extensions["review-findings/v1"] = {"findings": list(args.finding)}
-    identity = {
-        key: value for key, value in (
-            ("model", args.model), ("session_ref", args.session_ref), ("seat_ref", args.seat_ref)
-        ) if value is not None
-    }
-    if identity:
-        identity["role"] = "verify"
-        extensions["executor-identity/v1"] = identity
-    assurance: dict[str, Any] = {"verdict": args.verdict}
-    if args.evidence_ref:
-        assurance["evidence_refs"] = list(args.evidence_ref)
-    if extensions:
-        assurance["extensions"] = extensions
-    if derived is not None:
-        assurance["derived_identity"] = derived
 
     config_path = layout.config_path(directory, run_id)
     if not config_path.exists():
@@ -854,14 +838,90 @@ def cmd_record(args: argparse.Namespace) -> int:
             delivery_run_id=run_id,
             path=str(config_path),
         )
-    record_assurance_entry(
-        config_path, work_id=args.work, attempt_number=work.attempt_number, assurance=assurance
-    )
-    extension_names = ",".join(sorted(extensions)) or "none"
-    print(
-        f"recorded assurance: run={run_id} work={args.work} verdict={args.verdict} "
-        f"extensions=[{extension_names}]"
-    )
+
+    identity = {
+        key: value for key, value in (
+            ("model", args.model), ("session_ref", args.session_ref), ("seat_ref", args.seat_ref)
+        ) if value is not None
+    }
+
+    if args.outcome is not None:
+        if work.state != STATE_EXECUTING or not is_pending(work):
+            actual = _awaiting_label(work) if is_pending(work) else work.state
+            raise conflict_error(
+                f"work {args.work!r} is not awaiting an execution outcome (actual pending state: "
+                f"{actual})",
+                delivery_run_id=run_id,
+                work_id=args.work,
+                actual_pending_state=actual,
+            )
+        extensions: dict[str, Any] = {}
+        if args.evidence_ref:
+            # Watchtower ruling for this verb: the ship seat's evidence refs
+            # ride execution-session/v1 in the attempt entry's extensions --
+            # the registered provider-neutral push channel
+            # (docs/extensions/execution-session/), transported losslessly
+            # into FACT-EXEC-SETTLED.extensions per CONF-EXT-003. The
+            # canonical attempt-entry `artifact_refs` field never reaches
+            # the journaled fact, so it is not the durable channel.
+            extensions["execution-session/v1"] = {"evidence_refs": list(args.evidence_ref)}
+        if identity:
+            extensions["executor-identity/v1"] = {**identity, "role": "ship"}
+        record_execution_outcome_entry(
+            config_path,
+            work_id=args.work,
+            attempt_number=work.attempt_number,
+            outcome=args.outcome,
+            extensions=extensions or None,
+        )
+        extension_names = ",".join(sorted(extensions)) or "none"
+        print(
+            f"recorded execution outcome: run={run_id} work={args.work} outcome={args.outcome} "
+            f"extensions=[{extension_names}]"
+        )
+    else:
+        if work.state != STATE_ASSURING or not is_pending(work):
+            actual = _awaiting_label(work) if is_pending(work) else work.state
+            raise conflict_error(
+                f"work {args.work!r} is not awaiting an assurance verdict (actual pending state: {actual})",
+                delivery_run_id=run_id,
+                work_id=args.work,
+                actual_pending_state=actual,
+            )
+
+        derived = None
+        if args.derived_identity is not None:
+            try:
+                derived = json.loads(args.derived_identity)
+            except json.JSONDecodeError as exc:
+                raise validation_error(
+                    "--derived-identity must be a JSON object", value=args.derived_identity
+                ) from exc
+            if not isinstance(derived, Mapping):
+                raise validation_error("--derived-identity must be a JSON object", value=args.derived_identity)
+
+        extensions = {}
+        if args.finding:
+            extensions["review-findings/v1"] = {"findings": list(args.finding)}
+        if identity:
+            extensions["executor-identity/v1"] = {**identity, "role": "verify"}
+        assurance: dict[str, Any] = {"verdict": args.verdict}
+        if args.evidence_ref:
+            assurance["evidence_refs"] = list(args.evidence_ref)
+        if extensions:
+            assurance["extensions"] = extensions
+        if derived is not None:
+            assurance["derived_identity"] = derived
+
+        record_assurance_entry(
+            config_path, work_id=args.work, attempt_number=work.attempt_number, assurance=assurance
+        )
+        extension_names = ",".join(sorted(extensions)) or "none"
+        print(
+            f"recorded assurance: run={run_id} work={args.work} verdict={args.verdict} "
+            f"extensions=[{extension_names}]"
+        )
+
     print("next:")
     print("  - " + redispatch_command(
         run_id=run_id,
@@ -1345,20 +1405,46 @@ def build_parser() -> argparse.ArgumentParser:
 
     record_parser = subparsers.add_parser(
         "record",
-        help="record the current requested assurance verdict without dispatching",
-        description="Atomically merge an assurance verdict into a run's persisted config; never dispatches.",
-        epilog="example:\n  orc record my-run --work work-1 --verdict accepted --evidence-ref audit.log",
+        help="record the current requested assurance verdict or execution outcome without dispatching",
+        description="Atomically merge an assurance verdict (--verdict, issue #192) or a ship-seat "
+        "execution outcome (--outcome, its sibling) into a run's persisted config; never dispatches. "
+        "Exactly one of --verdict/--outcome is required.",
+        epilog="examples:\n"
+        "  orc record my-run --work work-1 --verdict accepted --evidence-ref audit.log\n"
+        "  orc record my-run --work work-1 --outcome completed --evidence-ref gh-pr:42\n\n"
+        "--outcome never sets candidate identity: a git-candidate config gets it from the next "
+        "`orc dispatch` pass; a scripted-candidate config keeps hand-authoring "
+        "attempts.<work>[n].candidate in the config.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     record_parser.add_argument("target", help="run id")
-    record_parser.add_argument("--work", required=True, metavar="WORK_ID", help="work awaiting assurance")
-    record_parser.add_argument("--verdict", required=True, choices=("accepted", "rejected"))
-    record_parser.add_argument("--evidence-ref", action="append", default=[], metavar="REF")
-    record_parser.add_argument("--finding", action="append", default=[], metavar="TEXT")
-    record_parser.add_argument("--derived-identity", default=None, metavar="JSON")
-    record_parser.add_argument("--model", default=None, metavar="M")
-    record_parser.add_argument("--session-ref", default=None, metavar="S")
-    record_parser.add_argument("--seat-ref", default=None, metavar="S")
+    record_parser.add_argument("--work", required=True, metavar="WORK_ID", help="work awaiting recording")
+    record_parser.add_argument(
+        "--verdict", default=None, choices=("accepted", "rejected"),
+        help="verify seat: record an assurance verdict (exactly one of --verdict/--outcome required)",
+    )
+    record_parser.add_argument(
+        "--outcome", default=None, choices=("completed", "failed"),
+        help="ship seat: record an execution outcome (exactly one of --verdict/--outcome required); "
+        "never sets candidate identity -- see epilog",
+    )
+    record_parser.add_argument(
+        "--evidence-ref", action="append", default=[], metavar="REF",
+        help="repeatable; with --verdict rides the canonical assurance evidence_refs field, with "
+        "--outcome rides execution-session/v1 in the attempt entry's extensions",
+    )
+    record_parser.add_argument(
+        "--finding", action="append", default=[], metavar="TEXT", help="--verdict only (review-findings/v1)"
+    )
+    record_parser.add_argument(
+        "--derived-identity", default=None, metavar="JSON", help="--verdict only"
+    )
+    record_parser.add_argument(
+        "--model", default=None, metavar="M",
+        help="executor-identity/v1 model; role is verify with --verdict, ship with --outcome",
+    )
+    record_parser.add_argument("--session-ref", default=None, metavar="S", help="executor-identity/v1 session_ref")
+    record_parser.add_argument("--seat-ref", default=None, metavar="S", help="executor-identity/v1 seat_ref")
     record_parser.add_argument(
         "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
     )
