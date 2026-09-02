@@ -5,7 +5,7 @@ adapters.
 Exit codes (`docs/playbooks/cli-usage.md`): `0` on an ACCEPTED-terminal
 (all Work accepted); `1` when any Work is BLOCKED (or otherwise reaches a
 non-accepted terminal state); `2` on a canonical error; `3` when the run is
-non-terminal and pending operator input -- a Work is resting at
+non-terminal and pending settlement -- a Work is resting at
 `EXECUTING`/`ASSURING` because its current attempt's outcome has not been
 recorded yet (`SCN-007`, `STATE-DELIVERY` mechanical fact sequencing item
 7). `3` is the M1a pending/incremental-mode default's distinct in-progress

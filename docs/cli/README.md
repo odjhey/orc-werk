@@ -1026,6 +1026,20 @@ config.json  journal.jsonl  report.html  times.jsonl
 Run lifecycle is directory lifecycle for this layout: a run "exists" once
 its directory does.
 
+**A resolved journal dir that is itself a run directory is refused (issue
+#220).** Because `journal.jsonl`/`config.json` mark a run's own directory,
+pointing `--journal`/`ORC_JOURNAL_DIR`/the `./.orc` default AT one --
+e.g. `--journal .orc/<run-id>` instead of `--journal .orc` -- is refused
+with `ERR-VALIDATION`/exit 2 rather than silently nesting a duplicate run
+underneath it (`.orc/<run-id>/<run-id>/`). The error's `next:` block points
+at the parent directory as the likely intended journal root. This is
+decided once in the CLI's shared journal-dir resolution helper, so every
+command that resolves a journal dir -- `dispatch`, `record`, `status`,
+`history`, `report`, bare `orc` -- refuses identically; a `status`/`history`
+positional argument that deliberately names a run's own directory (the
+"Reading the run" section above) is a different, still-supported form and
+is unaffected.
+
 A **legacy flat `.orc` directory from before issue #55 keeps working
 unmodified** -- every read path (bare `orc` index, `status`/`history` by
 bare run id, `report`/`report --index`/`--all`/`--match`, sidecar
