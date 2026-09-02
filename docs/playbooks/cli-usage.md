@@ -19,7 +19,9 @@ alias orc='PYTHONPATH=src python3 -m orc_werk.cli'
 orc [--limit N] [--before RUN_ID]                               # live text index of ./.orc (issue #43)
 orc config-schema                                               # full dispatch config reference
 orc record <run-id> --work <work-id> --verdict <accepted|rejected> [recording options]
-                                                                   # preferred validated recording sugar; see `orc record -h`
+                                                                   # verify seat: preferred validated recording sugar; see `orc record -h`
+orc record <run-id> --work <work-id> --outcome <completed|failed> [recording options]
+                                                                   # ship seat: execution-outcome sibling of --verdict; exactly one of the two per invocation
 orc dispatch "<intent text>" --config cfg.json [--journal DIR] [--max-attempts N]
 orc dispatch --run-id <id> [--journal DIR]                       # resume existing run
 orc dispatch --run-id <id> --abandon-work <work_id> --abandon-reason "<why>" [--abandon-by "<who>"]
@@ -92,6 +94,24 @@ sugar, or an equivalent merge-only config edit under `attempts` (both
 legal, both journal identically; `orc validate` accepts either). `orc`
 itself only ever reacts to what was pushed; it never infers a provider's
 liveness or settlement by probing a live session or process.
+
+`orc record` carries both seats' recordings, exactly one per invocation
+(`ERR-VALIDATION` when both or neither of `--verdict`/`--outcome` is
+given): the verify seat records `--verdict accepted|rejected` (issue
+#192), and the ship seat records `--outcome completed|failed` — the
+execution-outcome sibling, legal only while that work is pending awaiting
+`execution-outcome` (unknown run/work is `ERR-NOT-FOUND`; not-awaiting and
+already-recorded are `ERR-CONFLICT`, mirroring the verdict path's refusal
+taxonomy). With `--outcome`, repeated `--evidence-ref` values ride
+`execution-session/v1` in the attempt entry's `extensions` and
+`--model`/`--session-ref`/`--seat-ref` become `executor-identity/v1` with
+`role: "ship"` (`role: "verify"` on the verdict path); `--finding`/
+`--derived-identity` remain verdict-only. `--outcome` never sets candidate
+identity: a `git`-candidate run gets identification from the next
+`orc dispatch` pass, and a scripted-candidate run keeps hand-authoring the
+entry's `candidate` payload (the verb merges `outcome` into that same
+hand-authored slot). Like the verdict path, recording never advances the
+run — the command prints the exact resume `orc dispatch` command instead.
 
 For the ship-agent/verification-agent protocol (role separation, the
 independent-derivation rule, and the exact `orc record` invocations each
