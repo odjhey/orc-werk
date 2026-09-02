@@ -155,7 +155,7 @@ recorded here.
     section: a mirror failure is stderr-only and never alters dispatch's
     exit code or stdout; observer hooks make the identical promise).
 11. A hook whose command spawn itself fails (missing or non-executable
-    script, resolution outside `cwd`) is a one-line stderr warning per
+    script) is a one-line stderr warning per
     dispatch pass, per triggering fact — never a raised error, never a
     changed exit code. The run is unaffected; dispatch proceeds exactly as
     if the observer had not been configured.
