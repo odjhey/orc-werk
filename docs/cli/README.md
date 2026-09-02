@@ -184,7 +184,7 @@ usage: orc dispatch [-h] [--config CONFIG] [--journal JOURNAL]
 ```
 
 Dispatch an intent and run the delivery state machine to a resting point
-(terminal, or pending awaiting operator-recorded input).
+(terminal, or pending awaiting settlement observation or operator-recorded input).
 
 | Flag | Default | Notes |
 |---|---|---|
@@ -217,7 +217,7 @@ orc dispatch "pending demo" --config pending-cfg.json --journal ./.orc --run-id 
 run: demo-pending
 journal: /abs/path/.orc/demo-pending/journal.jsonl
 work work-1: state=EXECUTING attempts=1 candidate_fingerprint=- pending=true awaiting=execution-outcome attempt=1
-pending: run is non-terminal, awaiting operator-recorded input for: work-1
+pending: run is non-terminal, awaiting settlement observation or operator-recorded input for: work-1
 next:
   - record the execution outcome for work(s): work-1
   - then re-run: orc dispatch 'pending demo' --config /abs/path/.orc/demo-pending/config.json --journal /abs/path/.orc --run-id demo-pending
@@ -774,7 +774,7 @@ with `next` guidance (issue #94), exit `2`; every other exit is `0`.
 | `0` | all Work `ACCEPTED` |
 | `1` | some Work `BLOCKED` (or another non-accepted terminal state) |
 | `2` | usage/config error -- canonical error JSON on stderr: `{"error": "ERR-*", "message": "...", "details": {...}}`, optionally with the additive `"next": ["next-step guidance", "..."]` field |
-| `3` | run non-terminal, pending operator-recorded input -- safe to re-check; the current attempt's outcome (`execution-outcome`) or verdict (`assurance-verdict`) has not been recorded yet |
+| `3` | run non-terminal, pending settlement -- safe to re-check; the current attempt's outcome (`execution-outcome`) or verdict (`assurance-verdict`) has not been observed or recorded yet. Re-dispatch is the poll: for a self-observing adapter (e.g. `acp`) the re-dispatch pass itself observes and journals the settlement once the provider's turn ends -- no hand-recorded `attempts` entry is needed (issue #210); operator-recorded inputs (scripted outcomes, assurance verdicts) must be recorded first, then re-dispatched |
 
 Exit `3`'s semantics -- what "pending" means, why nothing is fabricated for
 a missing settlement, and why re-dispatch is the correct and only resume

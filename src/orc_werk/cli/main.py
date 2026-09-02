@@ -526,7 +526,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     if exit_code == EXIT_PENDING:
         pending_ids = [wid for wid, wp in projection.works.items() if is_pending(wp)]
         print(
-            "pending: run is non-terminal, awaiting operator-recorded input for: "
+            "pending: run is non-terminal, awaiting settlement observation or operator-recorded input for: "
             + ", ".join(sorted(pending_ids) if pending_ids else sorted(projection.works))
         )
     if args.abandon_work is not None:
@@ -746,7 +746,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     if exit_code == EXIT_PENDING:
         pending_ids = [wid for wid, wp in projection.works.items() if is_pending(wp)]
         print(
-            "pending: run is non-terminal, awaiting operator-recorded input for: "
+            "pending: run is non-terminal, awaiting settlement observation or operator-recorded input for: "
             + ", ".join(sorted(pending_ids) if pending_ids else sorted(projection.works))
         )
     # issue #43: same shared "next:" mapping as dispatch. `status` never
@@ -995,7 +995,9 @@ exit codes:
   0   all Work ACCEPTED
   1   some Work BLOCKED (or another non-accepted terminal state)
   2   usage/config error (canonical error JSON on stderr)
-  3   run non-terminal, pending operator-recorded input -- safe to re-check
+  3   run non-terminal, pending settlement observation or operator-recorded
+      input -- safe to re-check; re-dispatch itself observes and journals
+      adapter-observed settlements (e.g. acp) once the provider's turn ends
 
 - errors are always canonical JSON on stderr, never a Python traceback:
   {"error": "ERR-*", "message": "...", "details": {...}}.
@@ -1074,7 +1076,7 @@ def build_parser() -> argparse.ArgumentParser:
         "dispatch",
         help="dispatch an intent and run to a terminal or pending state",
         description="Dispatch an intent and run the delivery state machine to a resting point "
-        "(terminal, or pending awaiting operator-recorded input).",
+        "(terminal, or pending awaiting settlement observation or operator-recorded input).",
         epilog="examples:\n"
         '  orc dispatch "ship the widget" --config cfg.json\n'
         '  orc dispatch "ship the widget" --config cfg.json --journal ./.orc --max-attempts 3\n'
@@ -1082,8 +1084,10 @@ def build_parser() -> argparse.ArgumentParser:
         '  orc dispatch "reply with the word ping" --config acp-cfg.json  # real Pi execution:\n'
         '    # acp-cfg.json: {"execution": {"adapter": "acp", "cwd": "/abs/worktree"},\n'
         '    #                "candidate": {"adapter": "git", "repo_path": "/abs/worktree"}}\n'
-        "    # exits 3 (pending) while Pi works; re-run the identical command to poll; once\n"
-        "    # settled, record the assurance verdict in the config's attempts and re-run again\n\n"
+        "    # exits 3 (pending) while Pi works; re-run the identical command to poll --\n"
+        "    # the re-dispatch itself observes and journals Pi's settlement once the turn\n"
+        "    # ends (no hand-recorded outcome needed; issue #210); then record the\n"
+        "    # assurance verdict in the config's attempts and re-run again\n\n"
         "  orc dispatch --run-id demo-run --journal ./.orc \\\n"
         '    --abandon-work work-1 --abandon-reason "adapter session orphaned"  # TASK-M3B-001:\n'
         "    # operator-only. Legal only when work-1 rests at an unresolved candidate-\n"

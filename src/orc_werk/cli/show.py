@@ -604,7 +604,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     if exit_code == _EXIT_PENDING:
         pending_ids = [wid for wid, wp in projection.works.items() if is_pending(wp)]
         print(
-            "pending: run is non-terminal, awaiting operator-recorded input for: "
+            "pending: run is non-terminal, awaiting settlement observation or operator-recorded input for: "
             + ", ".join(sorted(pending_ids) if pending_ids else sorted(projection.works))
         )
     for line in render_next_block(
