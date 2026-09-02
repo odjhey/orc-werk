@@ -875,22 +875,20 @@ def cmd_record(args: argparse.Namespace) -> int:
                 actual_pending_state=actual,
             )
         extensions: dict[str, Any] = {}
-        if args.evidence_ref:
-            # Watchtower ruling for this verb: the ship seat's evidence refs
-            # ride execution-session/v1 in the attempt entry's extensions --
-            # the registered provider-neutral push channel
-            # (docs/extensions/execution-session/), transported losslessly
-            # into FACT-EXEC-SETTLED.extensions per CONF-EXT-003. The
-            # canonical attempt-entry `artifact_refs` field never reaches
-            # the journaled fact, so it is not the durable channel.
-            extensions["execution-session/v1"] = {"evidence_refs": list(args.evidence_ref)}
         if identity:
             extensions["executor-identity/v1"] = {**identity, "role": "ship"}
+        # Watchtower ruling (issue #224, mirroring the verdict path's
+        # evidence_refs->FACT-ASSURE-SETTLED precedent): the ship seat's
+        # evidence refs ride the canonical attempt-entry `artifact_refs`
+        # field, transported losslessly into FACT-EXEC-SETTLED.artifact_refs
+        # (PROTOCOL-FACTS). execution-session/v1 is reserved for real
+        # provider session provenance and is no longer emitted here.
         record_execution_outcome_entry(
             config_path,
             work_id=args.work,
             attempt_number=work.attempt_number,
             outcome=args.outcome,
+            artifact_refs=list(args.evidence_ref) or None,
             extensions=extensions or None,
         )
         extension_names = ",".join(sorted(extensions)) or "none"
@@ -1450,7 +1448,7 @@ def build_parser() -> argparse.ArgumentParser:
     record_parser.add_argument(
         "--evidence-ref", action="append", default=[], metavar="REF",
         help="repeatable; with --verdict rides the canonical assurance evidence_refs field, with "
-        "--outcome rides execution-session/v1 in the attempt entry's extensions",
+        "--outcome rides the canonical attempt-entry artifact_refs field",
     )
     record_parser.add_argument(
         "--finding", action="append", default=[], metavar="TEXT", help="--verdict only (review-findings/v1)"
@@ -1505,8 +1503,8 @@ def build_parser() -> argparse.ArgumentParser:
         "refs",
         help="list every resolvable reference in a run, or resolve one/all inline",
         description="Pure journal projection: list every resolvable reference recorded for one "
-        "run (execution-session/v1 session/transcript refs, assurance evidence_refs, candidate "
-        "identity, the Beads mirror when configured), each indexed and shown with a resolve "
+        "run (execution-session/v1 session/transcript refs, execution artifact_refs, assurance "
+        "evidence_refs, candidate identity, the Beads mirror when configured), each indexed and shown with a resolve "
         "command. --resolve/--resolve-all (TASK-M3C-002) execute that SAME command -- never a "
         "second command vocabulary -- vetted read-only at construction (cat; git show/--stat; "
         "bd list/show; historical providers' acpx sessions history/show and axi status/logs "

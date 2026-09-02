@@ -16,7 +16,8 @@ command journals or persists itself. It reuses:
 - `orc_werk.cli.journal_reading`'s target resolution / `ERR-NOT-FOUND`
   affordance (same as `status`/`history`/`report`/`refs`);
 - `orc_werk.cli.refs`'s per-source ref-row builders (`_execution_session_
-  rows`, `_evidence_ref_rows`, `_candidate_rows`, `_load_persisted_config`)
+  rows`, `_artifact_ref_rows`, `_evidence_ref_rows`, `_candidate_rows`,
+  `_load_persisted_config`)
   for the NEXT/DEEPER resolve commands and the persisted-config read --
   imported and scoped per attempt, never reimplemented;
 - `orc_werk.cli.report`'s `_load_times_sidecar` for attempt duration;
@@ -76,6 +77,7 @@ from orc_werk.cli.journal_reading import (
     _resolve_journal,
 )
 from orc_werk.cli.refs import (
+    _artifact_ref_rows,
     _candidate_rows,
     _evidence_ref_rows,
     _execution_session_rows,
@@ -269,6 +271,9 @@ def _render_executed(records: Sequence[Mapping[str, Any]], times: Mapping[int, s
     if duration is not None:
         lines.append(f"    duration: {duration}")
     lines.append(f"    outcome: {data.get('outcome', '-')}")
+    artifact_refs = data.get("artifact_refs")
+    if artifact_refs:
+        lines.append(f"    artifact_refs: {artifact_refs}")
     return lines
 
 
@@ -405,6 +410,7 @@ def _render_next_deeper(records: Sequence[Mapping[str, Any]]) -> list[str]:
     rows = []
     settled = _first(records, "fact", FACT_EXEC_SETTLED)
     rows.extend(_execution_session_rows([settled] if settled is not None else []))
+    rows.extend(_artifact_ref_rows([settled] if settled is not None else []))
     assure_settled = _first(records, "fact", FACT_ASSURE_SETTLED)
     rows.extend(_evidence_ref_rows([assure_settled] if assure_settled is not None else []))
     identify_effect = _first(records, "effect", FX_IDENTIFY_CANDIDATE)

@@ -522,6 +522,16 @@ class Orchestrator:
                 work_id=work_id,
                 execution_id=wp.current_execution_id,
                 outcome=observation.outcome,
+                # PROTOCOL-FACTS (issue #224), mirroring the FACT-ASSURE-
+                # SETTLED evidence_refs precedent immediately below in
+                # _poll_assurance: fold ExecutionObservation.artifact_refs
+                # into the fact when the observation carried any, absent
+                # otherwise -- never fabricated.
+                **(
+                    {"artifact_refs": list(observation.artifact_refs)}
+                    if observation.artifact_refs
+                    else {}
+                ),
                 # CONF-EXT-003: transport ExecutionObservation.extensions
                 # losslessly into the journal envelope -- the orchestrator
                 # never inspects/branches on them (CONF-EXT-006), only
