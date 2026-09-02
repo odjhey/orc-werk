@@ -1,12 +1,14 @@
 ---
 id: TASK-M3B-002
 type: task-card
-status: current
+status: superseded
 authority: normative
 description: no-mistakes inspect-side identity guard — an already-bound divergent provider run must never settle this candidate's verdict (issue #92 scope extension).
 implements: []
 verifies: []
 ---
+
+> **Superseded** (operator ruling ADR-0005, issue #214). The no-mistakes `AssurancePort` adapter this guard protected was **removed** in 0.5.0, pre-1.0, no backward compatibility; the last release carrying it is v0.4.1. See `docs/adapters/command/README.md` (`ADAPTER-COMMAND`) for the push-shaped command assurance adapter and `docs/scenarios/SCN-015-command-assurance.md` (issue #194). Retained as historical reference only.
 
 # TASK-M3B-002 — no-mistakes inspect-side identity guard
 

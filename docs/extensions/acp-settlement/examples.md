@@ -1,11 +1,13 @@
 ---
 id: EXT-ACP-SETTLEMENT-V1-EXAMPLES
 type: example
-status: current
+status: superseded
 authority: informative
 version: 1
 description: Example acp-settlement/v1 diagnostics payload.
 ---
+
+> **Superseded** (operator ruling ADR-0005, issue #214). The `acp` `ExecutionPort` adapter was **removed** in 0.5.0, pre-1.0, no backward compatibility; the last release carrying it is v0.4.1. See `docs/decisions/ADR-0005-push-recording-not-pull-observation.md` and `docs/adapters/acp/README.md`. Retained as historical reference only.
 
 # `acp-settlement/v1` examples
 

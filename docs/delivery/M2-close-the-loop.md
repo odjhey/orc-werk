@@ -76,6 +76,8 @@ scheduled — M2 does not schedule it.
 
 ## Phase M2a — No-mistakes AssurancePort
 
+(2026-09-02: the adapter this phase delivered was descoped by ADR-0005; docs superseded, code removed in 0.5.0. The delivery record below is history.)
+
 Automates the verdict seat (`TASK-M2-001`).
 
 - A real `PORT-ASSURANCE` adapter backed by `no-mistakes` (the operator's

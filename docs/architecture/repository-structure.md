@@ -65,7 +65,7 @@ core -> ports
 core -> app
 core -> adapters
 core -> cli
-core -> Beads/zxro/ACP/Git/no-mistakes/provider SDKs
+core -> Beads/zxro/Git/command/provider SDKs
 ports -> adapters
 app -> concrete provider internals
 ```
@@ -90,7 +90,7 @@ The application layer may orchestrate I/O but must not redefine domain semantics
 
 ### `orc_werk.adapters`
 
-Contains provider translations. M0 starts with dependency-free `memory` and `scripted` adapters. Real adapters for Beads, zxro/ACP, Git, no-mistakes, CI, or future systems are added only after the pure contracts are proven.
+Contains provider translations. M0 starts with dependency-free `memory` and `scripted` adapters. Real adapters for Beads, zxro, Git, command assurance, CI, or future systems are added only after the pure contracts are proven. (The `acp` `ExecutionPort` and no-mistakes `AssurancePort` adapters that once lived here were removed in 0.5.0, pre-1.0, no backward compatibility — `ADR-0005`; see `docs/adapters/acp/README.md` and `docs/adapters/no-mistakes/README.md` for the superseded, historical-reference-only docs.)
 
 Provider-native vocabulary stays inside this layer and `docs/adapters/`.
 

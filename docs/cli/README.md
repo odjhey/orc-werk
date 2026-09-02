@@ -18,8 +18,8 @@ This document does not replace the two playbooks it cross-links:
 
 - `docs/playbooks/cli-usage.md` (`PLAYBOOK-CLI-USAGE`) -- the living
   operational guide, including the known-issues ledger consulted while
-  dogfooding live, real `acp`/`git` port wiring, and the full journal-layout
-  discussion.
+  dogfooding live, real `git`/command-assurance port wiring, and the full
+  journal-layout discussion.
 - `docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`) -- ship-agent /
   verification-agent seat discipline for recording settlements and verdicts.
 - `.agents/skills/orc-ledger/SKILL.md` -- the fresh-session onboarding
@@ -166,7 +166,7 @@ orc validate run.json --journal ./.orc --no-profile  # standalone file check
 PASS: run.json
 layers: profile: /abs/path/.orc/profile.json (candidate, execution) + config: run.json
 plan works: work-1 (default)
-adapters: execution=acp candidate=git assurance=scripted
+adapters: execution=scripted candidate=git assurance=command
 ```
 
 When no profile is present, validation is identical to standalone behavior
@@ -343,13 +343,16 @@ refreshes the persisted copy. `next:` re-dispatch affordances always name
 the durable in-run-dir config path, never the caller's own ephemeral
 `--config` path, once a persisted copy exists.
 
-**Real `acp`/`git` execution** (a real agent driven over ACP, a real git
-worktree fingerprinted as the candidate) is config-driven the same way --
-see `docs/playbooks/cli-usage.md`'s "Real execution" section for the
-`execution`/`candidate` config blocks and the full walkthrough. Provider
-vocabulary (ACP session semantics, git diff fingerprinting) lives in the
-adapters' own mapping docs: `docs/adapters/acp/mapping.md`,
-`docs/adapters/git/mapping.md`.
+**Real `git` candidate identification with an external executor** (a real
+agent or script driven outside `orc`'s observation, a real git worktree
+fingerprinted as the candidate, its outcome pushed in via `orc record` or a
+merge-only config edit per `ADR-0005`) is config-driven the same way --
+see `docs/playbooks/cli-usage.md`'s "External executors record in
+(ADR-0005)" and "Generic command assurance config" sections for the
+`candidate`/`assurance` config blocks and the full walkthrough. Provider
+vocabulary (git diff fingerprinting, command-assurance invocation) lives in
+the adapters' own mapping docs: `docs/adapters/git/mapping.md`,
+`docs/adapters/command/README.md`.
 
 ### Bare `orc` run index
 
@@ -518,9 +521,10 @@ just the one named), per attempt:
   truncated preview of the actual text (`--limit`-style definitive count,
   never dumped in full) with a pointer at where the full text lives (the
   persisted config path for a brief, `orc status <run>` for the intent).
-  When `execution.adapter` is not `"acp"` (the default `"scripted"`), no
-  prompt is ever sent -- rendered honestly as `scripted execution -- no
-  prompt sent to the executor`, never guessed.
+  Since 0.5.0, `execution.adapter` is always `"scripted"` (`ADR-0005`
+  removed the `acp` `ExecutionPort` adapter, the only real-executor
+  option), so no prompt is ever sent -- rendered honestly as `scripted
+  execution -- no prompt sent to the executor`, never guessed.
 - **EXECUTED** -- provider, `execution_id`, session/resume refs when the
   attempt carries `execution-session/v1` provenance, duration (the times
   sidecar's started->settled delta -- absent when the sidecar has no
@@ -571,9 +575,9 @@ work work-1:
   attempt 1:
   ASKED: prompt = briefs.work-1 (persisted config)
     text: create the widget file and commit it
-  EXECUTED: provider=acpx-pi execution_id=acpx-pi:orcw-abc123:work-1
-    session: 01a0...
-    resume: orcw-abc123
+  EXECUTED: provider=external-agent execution_id=ext-agent:sess-9f2c:work-1
+    session: sess-9f2c
+    resume: sess-9f2c
     duration: 41.529s (2026-08-29T00:48:54.006149Z -> 2026-08-29T00:49:35.535384Z)
     outcome: completed
   PRODUCED: candidate=cand-git-abc123 fingerprint=fp-abc123
@@ -581,7 +585,7 @@ work work-1:
     repo_path: /abs/worktree
   JUDGED: assurance=assure-xyz verdict=accepted
   NEXT/DEEPER:
-    session      acpx-pi          01a0...  (resolve: acpx pi sessions history 01a0...)
+    session      external-agent   sess-9f2c  (resolve: -)
     candidate    -                {"head_sha":"9dccd6f...","repo_path":"/abs/worktree"}  (resolve: git -C /abs/worktree show 9dccd6f... --stat)
   now at ACCEPTED (attempts=1)
 next:
@@ -631,10 +635,10 @@ orc refs my-run-id --resolve-all           # every ref with a resolve command, h
 
 ```text
 run: my-run-id
-[1] session      acpx-pi          sess-9f2c  (resolve: acpx pi sessions history sess-9f2c)
-[2] resume       acpx-pi          resume-ref-9f2c  (resolve: -)
-[3] transcript   acpx-pi          /abs/path/transcript.log  (resolve: cat /abs/path/transcript.log)
-[4] evidence     -                {"command":"no-mistakes axi status --run r1", ...} verdict=rejected  (resolve: no-mistakes axi status --run r1)
+[1] session      external-agent   sess-9f2c  (resolve: -)
+[2] resume       external-agent   sess-9f2c  (resolve: -)
+[3] transcript   external-agent   /abs/path/transcript.log  (resolve: cat /abs/path/transcript.log)
+[4] evidence     -                {"exit_code":0,"script":"/abs/repo/assure.sh","script_sha256":"306c6ca7...","timed_out":false} verdict=accepted  (resolve: -)
 [5] candidate    -                {"branch":"feature/widget","head_sha":"abc123","repo_path":"/abs/worktree"}  (resolve: git -C /abs/worktree show abc123 --stat)
 [6] mirror       beads            label=run:my-run-id workspace=/abs/bd-workspace  (resolve: bd --json -C /abs/bd-workspace list --label run:my-run-id)
 ```
@@ -658,8 +662,8 @@ candidate, mirror, `candidate-pr`) or carried as journal DATA (an
 `evidence_refs` entry's `command`/`*_command` field) -- is vetted against
 a hard, per-tool READ-ONLY allowlist at construction time, before it is
 ever offered for execution (the same judge-only bar
-`docs/adapters/no-mistakes/mapping.md`'s "Judge-only ruling" sets for the
-assurance adapter). Vetting has TWO layers, both required: (1) a
+`docs/adapters/command/mapping.md`'s read-only-judge rule sets for the
+command assurance adapter). Vetting has TWO layers, both required: (1) a
 tool+subcommand allowlist -- `cat <path>`; `git [-C <path>] show ...` (no
 other git subcommand); `acpx <agent> sessions <history|show> ...`; `bd
 [--json] [-C <path>] <list|show> ...`; `no-mistakes axi <status|logs>
@@ -667,14 +671,20 @@ other git subcommand); `acpx <agent> sessions <history|show> ...`; `bd
 AFTER the subcommand (`_vet_flags`), because vetting the subcommand alone
 is an arbitrary-file-WRITE hole -- `git show --output=<path>` is a
 documented git write primitive that passes layer 1 (its subcommand is
-`show`). Layer 2 refuses git's write/exec options (`--output`/`-o`/`-O`,
+`show`). **Note (`ADR-0005` ruling A2):** the `acpx`/`no-mistakes` tool
+entries above are retained specifically to resolve refs recorded by
+historical journals from the now-removed `acp`/`no-mistakes` adapters
+(`v0.4.1` and earlier); read-only resolution of a past run's recorded ref
+is not pull-observation of a live process, so this allowlist surface
+stays live even though those adapters themselves are gone. Layer 2
+refuses git's write/exec options (`--output`/`-o`/`-O`,
 `--ext-diff`, `--textconv`) and any unknown flag (fail-closed), while
 allowing only curated read/render-only flags (`--stat`, `--numstat`,
 `--name-only`, ...); a value-taking flag's value is consumed unparsed so
 it can never be re-read as a flag. Journal content is attacker-
 influencable input (any executor that filled a seat wrote some of it), so
-interpolated identity tokens (candidate `head_sha`/`repo_path`, `acpx`
-agent/session ref) that begin with `-` are ALSO rejected at build time --
+interpolated identity tokens (candidate `head_sha`/`repo_path`, provider
+session/agent ref) that begin with `-` are ALSO rejected at build time --
 the builder never mints a token that could be read as a flag (`git show
 --stat -- <sha>` can't guard the sha positionally: git would read it as a
 pathspec, so the guard is build-time `-`-lead rejection plus the flag
@@ -706,7 +716,7 @@ exit stays `0`; only a bad selector or missing run is a hard usage error.
 ```text
 $ orc refs my-run-id --resolve 3
 run: my-run-id
---- [3] transcript (acpx-pi): cat /abs/path/transcript.log ---
+--- [3] transcript (external-agent): cat /abs/path/transcript.log ---
 <the transcript file's contents, verbatim, capped at 8 KiB>
 ```
 
@@ -851,7 +861,7 @@ with `next` guidance (issue #94), exit `2`; every other exit is `0`.
 | `0` | all Work `ACCEPTED` |
 | `1` | some Work `BLOCKED` (or another non-accepted terminal state) |
 | `2` | usage/config error -- canonical error JSON on stderr: `{"error": "ERR-*", "message": "...", "details": {...}}`, optionally with the additive `"next": ["next-step guidance", "..."]` field |
-| `3` | run non-terminal, pending settlement -- safe to re-check; the current attempt's outcome (`execution-outcome`) or verdict (`assurance-verdict`) has not been observed or recorded yet. Re-dispatch is the poll: for a self-observing adapter (e.g. `acp`) the re-dispatch pass itself observes and journals the settlement once the provider's turn ends -- no hand-recorded `attempts` entry is needed (issue #210); operator-recorded inputs (scripted outcomes, assurance verdicts) must be recorded first, then re-dispatched |
+| `3` | run non-terminal, pending settlement -- safe to re-check; the current attempt's outcome (`execution-outcome`) or verdict (`assurance-verdict`) has not been observed or recorded yet. Re-dispatch is the poll: for an external executor that pushes its observation in (`ADR-0005`) the re-dispatch pass itself picks up and journals the settlement once it has been recorded -- no hand-recorded `attempts` entry is needed beyond that push (issue #210); operator-recorded inputs (scripted outcomes, assurance verdicts) must be recorded first, then re-dispatched |
 | `4` | `dispatch --wait --timeout <T>` only -- `T` seconds elapsed with the pending fingerprint unchanged (`SCN-017`, issue #210); re-invoking (with or without `--wait`) is always safe, the run is exactly as pending as before |
 
 Exit `3`'s semantics -- what "pending" means, why nothing is fabricated for
@@ -931,7 +941,7 @@ convention" sections -- this reference does not duplicate it.
 ## Related
 
 - `docs/playbooks/cli-usage.md` (`PLAYBOOK-CLI-USAGE`) -- operational
-  guide, known-issues ledger, real `acp`/`git` port config, journal-layout
+  guide, known-issues ledger, real `git`/command-assurance port config, journal-layout
   detail.
 - `docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`) -- ship/verify
   seat discipline for recording settlements, candidates, and verdicts.

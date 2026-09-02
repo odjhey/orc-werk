@@ -6,7 +6,7 @@ The Python reference implementation mirrors the contract structure:
 - `conformance/` — reusable provider-independent port conformance suites;
 - `scenarios/` — executable forms of the normative golden scenarios.
 
-The full M0 test suite must run without Beads, zxro, ACP/acpx, Git, no-mistakes, CI, or other integration dependencies installed.
+The full M0 test suite must run without Beads, zxro, Git, command-assurance scripts, CI, or other integration dependencies installed.
 
 ## Post-MVP test hardening
 

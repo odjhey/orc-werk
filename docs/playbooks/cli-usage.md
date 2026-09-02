@@ -36,7 +36,7 @@ orc onboard --print-agents-block                                                
 
 - Journals default to `./.orc/<run_id>/journal.jsonl` (gitignored — durable run artifacts never belong in version control; issue #55 H1 per-run directory layout — see "Journal layout" below). A bare run id passed to `status`/`history` resolves against the same default. **Journal dir precedence (issue #55 H2):** `--journal` flag > `ORC_JOURNAL_DIR` env var > `./.orc`.
 - **Bare `orc` (no subcommand)** prints a live text index of the default journal dir instead of an argparse usage error (`orc --help` remains the unchanged command reference): run id, per-work state, attempts, and pending flags, one line per run, most-recently-active first, truncated to the last 30 with a definitive `... showing last N of M runs` hint (`orc report --index` renders the full, unpaginated set as HTML). `--before RUN_ID` selects the page older than that run in index order. An empty/missing journal dir prints a definitive `0 runs in <abs dir>` plus a dispatch affordance.
-- Exit codes: `0` all work ACCEPTED · `1` any work BLOCKED (or other non-accepted terminal) · `2` usage/config error (canonical error JSON on stderr) · `3` run non-terminal, pending settlement (`TASK-M1-002`, `SCN-007`) — a work is resting at `EXECUTING`/`ASSURING` because its current attempt's outcome has not been observed or recorded yet · `4` `dispatch --wait --timeout <T>` only: `T` seconds elapsed with the pending fingerprint unchanged (`SCN-017`, issue #210) — the run is exactly as pending as before, re-invoking is always safe. Re-dispatch is the poll: for a self-observing adapter (e.g. `acp`) the re-dispatch pass itself observes and journals the settlement once the provider's turn ends — no hand-recorded `attempts` entry is needed (issue #210); operator inputs must be recorded first, then re-dispatched; `dispatch`/`status` output names which work(s) and what they're awaiting (`execution-outcome` or `assurance-verdict`), followed by a `next:` block naming the exact runnable next command(s) (issue #43 — see "Design principles" below).
+- Exit codes: `0` all work ACCEPTED · `1` any work BLOCKED (or other non-accepted terminal) · `2` usage/config error (canonical error JSON on stderr) · `3` run non-terminal, pending settlement (`TASK-M1-002`, `SCN-007`) — a work is resting at `EXECUTING`/`ASSURING` because its current attempt's outcome has not been observed or recorded yet · `4` `dispatch --wait --timeout <T>` only: `T` seconds elapsed with the pending fingerprint unchanged (`SCN-017`, issue #210) — the run is exactly as pending as before, re-invoking is always safe. Re-dispatch is the poll: for an external executor that pushes its observation in (`ADR-0005`) the re-dispatch pass itself picks up and journals the settlement once it has been recorded — no hand-recorded `attempts` entry is needed beyond that push (issue #210); operator inputs must be recorded first, then re-dispatched; `dispatch`/`status` output names which work(s) and what they're awaiting (`execution-outcome` or `assurance-verdict`), followed by a `next:` block naming the exact runnable next command(s) (issue #43 — see "Design principles" below).
 - **Blocking wait (`dispatch --wait`, `SCN-017`, issue #210).** `orc dispatch ... --wait [--timeout SECONDS] [--poll-interval SECONDS]` internalizes the re-dispatch poll loop instead of leaving it to the caller: it re-dispatches (config re-read included) until the run's *pending fingerprint* — the set of `(work_id, attempt_number, awaiting)` tuples across pending works — moves from its baseline (a read-only replay of the journal before the first internal pass) or the run goes terminal, then prints that pass's ordinary report and exits `3`/`0`/`1` exactly as a non-`--wait` dispatch observing the same resting state would. Nothing is printed for an internal pass that finds no movement — silence, not partial progress, until the wait ends — and waiting itself journals nothing beyond what its ordinary passes would have (`INV-018`, `INV-020`): N internal passes of a `--wait` invocation produce a journal record-for-record identical to N manual re-dispatches. Without `--timeout`, `--wait` blocks indefinitely; with it, an unchanged fingerprint after `SECONDS` exits `4` (above). `--timeout` without `--wait` is `ERR-VALIDATION`; so is combining `--wait` with `--abandon-work` (a one-shot operator verb, not a wait semantic). `--poll-interval` (default `5.0`) controls only the internal sleep and — like `--timeout` — never appears in journaled data (determinism hard bar, `DELIVERY-STANCE`). Killing the waiting process loses nothing: every journaled fact was journaled by a completed ordinary pass (`SCN-017` step 10).
 - **`history` is paginated**: last 30 records by default (`--limit 0` for all; `--since-seq SEQ` filters in the newer direction and `--before-seq SEQ` selects the page in the older direction), with a definitive `... showing last N of M` hint whenever the output was truncated — never an ambiguous "...more".
 - Re-running `dispatch` over an existing journal is a safe no-op resume (idempotent by effect key); it is also the crash-recovery mechanism. The blessed concise form is `orc dispatch --run-id <id>` (plus `--journal DIR` when non-default); the original positional-intent form remains supported.
@@ -82,83 +82,23 @@ An `attempts.<work_id>[n].assurance` entry accepts `verdict`, `states`, `evidenc
 
 A failed subset comparison returns `ERR-CONFLICT` and exit `2` before journaling any Fact; the canonical error's `next` affordances carry both identity payloads. The verdict does not bind, and the run remains pending at `ASSURING`: fix the entry and re-dispatch, or ask the operator to use `DEC-ABANDON-ATTEMPT` when the bound candidate is genuinely stale. A match records the verdict exactly as before, with no provenance echo. Omitting `derived_identity` preserves the prior behavior byte-for-byte. See `CONF-ASSURE-005` and `SCN-013`.
 
-## Real execution: `acp`/`git` config (`TASK-M1-005` CLI wiring)
+## External executors record in (ADR-0005)
 
-The config above uses the `scripted` adapters (both `execution`/`candidate` default to `"scripted"`) — deterministic test doubles, useful for CI and simulation. To have `orc dispatch` hand work to a real agent (Pi, over ACP) and fingerprint a real git worktree instead, add `execution`/`candidate` blocks:
+Orc Werk never pull-observes another process's lifecycle (`ADR-0005`,
+`docs/decisions/ADR-0005-push-recording-not-pull-observation.md`). A real
+agent driving work stays external to `orc`, runs the turn on its own, and
+then **pushes** its observation in — either via the validated `orc record`
+sugar, or an equivalent merge-only config edit under `attempts` (both
+legal, both journal identically; `orc validate` accepts either). `orc`
+itself only ever reacts to what was pushed; it never infers a provider's
+liveness or settlement by probing a live session or process.
 
-```json
-{ "execution": {"adapter": "acp", "cwd": "/abs/path/to/worktree", "agent": "pi",
-                 "thought_level": "low", "model": null, "approve_all": false},
-  "candidate": {"adapter": "git", "repo_path": "/abs/path/to/worktree"} }
-```
-
-- `execution.adapter: "acp"` selects `orc_werk.adapters.acp.execution.AcpExecution` (`docs/adapters/acp/mapping.md`) — keyed to exactly what that constructor accepts: `cwd` (REQUIRED — the worktree the agent runs in), `agent` (default `pi`), `thought_level` (default `low`), `approve_all` (default `false` — fail-closed; see the mapping doc's `--approve-all` footgun before ever setting `true`), and `model` (not a constructor parameter — this is the default injected into the per-call prompt request; see below). `execution_capabilities` (the existing top-level key) is reused to constrain `AcpExecution`'s advertised capability set — there is no separate `execution.capabilities` field.
-- `candidate.adapter: "git"` selects `orc_werk.adapters.git.candidate.GitDiffCandidate` (`docs/adapters/git/mapping.md`) fingerprinting `repo_path` (REQUIRED)'s real `HEAD`/worktree diff instead of scripted content.
-- **Constraint**: `execution.adapter == "acp"` REQUIRES `candidate.adapter == "git"` — rejected otherwise (a real execution's outcome cannot be matched to a config-scripted candidate).
-- **Per-work `briefs` become prompts.** `orc_werk.app.Orchestrator` calls `ExecutionPort.start()` with the work id and an opaque, empty `execution_request`. A CLI-local wrapper fills in `execution_request["prompt"]` from the optional top-level `briefs` mapping (`{"briefs": {"work-a": "prompt for work a"}}`) before it reaches `AcpExecution`; a work with no briefs entry falls back to the run's own intent text (`orc dispatch "<fallback prompt>" ...`), preserving single-work behavior. The same briefs also feed Beads mirror issue descriptions when `mirror` is configured.
-- **Attempts-merge semantics**: when `candidate.adapter == "git"`, `attempts[work_id]` entries carry no `outcome`/`candidate` — a real port supplies those. When `execution.adapter` is also `"acp"`, an entry may carry **only** `assurance` (the operator/verification agent still records the verdict through the same channel; nothing else is config-scriptable). The candidate's real fingerprint is never authored by hand — it comes from the run's own journal (`orc status`/`orc history` print it as `candidate_fingerprint=fp-...` once observed) and `orc dispatch` matches your recorded verdict to it automatically. The assurance entry may additionally carry issue #180's `derived_identity`, independently authored from the verifier's artifact inspection, to corroborate selected durable `subject_identity` fields before that automatic binding (`CONF-ASSURE-005`, `SCN-013`).
-
-### Real-execution walkthrough
-
-```bash
-orc dispatch "reply with the word ping" --config acp-cfg.json --journal ./.orc
-# exit 3: work-1 pending=true awaiting=execution-outcome -- Pi is working, nothing to do yet.
-
-orc dispatch "reply with the word ping" --config acp-cfg.json --journal ./.orc   # re-run, identical command
-# once Pi's turn settles: exit 3 again, now awaiting=assurance-verdict, and
-# candidate_fingerprint=fp-<real hash> is printed -- a real candidate was
-# identified and journaled with execution-session/v1 provenance.
-
-# a (different) verification agent preferably records the verdict through the
-# validated `orc record` sugar (use the exact command printed by `next:` and
-# `orc record -h` for the applicable identity/evidence options):
-orc record <run-id> --work work-1 --verdict accepted --journal ./.orc
-
-# Hand-editing remains legal: equivalently edit acp-cfg.json to add
-#   "attempts": {"work-1": [{"assurance": {"verdict": "accepted"}}]}
-# then validate it with `orc validate`.
-
-orc dispatch "reply with the word ping" --config acp-cfg.json --journal ./.orc   # re-run again
-# exit 0: work-1 ACCEPTED.
-```
-
-`docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`) governs the two-seat discipline (ship agent records the settlement; a *different* verification agent independently derives the candidate and records the verdict) — unchanged for real ports.
-
-## Real assurance: `no-mistakes` config (`TASK-M2-001` CLI wiring)
-
-To automate the verdict seat instead of an operator/verification agent
-typing it, add an `assurance` block:
-
-```json
-{ "candidate": {"adapter": "git", "repo_path": "/abs/path/to/worktree"},
-  "assurance": {"adapter": "no-mistakes", "repo_path": "/abs/path/to/worktree"} }
-```
-
-- `assurance.adapter: "no-mistakes"` selects `orc_werk.adapters.no_mistakes.
-  assurance.NoMistakesAssurance` (`docs/adapters/no-mistakes/mapping.md`)
-  — keyed to its one real constructor parameter, `repo_path` (REQUIRED).
-  It is a **read-only judge**: it never lets `no-mistakes` fix findings or
-  push, and never records anything itself if it isn't the exact CLI
-  invocation's own honest observation.
-- **Constraint**: `assurance.adapter == "no-mistakes"` REQUIRES
-  `candidate.adapter == "git"` — rejected otherwise (a real verdict
-  cannot be bound to a config-scripted candidate). `execution` may stay
-  `"scripted"` (assurance only needs real git state to review, not a live
-  agent driving it) or be `"acp"` — both combinations are supported.
-- **The intent text becomes `--intent`.** Same composition pattern as
-  execution's prompt above: a CLI-local wrapper fills in
-  `requirements["intent"]` with the run's own intent text before it
-  reaches `NoMistakesAssurance`.
-- **Attempts-merge semantics**: when `assurance.adapter == "no-mistakes"`,
-  `attempts[work_id]` entries may NOT carry `assurance` at all — the
-  verdict is automatic; nothing to record by hand.
-- **No operator/verification-agent verdict step at all.** Once the
-  candidate is observed, `orc dispatch` keeps resting at exit `3`
-  (`awaiting=assurance-verdict`) purely by re-polling — no config edit is
-  needed between re-dispatches, since a real `no-mistakes` pipeline
-  settles entirely on its own (or, for a parked review gate, this adapter
-  renders its own verdict from the parked findings without waiting for a
-  human at all — see the mapping doc's "Judge-only ruling").
+For the ship-agent/verification-agent protocol (role separation, the
+independent-derivation rule, and the exact `orc record` invocations each
+seat uses), see `docs/playbooks/agent-cli-usage.md`
+(`PLAYBOOK-AGENT-CLI`). For a push-shaped path that also automates the
+verdict seat instead of a human/agent typing it, see "Generic command
+assurance config" below.
 
 ## Generic command assurance config (issue #194)
 
@@ -177,9 +117,9 @@ against `cwd`, and the resolved path must remain inside it. The script receives
 `command-assurance-input/v1` JSON only on standard input. Clean exit 0 means
 `accepted`, clean exit 1 means `rejected`, and every other exit, signal, or
 timeout means `inconclusive`. Stdout is optional, bounded enrichment only; it
-cannot override verdict, state, or fingerprint. As for no-mistakes, command
-assurance requires a git candidate and forbids per-attempt scripted assurance
-entries. See `ADAPTER-COMMAND-MAPPING`.
+cannot override verdict, state, or fingerprint. Like every automated
+assurance adapter, command assurance requires a git candidate and forbids
+per-attempt scripted assurance entries. See `ADAPTER-COMMAND-MAPPING`.
 
 ## Reading a run
 
@@ -209,7 +149,7 @@ Update this table when found; remove rows when the fix merges. "Workaround" is w
 | Issue | Symptom | Workaround | Status |
 |---|---|---|---|
 | `no-mistakes` TOON output and step names have no schema/version guard | `assurance.adapter: "no-mistakes"` (`TASK-M2-001`, `NoMistakesAssurance`) parses `axi status` TOON with a small, purpose-built tolerant parser (`orc_werk.adapters.no_mistakes.toon.parse_toon`), reverse-engineered from one CLI version's observed output, and pins the mechanical never-push guarantee to the `push` step name (`--skip push` on every `axi run` spawn). A future `no-mistakes` release that renames/reshapes fields (e.g. `run.status`, the `gate.findings` table columns) would silently parse incorrectly (missing fields read as absent), and one that renames the `push` step would silently regress never-push — neither fails loudly. | Re-probe `axi status`/`axi run` output shape AND `axi logs --help`'s step list against the installed `no-mistakes` version before upgrading it in an environment that uses this adapter; re-run `tests/conformance/test_no_mistakes_assurance_unit.py` (including `ParseToonTest` and `test_every_spawn_passes_skip_push_mechanical_never_push`) and the CONF-ASSURE suite. | Open (recorded at `TASK-M2-001` implementation time; no version pin/guard exists yet — see `docs/adapters/no-mistakes/mapping.md` "TOON parsing"/"Judge-only ruling"/"Limitations"). |
-| `orc refs --resolve`'s read-only allowlist is a per-tool argv+flag policy against provider CLI shapes observed at pinned versions | `orc_werk.cli.refs._vet_read_only` (`TASK-M3C-002`) vets every resolve command's argv in TWO layers, both required: (1) a tool+subcommand allowlist (`cat`; `git [-C <path>] show`; `acpx <agent> sessions <history\|show>`; `bd [--json] [-C <path>] <list\|show>`; `no-mistakes axi <status\|logs>` — nothing else), and (2) a **per-tool FLAG policy** (`_vet_flags`) over every token AFTER the subcommand, because vetting the subcommand alone was an arbitrary-file-WRITE hole — `git show --output=<path>` is a documented git write primitive that passed layer 1 (its subcommand is `show`). Layer 2's `_GIT_SHOW_BOOL_FLAGS`/`_BD_*`/`_NOMISTAKES_*`/`_ACPX_*` sets are curated read/render-only options observed against one version each; bd's minimal surface was empirically audited against bd 1.2.2 and permits only the builder-required `--json`/`--label`/`--status` plus read-only `--no-pager`, while `-w`/`--watch` (indefinite execution), `--format` (output-template control), `--db` (arbitrary database-path redirection), `--actor` (audit mutation), and `--global`/`--dolt-auto-commit`/`--ignore-schema-skew` (global database, write/commit, or skew controls) are deliberately EXCLUDED; git's write/exec options (`--output`/`-o`/`-O`, `--ext-diff`, `--textconv`) are likewise deliberately EXCLUDED and thus refused, unknown flags are refused (fail-closed), a value-flag's value is consumed unparsed, and journal-derived interpolated tokens (candidate `head_sha`/`repo_path`, `acpx` agent/session ref) that begin with `-` are refused at BUILD time too (they cannot be minted into a flag position). `git show`'s `<sha>` can't be `--`-guarded — `git show --stat -- <sha>` reads the sha as a pathspec, empirically verified — so that positional relies on the build-time `-`-lead rejection plus the flag policy, not positional separation. Residual fragility: a provider CLI upgrade that adds a NEW writer/exec flag not in the excluded set, renames a subcommand, or reshapes an invocation form would either wrongly REFUSE a legit read-only command (safe: degrades to the manual command, never executes) or — only if a brand-new **writer** flag were introduced with a shape the curated allowlist happened to accept — could regress the containment; bd has no provider-version pin/guard, so an upgrade past the audited 1.2.2 surface still requires a fresh audit. | Re-probe each vetted tool's read-only flag surface against the installed version before relying on `--resolve`/`--resolve-all` in an environment that upgrades `git`/`acpx`/`bd`/`no-mistakes` — especially audit `git help show`/`git help diff` for any newly-added writer/exec option and add it to the exclusion intent (keep the allowlist a curated read-only set); re-run `tests/scenarios/test_cli_refs.py`'s `VetReadOnlyUnitTest`, `VetFlagDepthUnitTest`, `BuilderFlagInjectionGuardUnitTest`, and the `test_git_show_output_write_escape_*` regression tests before trusting execution again. | Open (recorded at `TASK-M3C-002`; bd 1.2.2 audited, but no provider-version pin/guard exists yet, matching the `no-mistakes` row above). |
+| `orc refs --resolve`'s read-only allowlist is a per-tool argv+flag policy against provider CLI shapes observed at pinned versions | `orc_werk.cli.refs._vet_read_only` (`TASK-M3C-002`) vets every resolve command's argv in TWO layers, both required: (1) a tool+subcommand allowlist (`cat`; `git [-C <path>] show`; `acpx <agent> sessions <history\|show>`; `bd [--json] [-C <path>] <list\|show>`; `no-mistakes axi <status\|logs>` — nothing else), and (2) a **per-tool FLAG policy** (`_vet_flags`) over every token AFTER the subcommand, because vetting the subcommand alone was an arbitrary-file-WRITE hole — `git show --output=<path>` is a documented git write primitive that passed layer 1 (its subcommand is `show`). Layer 2's `_GIT_SHOW_BOOL_FLAGS`/`_BD_*`/`_NOMISTAKES_*`/`_ACPX_*` sets are curated read/render-only options observed against one version each; bd's minimal surface was empirically audited against bd 1.2.2 and permits only the builder-required `--json`/`--label`/`--status` plus read-only `--no-pager`, while `-w`/`--watch` (indefinite execution), `--format` (output-template control), `--db` (arbitrary database-path redirection), `--actor` (audit mutation), and `--global`/`--dolt-auto-commit`/`--ignore-schema-skew` (global database, write/commit, or skew controls) are deliberately EXCLUDED; git's write/exec options (`--output`/`-o`/`-O`, `--ext-diff`, `--textconv`) are likewise deliberately EXCLUDED and thus refused, unknown flags are refused (fail-closed), a value-flag's value is consumed unparsed, and journal-derived interpolated tokens (candidate `head_sha`/`repo_path`, `acpx` agent/session ref) that begin with `-` are refused at BUILD time too (they cannot be minted into a flag position). `git show`'s `<sha>` can't be `--`-guarded — `git show --stat -- <sha>` reads the sha as a pathspec, empirically verified — so that positional relies on the build-time `-`-lead rejection plus the flag policy, not positional separation. **Note (ADR-0005, ruling A2):** the `acpx`/`no-mistakes` tool+flag allowlist entries above are retained specifically to resolve refs recorded by historical journals from the now-removed `acp`/`no-mistakes` adapters (`v0.4.1` and earlier) — read-only reference resolution over a past run's recorded ref is not pull-observation of a live process, so this allowlist surface stays live even though those adapters themselves are gone. Residual fragility: a provider CLI upgrade that adds a NEW writer/exec flag not in the excluded set, renames a subcommand, or reshapes an invocation form would either wrongly REFUSE a legit read-only command (safe: degrades to the manual command, never executes) or — only if a brand-new **writer** flag were introduced with a shape the curated allowlist happened to accept — could regress the containment; bd has no provider-version pin/guard, so an upgrade past the audited 1.2.2 surface still requires a fresh audit. | Re-probe each vetted tool's read-only flag surface against the installed version before relying on `--resolve`/`--resolve-all` in an environment that upgrades `git`/`acpx`/`bd`/`no-mistakes` — especially audit `git help show`/`git help diff` for any newly-added writer/exec option and add it to the exclusion intent (keep the allowlist a curated read-only set); re-run `tests/scenarios/test_cli_refs.py`'s `VetReadOnlyUnitTest`, `VetFlagDepthUnitTest`, `BuilderFlagInjectionGuardUnitTest`, and the `test_git_show_output_write_escape_*` regression tests before trusting execution again. | Open (recorded at `TASK-M3C-002`; bd 1.2.2 audited, but no provider-version pin/guard exists yet, matching the `no-mistakes` row above). |
 
 Prior rows closed as of `TASK-M1-003` (#16, #17, #18, #23, that task's PR). Issue #52 (`JournalPort.load_projection` replaying against the reducer's default `max_attempts` instead of the run's own recorded budget, breaking `status`/`report`/`report --index`/`--all` on a non-default-budget or `BLOCKED` run) closed by recording the effective budget in `FX-CREATE-WORK`'s effect data (`CONTRACT-DURABILITY`, `PORT-JOURNAL-005`, `SCN-008`) — see that fix's PR. Issue #78 (one run's replay `CoreError` aborting the entire `report --index`/`--all` portfolio) is closed: portfolio reports now render a critical placeholder with a `status` affordance and continue healthy runs.
 

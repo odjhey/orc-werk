@@ -1,10 +1,12 @@
 ---
 id: ADAPTER-ACP-MAPPING
 type: adapter-mapping
-status: current
+status: superseded
 authority: informative
 description: acpx-to-ExecutionPort mapping for AcpExecution (TASK-M1-005).
 ---
+
+> **Superseded** (operator ruling ADR-0005, issue #214). The `acp` `ExecutionPort` adapter was **removed** in 0.5.0, pre-1.0, no backward compatibility; the last release carrying it is v0.4.1. See `docs/decisions/ADR-0005-push-recording-not-pull-observation.md` for the ruling and its dormant-registry entry in `docs/delivery/M4-cockpit-and-clarity.md`; push-shaped pending-settlement semantics now live in `docs/scenarios/SCN-007-pending-settlement.md` and `docs/scenarios/SCN-017-wait-resting-point.md`. Retained as historical reference only.
 
 # ACP/acpx mapping
 

@@ -1,10 +1,12 @@
 ---
 id: ADAPTER-NO-MISTAKES-CONFORMANCE
 type: adapter-conformance
-status: current
+status: superseded
 authority: informative
 description: Conformance status for no-mistakes assurance adapter (TASK-M2-001).
 ---
+
+> **Superseded** (operator ruling ADR-0005, issue #214). The no-mistakes `AssurancePort` adapter was **removed** in 0.5.0, pre-1.0, no backward compatibility; the last release carrying it is v0.4.1. See `docs/adapters/command/README.md` (`ADAPTER-COMMAND`) for the push-shaped command assurance adapter and `docs/scenarios/SCN-015-command-assurance.md` (issue #194) for its scenario. Retained as historical reference only.
 
 # no-mistakes conformance
 

@@ -85,6 +85,8 @@ Sequencing: this playbook is authored **after** SCN-007 fixes the command surfac
 
 ## Phase M1b — first real adapter (acpx ExecutionPort driving Pi)
 
+(2026-09-02: the adapter this phase delivered was descoped by ADR-0005; docs superseded, code removed in 0.5.0. The delivery record below is history.)
+
 ### Retarget note (supersedes the original Claude Code headless framing)
 
 Per a completed watchtower/scout assessment (issue #12 follow-on) and a subsequent operator ruling on the first-agent choice, M1b's `PORT-EXECUTION` target is retargeted from `claude -p` headless invocation to the `acpx` CLI — an Agent Client Protocol (ACP) client — driving **Pi** as its first agent (`acpx pi`, using gpt5.6-family models; model ids are carried as opaque strings per `INV-014` and are never enumerated in contracts). `docs/adapters/acp/` already carries draft stubs anticipating this shape; this section makes them binding for M1b. M1a and M1a+ are **unaffected** by this retarget — both phases remain operator/agent-CLI-driven with zero execution adapters, exactly as delivered.

@@ -1,11 +1,13 @@
 ---
 id: EXT-ACP-SETTLEMENT-V1-SEMANTICS
 type: contract
-status: current
+status: superseded
 authority: normative
 version: 1
 description: Emission and interpretation rules for acp-settlement/v1.
 ---
+
+> **Superseded** (operator ruling ADR-0005, issue #214). The `acp` `ExecutionPort` adapter was **removed** in 0.5.0, pre-1.0, no backward compatibility; the last release carrying it is v0.4.1. See `docs/decisions/ADR-0005-push-recording-not-pull-observation.md` and `docs/adapters/acp/README.md`. Retained as historical reference only.
 
 # `acp-settlement/v1` semantics
 
