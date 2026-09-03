@@ -220,6 +220,66 @@ class RunLockReleaseTest(unittest.TestCase):
         self.assertFalse(lock.held)
 
 
+class RunLockContextManagerTest(unittest.TestCase):
+    """The `with RunLock(...)` protocol itself (`__enter__`/`__exit__`,
+    locking.py lines 158-163) -- the verify seat's finding on this lane's
+    first attempt: every other test in this file drives
+    `acquire()`/`release()` directly, so the two protocol methods were
+    never executed by THIS file's tests."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.lock_path = Path(self._tmp.name) / "run.lock"
+
+    def test_with_block_acquires_yields_self_and_releases_on_clean_exit(self) -> None:
+        lock = RunLock(self.lock_path)
+        self.assertFalse(lock.held)
+        with lock as entered:
+            # `__enter__` returns the RunLock itself, genuinely held.
+            self.assertIs(entered, lock)
+            self.assertTrue(lock.held)
+            # Really held at the OS level, not just flagged: an
+            # independent instance on the same path must time out.
+            contender = RunLock(self.lock_path, timeout_s=0.1)
+            with self.assertRaises(CoreError) as ctx:
+                contender.acquire()
+            self.assertEqual(ctx.exception.to_canonical()["error"], "ERR-BUSY")
+        # `__exit__` released: not held, and a fresh instance acquires
+        # immediately (no timeout wait).
+        self.assertFalse(lock.held)
+        start = time.monotonic()
+        reacquirer = RunLock(self.lock_path, timeout_s=5.0)
+        reacquirer.acquire()
+        try:
+            self.assertLess(time.monotonic() - start, 1.0)
+        finally:
+            reacquirer.release()
+
+    def test_with_block_releases_on_exception_too(self) -> None:
+        lock = RunLock(self.lock_path)
+
+        class _BodyError(Exception):
+            pass
+
+        with self.assertRaises(_BodyError):
+            with lock:
+                self.assertTrue(lock.held)
+                raise _BodyError("body failure must still release the lock")
+
+        # `__exit__` ran despite the exception: released, and immediately
+        # reacquirable by an independent instance.
+        self.assertFalse(lock.held)
+        contender = RunLock(self.lock_path, timeout_s=0.5)
+        contender.acquire()
+        try:
+            self.assertTrue(contender.held)
+        finally:
+            contender.release()
+
+
 class AcquireSortedTest(unittest.TestCase):
     def setUp(self) -> None:
         import tempfile
