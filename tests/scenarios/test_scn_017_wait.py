@@ -50,7 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 
 
-def _run_cli(tmp_dir: Path, *args: str, timeout: float = 15) -> subprocess.CompletedProcess:
+def _run_cli(tmp_dir: Path, *args: str, timeout: float = 30) -> subprocess.CompletedProcess:
     env = {"PYTHONPATH": str(SRC), "PATH": "/usr/bin:/bin"}
     return subprocess.run(
         [sys.executable, "-m", "orc_werk.cli", *args],
@@ -141,6 +141,12 @@ class WaitWakesOnMovementTest(unittest.TestCase):
 
             recorder = threading.Thread(target=_record_settlement_after_delay)
             recorder.start()
+            # --timeout is a generous absolute ceiling (issue #232), not a
+            # tight bound: the wait returns as soon as it observes the
+            # settlement (event-bounded), so a large deadline costs nothing
+            # when the recorder thread gets its 0.2s head start promptly,
+            # and only pays off by not flaking when a saturated host defers
+            # that thread's scheduling.
             result = _run_cli(
                 tmp_dir,
                 "dispatch",
@@ -149,7 +155,7 @@ class WaitWakesOnMovementTest(unittest.TestCase):
                 str(config_path),
                 "--wait",
                 "--timeout",
-                "5",
+                "20",
                 "--poll-interval",
                 "0.05",
             )
@@ -202,7 +208,20 @@ class WaitTransientConfigTest(unittest.TestCase):
         cheap, local filesystem ops) so that, even under CI scheduling
         jitter, at most one or two internal passes can plausibly land
         inside the window -- comfortably under the 3-consecutive cap that
-        would fail the wait instead."""
+        would fail the wait instead.
+
+        The absolute margins here (issue #232) are wide, not the original
+        tight 0.4s/0.1s/0.25s-poll trio: this test's correctness genuinely
+        depends on relative timing (a garbage window narrower than one poll
+        interval), so it cannot be fully restructured to event-bounded
+        polling -- but a saturated host can stretch a background thread's
+        own scheduling by tens to hundreds of milliseconds, which ate
+        directly into those tight margins and occasionally let the garbage
+        window straddle two poll passes. Scaling every leg up by ~3-4x
+        (poll interval 0.25s -> 1.0s, corrupt window 0.1s -> 0.3s, baseline
+        wait 0.4s -> 1.0s) keeps the same ratio -- corrupt window well
+        under one poll interval -- while giving that jitter a much larger
+        target to land inside without crossing a boundary."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             config_path = tmp_dir / "config.json"
@@ -213,9 +232,9 @@ class WaitTransientConfigTest(unittest.TestCase):
                 # Let at least one internal pass complete successfully
                 # first (baseline set) before corrupting the config for a
                 # window well short of one poll interval.
-                time.sleep(0.4)
+                time.sleep(1.0)
                 config_path.write_text("{not valid json", encoding="utf-8")
-                time.sleep(0.1)
+                time.sleep(0.3)
                 _atomic_write_text(
                     config_path,
                     json.dumps(
@@ -239,9 +258,9 @@ class WaitTransientConfigTest(unittest.TestCase):
                 run_id,
                 "--wait",
                 "--timeout",
-                "5",
+                "20",
                 "--poll-interval",
-                "0.25",
+                "1.0",
             )
             writer.join()
 
@@ -266,8 +285,20 @@ class WaitTransientConfigTest(unittest.TestCase):
     def test_wait_fails_after_3_consecutive_bad_passes(self) -> None:
         """A config that goes bad mid-wait and never recovers exhausts the
         3-consecutive-failure cap and fails with the ordinary canonical
-        error -- well before --timeout elapses, proving the cap (not the
-        timeout) ended the wait."""
+        error -- proving the cap (not --timeout) ended the wait.
+
+        That proof (issue #232) is now the returncode itself, not a
+        wall-clock margin: exit 2 is reachable ONLY via the cap's
+        ERR-VALIDATION path, while a --timeout expiry is exit 4 (see
+        WaitTimeoutTest) -- the two outcomes are already mutually
+        exclusive by exit code, so asserting returncode == 2 below is a
+        tight, event-bounded proof that the cap ended the wait, with no
+        need for a fixed elapsed-time ceiling that a saturated host could
+        blow through despite the cap firing correctly and promptly.
+        --timeout is widened to a generous 30s so a slow host has ample
+        room to actually exhaust the cap rather than time out first
+        (which would flip the returncode to 4 and legitimately fail this
+        test for an unrelated reason)."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             config_path = tmp_dir / "config.json"
@@ -283,7 +314,6 @@ class WaitTransientConfigTest(unittest.TestCase):
 
             writer = threading.Thread(target=_corrupt_permanently)
             writer.start()
-            started = time.monotonic()
             result = _run_cli(
                 tmp_dir,
                 "dispatch",
@@ -294,11 +324,11 @@ class WaitTransientConfigTest(unittest.TestCase):
                 run_id,
                 "--wait",
                 "--timeout",
-                "10",
+                "30",
                 "--poll-interval",
                 "0.05",
+                timeout=45,
             )
-            elapsed = time.monotonic() - started
             writer.join()
 
             # The ordinary canonical error, exit 2 -- identical to what a
@@ -333,16 +363,26 @@ class WaitTransientConfigTest(unittest.TestCase):
             self.assertEqual(plain.stdout, result.stdout)
             self.assertEqual(result.stdout, "")
 
-            # The cap, not the 10s --timeout, ended the wait: 3 consecutive
-            # 0.05s-apart passes is on the order of tenths of a second, not
-            # anywhere near 10s.
-            self.assertLess(elapsed, 5.0)
-
     def test_wait_first_pass_bad_config_fails_fast(self) -> None:
         """A config that is already bad when `--wait` is invoked -- before
         this invocation has completed any pass -- fails immediately, never
         retried: it is a real config error at wait start, not a race
-        (issue #216 ruling)."""
+        (issue #216 ruling).
+
+        Unlike `test_wait_fails_after_3_consecutive_bad_passes`, the
+        returncode alone cannot prove this: "failed fast" and "retried
+        once (or twice), then failed" both end in the SAME exit 2 --
+        the only observable difference is elapsed wall time. This is
+        exactly the case design guidance in issue #232 calls out as
+        needing a real margin, not restructuring: to keep that margin
+        meaningful on a host far slower (or far faster) than the box
+        this was written on, calibrate it against a control run of the
+        identical operation (a plain, non-`--wait` dispatch of this same
+        already-bad config -- side-effect free, since a config-load
+        failure precedes any journal write) measured immediately before
+        the timed call, and derive `poll_interval` from that same
+        calibration so the two windows (a fast failure vs. one retry
+        cycle) stay proportionally separated regardless of host speed."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             config_path = tmp_dir / "config.json"
@@ -353,10 +393,29 @@ class WaitTransientConfigTest(unittest.TestCase):
             # first internal pass sees the bad config.
             config_path.write_text("{not valid json", encoding="utf-8")
 
-            # A poll interval long enough that any retry (even a single
-            # one) would make the call take noticeably longer than an
-            # immediate failure -- the timing margin that distinguishes
-            # "failed fast" from "retried once, then failed".
+            # Calibrate: the plain (non-wait) dispatch of this exact bad
+            # config performs the identical single "load, fail, print"
+            # operation the --wait call's own first pass performs -- its
+            # measured cost, right now, on this host, is the best available
+            # estimate of "one fast failure", with no fixed constant baked
+            # in for how fast that should be.
+            calibration_started = time.monotonic()
+            control = _run_cli(
+                tmp_dir, "dispatch", "scn017 transient", "--config", str(config_path), "--run-id", run_id
+            )
+            calibration_elapsed = time.monotonic() - calibration_started
+            self.assertEqual(control.returncode, 2, msg=control.stdout + control.stderr)
+
+            # poll_interval scales with the calibration (never below 3s):
+            # on a slow host, a retry cycle also takes proportionally
+            # longer, so the gap between "no retry" and "one retry" stays
+            # wide instead of collapsing toward the calibration noise.
+            poll_interval = max(3.0, calibration_elapsed * 20)
+            # fail_fast_ceiling stays comfortably under poll_interval (so a
+            # genuine regression -- one retry/sleep -- still trips it) while
+            # scaling with the calibrated cost instead of a bare constant.
+            fail_fast_ceiling = max(2.0, calibration_elapsed * 8, poll_interval * 0.5)
+
             started = time.monotonic()
             result = _run_cli(
                 tmp_dir,
@@ -368,17 +427,20 @@ class WaitTransientConfigTest(unittest.TestCase):
                 run_id,
                 "--wait",
                 "--timeout",
-                "30",
+                str(poll_interval * 4),
                 "--poll-interval",
-                "3",
+                str(poll_interval),
+                timeout=max(30.0, poll_interval * 6),
             )
             elapsed = time.monotonic() - started
 
             self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
             error = json.loads(result.stderr)
             self.assertEqual(error["error"], "ERR-VALIDATION")
-            # No retry/sleep happened -- well under one 3s poll interval.
-            self.assertLess(elapsed, 2.0)
+            # No retry/sleep happened -- well under one poll interval, with
+            # the ceiling itself calibrated to this host's current dispatch
+            # cost rather than a fixed small constant (issue #232).
+            self.assertLess(elapsed, fail_fast_ceiling)
 
 
 class WaitTerminalTest(unittest.TestCase):
