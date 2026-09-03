@@ -13,6 +13,11 @@ Guidance for a repository that wants [ergo](https://github.com/sandover/ergo)
 together. Written 2026-09-03 for handover to an adopting project; informative
 only — canonical semantics live in the contracts this document cites.
 
+New to this? `docs/playbooks/agent-onboarding.md` (`PLAYBOOK-AGENT-ONBOARDING`)
+is the executable path — a single top-to-bottom checklist an onboarding agent
+follows, including this coexistence wiring verified end-to-end in a sandbox.
+This document stays the rationale/conventions home it cites from there.
+
 ## Why they coexist cleanly
 
 The tools overlap in plumbing (repo-local JSONL journals, work units with

@@ -79,6 +79,7 @@ description: Flat documentation index.
 - [M4 cockpit and clarity](delivery/M4-cockpit-and-clarity.md)
 - [Watchtower operations playbook](delivery/watchtower-operations.md)
 - [Delivery stance](delivery/delivery-stance.md)
+- [Agent onboarding playbook](playbooks/agent-onboarding.md)
 - [CLI usage guide](playbooks/cli-usage.md)
 - [Agent CLI usage playbook](playbooks/agent-cli-usage.md)
 - [Engineering method](playbooks/engineering-method.md)
