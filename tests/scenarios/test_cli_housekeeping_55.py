@@ -507,8 +507,20 @@ class ConfigPersistenceTest(unittest.TestCase):
             )
             self.assertEqual(first.returncode, 3, msg=first.stdout + first.stderr)
 
+            # Issue #240 R2: an explicit --config refresh may still change
+            # ordinary fields (here, execution_capabilities) freely -- only
+            # max_attempts is special-cased once a run's own budget is
+            # journaled (unchanged here: still 2).
             config_path.write_text(
-                json.dumps({"run_id": "refresh-run", "max_attempts": 5, "attempts": {}}), encoding="utf-8"
+                json.dumps(
+                    {
+                        "run_id": "refresh-run",
+                        "max_attempts": 2,
+                        "attempts": {},
+                        "execution_capabilities": ["CAP-EXEC-RESUME-EXACT"],
+                    }
+                ),
+                encoding="utf-8",
             )
             second = _run_cli(
                 tmp_dir, "dispatch", "refresh fixture", "--config", str(config_path),
@@ -517,7 +529,46 @@ class ConfigPersistenceTest(unittest.TestCase):
             self.assertEqual(second.returncode, 3, msg=second.stdout + second.stderr)
 
             persisted = json.loads(layout.config_path(journal_dir, "refresh-run").read_text(encoding="utf-8"))
-            self.assertEqual(persisted["max_attempts"], 5)
+            self.assertEqual(persisted["max_attempts"], 2)
+            self.assertEqual(persisted["execution_capabilities"], ["CAP-EXEC-RESUME-EXACT"])
+
+    def test_explicit_config_changing_max_attempts_on_resume_is_refused(self) -> None:
+        """Issue #240 R2 (match-or-refuse): a refreshed --config that
+        disagrees with an existing run's journaled max_attempts is refused
+        with ERR-VALIDATION rather than silently applied -- changing a live
+        run's budget is explicitly out of scope for this ruling. Formerly
+        (pre-#240) this silently mutated the persisted copy; see the
+        sibling `test_explicit_config_refreshes_persisted_copy` for the
+        refresh capability that remains intact for every other field."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal_dir = tmp_dir / ".orc"
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(
+                json.dumps({"run_id": "refresh-run-2", "max_attempts": 2, "attempts": {}}), encoding="utf-8"
+            )
+            first = _run_cli(
+                tmp_dir, "dispatch", "refresh fixture", "--config", str(config_path),
+                "--journal", str(journal_dir), "--run-id", "refresh-run-2",
+            )
+            self.assertEqual(first.returncode, 3, msg=first.stdout + first.stderr)
+
+            config_path.write_text(
+                json.dumps({"run_id": "refresh-run-2", "max_attempts": 5, "attempts": {}}), encoding="utf-8"
+            )
+            second = _run_cli(
+                tmp_dir, "dispatch", "refresh fixture", "--config", str(config_path),
+                "--journal", str(journal_dir), "--run-id", "refresh-run-2",
+            )
+            self.assertEqual(second.returncode, 2, msg=second.stdout + second.stderr)
+            error = json.loads(second.stdout or second.stderr)
+            self.assertEqual(error["error"], "ERR-VALIDATION")
+            self.assertEqual(error["details"]["journaled_max_attempts"], 2)
+            self.assertEqual(error["details"]["requested_max_attempts"], 5)
+
+            # The persisted copy is untouched by the refused refresh.
+            persisted = json.loads(layout.config_path(journal_dir, "refresh-run-2").read_text(encoding="utf-8"))
+            self.assertEqual(persisted["max_attempts"], 2)
 
     def test_next_block_references_durable_config_path_not_ephemeral(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
