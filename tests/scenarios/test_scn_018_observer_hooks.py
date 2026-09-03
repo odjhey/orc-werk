@@ -52,7 +52,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 
 
-def _run_cli(cwd: Path, *args: str, timeout: float = 15) -> subprocess.CompletedProcess:
+def _run_cli(cwd: Path, *args: str, timeout: float = 30) -> subprocess.CompletedProcess:
     env = {"PYTHONPATH": str(SRC), "PATH": "/usr/bin:/bin"}
     return subprocess.run(
         [sys.executable, "-m", "orc_werk.cli", *args],
@@ -64,7 +64,16 @@ def _run_cli(cwd: Path, *args: str, timeout: float = 15) -> subprocess.Completed
     )
 
 
-def _poll_until(predicate, *, timeout: float = 1.5, interval: float = 0.03) -> bool:
+def _poll_until(predicate, *, timeout: float = 20.0, interval: float = 0.03) -> bool:
+    """Poll for a semantic condition (a file existing, a process/group
+    gone) up to a generous absolute deadline, rather than asserting the
+    condition landed within a tight window. The default deadline (issue
+    #232) is intentionally large -- 20s, not the original 1.5s -- because
+    every call here early-exits the moment the predicate is true: on a
+    healthy, unloaded host this costs nothing, and the margin only ever
+    gets spent when a saturated host (e.g. a concurrent `check.sh` run)
+    defers process spawns and file writes well past what a quiet box
+    would take."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -279,14 +288,23 @@ class ObserverHungObserverTest(unittest.TestCase):
             (root / "config.json").write_text(json.dumps(config))
 
             started = time.monotonic()
+            # timeout= well above the assertLess() ceiling below (issue
+            # #232): the subprocess-level kill must never fire before the
+            # semantic assertion gets a chance to observe a genuine
+            # regression (dispatch actually blocking on the hang).
             result = _run_cli(root, "dispatch", "hang smoke", "--config", "config.json",
-                               "--journal", ".orc", "--run-id", "hang1")
+                               "--journal", ".orc", "--run-id", "hang1", timeout=45)
             wall = time.monotonic() - started
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertLess(wall, 15.0, "dispatch must not wait for the observer's own hang")
+            # 30s is still a small fraction of the observer's own 60s hang
+            # -- comfortably discriminating "dispatch returned promptly"
+            # from "dispatch waited for the hang" -- but wide enough
+            # (issue #232) that ordinary spawn/IO overhead on a saturated
+            # host can't false-positive it.
+            self.assertLess(wall, 30.0, "dispatch must not wait for the observer's own hang")
 
             pidinfo_path = root / "pidinfo.json"
-            self.assertTrue(_poll_until(lambda: pidinfo_path.exists(), timeout=8.0))
+            self.assertTrue(_poll_until(lambda: pidinfo_path.exists(), timeout=25.0))
             info = json.loads(pidinfo_path.read_text())
             # New kill topology: the observer is its own session leader, so
             # its pgid is its own pid -- never the supervisor's group.
@@ -311,11 +329,19 @@ class ObserverHungObserverTest(unittest.TestCase):
                     last_group_state[0] = "zombie awaiting reap (EPERM)"
                     return False
 
-            # Deterministic bound: gone within timeout_seconds + epsilon
-            # (epsilon covers supervisor scheduling + kill + reap, generous
-            # for a loaded CI machine but still a hard deadline).
+            # Deterministic bound: gone within timeout_seconds + epsilon.
+            # epsilon covers supervisor scheduling + kill + reap -- this is
+            # exactly the "timing budget too tight under saturated load"
+            # class issue #232 named: epsilon was 6.0s, which a second
+            # concurrent `check.sh` run could burn through entirely via
+            # ordinary scheduler contention, well before the supervisor's
+            # kill+reap sequence itself was actually stuck. Poll-until
+            # early-exits the moment the group is gone, so a much larger
+            # epsilon costs nothing when the supervisor behaves and only
+            # buys headroom against host load, not against a genuinely
+            # hung supervisor (which would still time this out).
             self.assertTrue(
-                _poll_until(_group_gone, timeout=timeout_seconds + 6.0),
+                _poll_until(_group_gone, timeout=timeout_seconds + 25.0),
                 "observer's whole process group must be gone after timeout_seconds; "
                 f"stuck at: {last_group_state[0]}",
             )
@@ -330,7 +356,7 @@ class ObserverHungObserverTest(unittest.TestCase):
                     self.fail("EPERM probing the observer pid: pid reused by another user's process")
 
             self.assertTrue(
-                _poll_until(_fully_reaped, timeout=4.0),
+                _poll_until(_fully_reaped, timeout=20.0),
                 "observer must be reaped by its supervisor -- no zombie may remain",
             )
 
