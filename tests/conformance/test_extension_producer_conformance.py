@@ -46,20 +46,20 @@ Paper trail -- extension -> emitter(s) -> covered/not-and-why
   `cmd_record`, which wraps each raw `--finding` string directly into
   `{"findings": [...]}` (`src/orc_werk/cli/main.py`, the
   `extensions["review-findings/v1"] = {"findings": list(args.finding)}`
-  line). COVERED-BUT-VIOLATING: this is a real orc-emitted payload, and it
-  does NOT conform to `docs/extensions/review-findings/schema.md` -- each
-  array entry there MUST be an object with `id`/`severity`/`disposition`/
-  `category`/`confidence`/`status`/`evidence`, not a bare string. Per this
-  delivery's fence ("if validating reveals a CURRENT emitter violating its
-  schema... do NOT fix it here"), `test_review_findings_v1_ship_emission_is_a_known_schema_violation`
-  below is `@unittest.expectedFailure` with this paragraph as its comment;
-  the PR body reports it as a new finding/issue rather than silently fixing
-  runtime code under a docs/tests-only fence. `CommandAssurance`'s
-  `review-findings/v1` passthrough (`adapters/command/assurance.py`) is
-  EXCLUDED from this table on purpose -- that payload is adopter/subprocess
-  content orc forwards, not content orc itself produces; `_review_findings_floor`
-  there is transport-floor policing, not this issue's producer-conformance
-  concern.
+  line). COVERED: issue #249 amended `docs/extensions/review-findings/schema.md`
+  in place (additive, no version bump) so each `findings[]` entry is
+  `string | ReviewFinding` -- a bare nonblank string is now a first-class,
+  fully conforming "unstructured form" entry, not a violation of the
+  structured form's required fields. `test_review_findings_v1_ship_emission_conforms`
+  below exercises the real `orc record --finding` emission path end to end
+  and asserts it conforms; this used to be
+  `test_review_findings_v1_ship_emission_is_a_known_schema_violation`, an
+  `@unittest.expectedFailure` before the schema amendment (see #249 and its
+  originating issue #227). `CommandAssurance`'s `review-findings/v1`
+  passthrough (`adapters/command/assurance.py`) is EXCLUDED from this table
+  on purpose -- that payload is adopter/subprocess content orc forwards,
+  not content orc itself produces; `_review_findings_floor` there is
+  transport-floor policing, not this issue's producer-conformance concern.
 
 - `git-candidate-identification/v1` -> `GitDiffCandidate._subject_identity`
   (`src/orc_werk/adapters/git/candidate.py`), emitted only when
@@ -177,10 +177,15 @@ _REVIEW_REQUIRED = {"id", "severity", "disposition", "category", "confidence", "
 def _validate_review_findings_v1(payload: Any) -> list[str]:
     """Mirrors `docs/extensions/review-findings/schema.md`.
 
-    Required per-finding fields, the closed enums for `severity`/
-    `disposition`/`category`/`confidence`/`status`, "`evidence` MUST contain
-    at least one entry", and the `location`/`evidence` sub-shape rules
-    (1-based line numbers, `end_line >= start_line`, evidence `kind` enum).
+    Per issue #249's additive amendment, each `findings[]` entry is
+    `string | ReviewFinding` ("Entry forms"): a plain nonblank string (the
+    unstructured form -- "String form field rules") OR a structured object
+    (the structured form, unchanged strictness -- see below). Structured
+    entries still carry the required per-finding fields, the closed enums
+    for `severity`/`disposition`/`category`/`confidence`/`status`,
+    "`evidence` MUST contain at least one entry", and the `location`/
+    `evidence` sub-shape rules (1-based line numbers, `end_line >=
+    start_line`, evidence `kind` enum).
     """
     violations: list[str] = []
     if not isinstance(payload, dict):
@@ -190,8 +195,12 @@ def _validate_review_findings_v1(payload: Any) -> list[str]:
         return ["payload.findings must be an array"]
     for i, finding in enumerate(findings):
         prefix = f"findings[{i}]"
+        if isinstance(finding, str):
+            if not finding.strip():
+                violations.append(f"{prefix} string entry must be nonblank")
+            continue
         if not isinstance(finding, dict):
-            violations.append(f"{prefix} must be an object, got {type(finding).__name__}")
+            violations.append(f"{prefix} must be a string or an object, got {type(finding).__name__}")
             continue
         missing = _REVIEW_REQUIRED - set(finding)
         if missing:
@@ -451,27 +460,24 @@ class ExecutorIdentityV1EmissionTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# review-findings/v1 -- COVERED-BUT-VIOLATING. See the module docstring's
-# paper trail entry. This is the fence's "if validating reveals a CURRENT
-# emitter violating its schema... mark the validator xfail-with-comment,
-# report it in the PR body as a finding" case, applied literally.
+# review-findings/v1 -- COVERED. #249 amended the schema in place (additive,
+# no version bump) to admit a plain nonblank string as a first-class
+# "unstructured form" findings[] entry alongside the pre-existing structured
+# object form. The real orc record --finding emission path now conforms;
+# see the module docstring's paper trail entry for the pre-amendment
+# history (this test used to be an @unittest.expectedFailure).
 # ---------------------------------------------------------------------------
 
 
 class ReviewFindingsV1EmissionTest(unittest.TestCase):
-    @unittest.expectedFailure
-    def test_review_findings_v1_ship_emission_is_a_known_schema_violation(self) -> None:
+    def test_review_findings_v1_ship_emission_conforms(self) -> None:
         # `orc record --verdict --finding TEXT` (src/orc_werk/cli/main.py,
         # cmd_record) wraps each raw --finding string directly into
         # {"findings": [...]}: extensions["review-findings/v1"] =
-        # {"findings": list(args.finding)}. docs/extensions/review-findings/
-        # schema.md requires each findings[] entry to be an object with
-        # id/severity/disposition/category/confidence/status/evidence -- a
-        # bare string never satisfies that. This is a real orc-emitted
-        # violation of its own registered schema (the same class of bug
-        # #223 was, just a different extension and a still-open one). Per
-        # this delivery's docs/tests-only fence, it is reported here and in
-        # the PR body as a new finding rather than fixed in src/.
+        # {"findings": list(args.finding)}. Post-#249,
+        # docs/extensions/review-findings/schema.md's "Entry forms" admits
+        # a plain nonblank string as a complete, conforming entry, so this
+        # real orc-emitted payload conforms to its own registered schema.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "input.json").write_text(json.dumps(
@@ -485,6 +491,44 @@ class ReviewFindingsV1EmissionTest(unittest.TestCase):
             config_path = root / ".orc" / "findings-run" / "config.json"
             payload = json.loads(config_path.read_text())["attempts"]["work-1"][0]["assurance"]["extensions"]["review-findings/v1"]
             self.assertEqual(_validate_review_findings_v1(payload), [])
+
+
+# ---------------------------------------------------------------------------
+# review-findings/v1 -- #249 union-entry validator fixtures: mixed entries
+# valid, an empty-string entry invalid, and a structured object missing
+# required fields still invalid (proving object-form strictness survived
+# the amendment unchanged).
+# ---------------------------------------------------------------------------
+
+
+class ReviewFindingsV1UnionValidatorFixtureTest(unittest.TestCase):
+    def test_mixed_string_and_object_entries_are_valid(self) -> None:
+        payload = {
+            "findings": [
+                "looks good overall",
+                {
+                    "id": "finding-9",
+                    "severity": "medium",
+                    "disposition": "non-blocking",
+                    "category": "style",
+                    "confidence": "medium",
+                    "status": "open",
+                    "evidence": [{"kind": "explanation", "summary": "Naming is inconsistent."}],
+                },
+            ]
+        }
+        self.assertEqual(_validate_review_findings_v1(payload), [])
+
+    def test_empty_string_entry_is_a_violation(self) -> None:
+        self.assertEqual(
+            _validate_review_findings_v1({"findings": ["   "]}),
+            ["findings[0] string entry must be nonblank"],
+        )
+
+    def test_object_entry_missing_required_fields_is_still_a_violation(self) -> None:
+        violations = _validate_review_findings_v1({"findings": [{"id": "finding-1"}]})
+        self.assertEqual(len(violations), 1)
+        self.assertIn("findings[0] missing required field(s):", violations[0])
 
 
 # ---------------------------------------------------------------------------
