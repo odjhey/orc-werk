@@ -294,6 +294,50 @@ class ExecutionArtifactRefsTransportTest(unittest.TestCase):
             self.assertIn("<td>-</td>", row.group(0))
 
 
+class LandingSectionRenderTest(unittest.TestCase):
+    """Issue #65's landing affordance in the HTML report: rendered as the
+    runnable resolve command near the verdict/acceptance section
+    (`_render_verdicts_table`'s sibling call), never a network call at
+    render time, and absent entirely when no `gh-pr:N` ref exists."""
+
+    def _dispatch_and_report(self, tmp_dir: Path, run_id: str, evidence_refs: list) -> str:
+        config = {
+            "run_id": run_id,
+            "attempts": {
+                "work-1": [
+                    {
+                        "outcome": "completed",
+                        "candidate": {"label": "C1"},
+                        "assurance": {"verdict": "accepted", "evidence_refs": evidence_refs},
+                    }
+                ]
+            },
+        }
+        config_path = tmp_dir / f"{run_id}.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        dispatch = _run_cli(tmp_dir, "dispatch", "landing transport", "--config", str(config_path))
+        self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+        report = _run_cli(tmp_dir, "report", run_id)
+        self.assertEqual(report.returncode, 0, msg=report.stdout + report.stderr)
+        return layout.report_html_path(tmp_dir / ".orc", run_id).read_text(encoding="utf-8")
+
+    def test_gh_pr_ref_renders_landing_section_with_resolve_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rendered = self._dispatch_and_report(Path(tmp), "report-with-landing", ["gh-pr:65"])
+
+            self.assertIn("<h3>Landing</h3>", rendered)
+            landing_section = rendered.split("<h3>Landing</h3>", 1)[1].split("</ul>", 1)[0]
+            self.assertIn("gh-pr:65", landing_section)
+            self.assertIn("gh pr view 65 --json state,mergedAt,mergeCommit", landing_section)
+
+    def test_absent_gh_pr_ref_renders_no_landing_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rendered = self._dispatch_and_report(Path(tmp), "report-without-landing", [])
+
+            self.assertNotIn("<h3>Landing</h3>", rendered)
+
+
 class PendingCalloutTest(unittest.TestCase):
     def test_pending_run_renders_awaiting_callout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -36,6 +36,7 @@ from orc_werk.cli.show import (
     _finding_id,
     _finding_severity,
     _finding_summary,
+    _render_findings,
     _segment_attempts,
     prompt_provenance,
 )
@@ -159,6 +160,39 @@ class FindingsRenderUnitTest(unittest.TestCase):
         self.assertTrue(summary.endswith("..."))
 
 
+class RenderFindingsStringEntriesUnitTest(unittest.TestCase):
+    """Issue #256: `review-findings/v1`'s amended schema (issue #249) admits
+    a plain string as a COMPLETE finding in its own right
+    (`EXT-REVIEW-FINDINGS-V1-SEMANTICS`'s "for display, show the raw
+    string" fallback) -- `_render_findings` must render it, not silently
+    skip it the way it did before this fix (the pre-fix behavior only
+    handled `Mapping` entries)."""
+
+    def test_string_only_list_renders_every_entry(self) -> None:
+        lines = _render_findings(["looks good", "nit: rename this variable"], run_id="r1")
+        self.assertEqual(lines[0], "    findings: 2")
+        self.assertIn("      [-] finding-1: looks good", lines)
+        self.assertIn("      [-] finding-2: nit: rename this variable", lines)
+
+    def test_object_only_list_unchanged(self) -> None:
+        findings = [{"id": "f1", "severity": "high", "summary": "a real bug"}]
+        lines = _render_findings(findings, run_id="r1")
+        self.assertIn("      [high] f1: a real bug", lines)
+
+    def test_mixed_list_renders_both_forms_in_order(self) -> None:
+        findings = [
+            "looks good overall",
+            {"id": "finding-9", "severity": "medium", "summary": "naming is inconsistent"},
+        ]
+        lines = _render_findings(findings, run_id="r1")
+        self.assertEqual(lines[0], "    findings: 2")
+        self.assertEqual(lines[1], "      [-] finding-1: looks good overall")
+        self.assertEqual(lines[2], "      [medium] finding-9: naming is inconsistent")
+
+    def test_empty_list_renders_zero_count_only(self) -> None:
+        self.assertEqual(_render_findings([], run_id="r1"), ["    findings: 0"])
+
+
 # ---------------------------------------------------------------------------
 # Subprocess CLI wiring
 # ---------------------------------------------------------------------------
@@ -277,6 +311,61 @@ class ShowScriptedRunTest(unittest.TestCase):
             error = json.loads(result.stderr)
             self.assertEqual(error["error"], "ERR-NOT-FOUND")
             self.assertIn("work-1", " ".join(error["next"]))
+
+
+class ShowMixedFindingsAndLandingCliTest(unittest.TestCase):
+    """Issue #256's string-finding rider plus issue #65's landing row,
+    exercised together through `orc show` end-to-end: a mixed `findings`
+    array (string + structured, the shape issue #249's amendment actually
+    produces on the live ledger) and a `gh-pr:N` evidence ref (the landing
+    convention) on the SAME attempt."""
+
+    def _dispatch(self, tmp_dir: Path) -> str:
+        config = {
+            "attempts": {
+                "work-1": [
+                    {
+                        "outcome": "completed",
+                        "candidate": {"label": "c1"},
+                        "assurance": {
+                            "verdict": "accepted",
+                            "evidence_refs": ["gh-pr:65"],
+                            "extensions": {
+                                "review-findings/v1": {
+                                    "findings": [
+                                        "looks good overall",
+                                        {"id": "finding-9", "severity": "medium", "summary": "naming nit"},
+                                    ]
+                                }
+                            },
+                        },
+                    }
+                ]
+            }
+        }
+        config_path = tmp_dir / "cfg.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        dispatch = _run_cli(
+            tmp_dir, "dispatch", "mixed findings and landing demo", "--config", str(config_path),
+            "--run-id", "show-mixed",
+        )
+        self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+        return "show-mixed"
+
+    def test_string_and_structured_findings_and_landing_row_all_render(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            run_id = self._dispatch(tmp_dir)
+
+            result = _run_cli(tmp_dir, "show", run_id)
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            out = result.stdout
+
+            self.assertIn("findings: 2", out)
+            self.assertIn("[-] finding-1: looks good overall", out)
+            self.assertIn("[medium] finding-9: naming nit", out)
+            self.assertIn("landing", out)
+            self.assertIn("gh pr view 65 --json state,mergedAt,mergeCommit", out)
 
 
 class ShowRealGitFixtureTest(unittest.TestCase):

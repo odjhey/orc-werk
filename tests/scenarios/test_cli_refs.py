@@ -48,6 +48,7 @@ from orc_werk.cli.refs import (
     _command_field,
     _evidence_ref_rows,
     _execution_session_rows,
+    _landing_rows,
     _mirror_row,
     _render_resolution,
     _select_row,
@@ -429,6 +430,118 @@ class MirrorRowUnitTest(unittest.TestCase):
             )
 
 
+class LandingRowsUnitTest(unittest.TestCase):
+    """Issue #65: a `landing` row is DERIVED from a plain-string `gh-pr:<N>`
+    entry in `FACT-EXEC-SETTLED.artifact_refs` or `FACT-ASSURE-SETTLED.
+    evidence_refs` -- never journaled itself (the merge/PR lives in the
+    forge, reference-first doctrine)."""
+
+    def _exec_settled(self, artifact_refs) -> dict:
+        return {
+            "kind": "fact",
+            "id": "FACT-EXEC-SETTLED",
+            "data": {"execution_id": "e1", "outcome": "completed", "artifact_refs": artifact_refs},
+        }
+
+    def _assure_settled(self, evidence_refs) -> dict:
+        return {
+            "kind": "fact",
+            "id": "FACT-ASSURE-SETTLED",
+            "data": {"assurance_id": "a1", "verdict": "accepted", "evidence_refs": evidence_refs},
+        }
+
+    def test_gh_pr_ref_in_artifact_refs_yields_landing_row(self) -> None:
+        rows = _landing_rows([self._exec_settled(["gh-pr:42", "head:abc123"])])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row.kind, "landing")
+        self.assertEqual(row.provider, "-")
+        self.assertEqual(row.value, "gh-pr:42")
+        self.assertEqual(row.resolve.display, "gh pr view 42 --json state,mergedAt,mergeCommit")
+        self.assertEqual(
+            row.resolve.argv,
+            ("gh", "pr", "view", "42", "--json", "state,mergedAt,mergeCommit"),
+        )
+        self.assertIsNone(row.resolve.refusal)
+
+    def test_gh_pr_ref_in_evidence_refs_yields_landing_row(self) -> None:
+        rows = _landing_rows([self._assure_settled(["gh-pr:7"])])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].value, "gh-pr:7")
+        self.assertEqual(rows[0].resolve.argv, ("gh", "pr", "view", "7", "--json", "state,mergedAt,mergeCommit"))
+
+    def test_absent_gh_pr_ref_yields_no_landing_row(self) -> None:
+        self.assertEqual(_landing_rows([self._exec_settled(["head:abc123"])]), [])
+        self.assertEqual(_landing_rows([self._exec_settled([])]), [])
+        self.assertEqual(_landing_rows([]), [])
+
+    def test_duplicate_gh_pr_ref_across_sources_dedupes_to_one_row(self) -> None:
+        rows = _landing_rows(
+            [self._exec_settled(["gh-pr:42"]), self._assure_settled(["gh-pr:42"])]
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].value, "gh-pr:42")
+
+    def test_distinct_pr_numbers_each_yield_their_own_row_in_order(self) -> None:
+        rows = _landing_rows([self._exec_settled(["gh-pr:5", "gh-pr:9"])])
+        self.assertEqual([row.value for row in rows], ["gh-pr:5", "gh-pr:9"])
+
+    def test_structured_entry_embedding_gh_pr_looking_value_is_not_matched(self) -> None:
+        # Structural detection only, never a substring guess: a structured
+        # (mapping) entry that merely CONTAINS a "gh-pr:42"-looking string
+        # in some field is not the convention this scans for.
+        entry = {"note": "see gh-pr:42 for context"}
+        self.assertEqual(_landing_rows([self._exec_settled([entry])]), [])
+
+    def test_malformed_pr_number_shape_is_not_matched(self) -> None:
+        for value in ("gh-pr:", "gh-pr:abc", "gh-pr:-1", "GH-PR:42", " gh-pr:42"):
+            self.assertEqual(_landing_rows([self._exec_settled([value])]), [], msg=value)
+
+
+class GhPrViewVetUnitTest(unittest.TestCase):
+    """Issue #65/#256: `gh` is admitted to the read-only allowlist for
+    exactly the minimal `pr view <N> --json <fields>` shape a `landing`
+    row's resolve command builds -- narrower than every other vetted tool
+    in that `--json` is REQUIRED, not merely allowed, so the pre-existing
+    `candidate-pr` row's bare `gh pr view <pr>` form (no `--json`) stays
+    exactly as documented: display-only, never executable."""
+
+    def test_minimal_landing_shape_is_vetted(self) -> None:
+        self.assertIsNone(
+            _vet_read_only(["gh", "pr", "view", "42", "--json", "state,mergedAt,mergeCommit"])
+        )
+        self.assertIsNone(_vet_read_only(["gh", "pr", "view", "42", "--json=state"]))
+
+    def test_bare_form_without_json_still_refused(self) -> None:
+        reason = _vet_read_only(["gh", "pr", "view", "42"])
+        self.assertIsNotNone(reason)
+        self.assertIn("--json", reason)
+
+    def test_mutated_dangerous_flag_is_refused(self) -> None:
+        for argv in [
+            ["gh", "pr", "view", "42", "--json", "state", "--web"],
+            ["gh", "pr", "view", "42", "-w"],
+            ["gh", "pr", "view", "42", "--json", "state", "-R", "other/repo"],
+            ["gh", "pr", "view", "42", "--json", "state", "--jq", ".state"],
+        ]:
+            reason = _vet_read_only(argv)
+            self.assertIsNotNone(reason, msg=argv)
+            self.assertIn("allowlist", reason, msg=argv)
+
+    def test_other_gh_subcommands_refused(self) -> None:
+        for argv in [
+            ["gh", "pr", "merge", "42"],
+            ["gh", "pr", "close", "42"],
+            ["gh", "pr", "comment", "42", "--body", "pwned"],
+            ["gh", "repo", "clone", "x/y"],
+            ["gh", "auth", "login"],
+        ]:
+            self.assertIsNotNone(_vet_read_only(argv), msg=argv)
+
+    def test_extra_positional_refused(self) -> None:
+        self.assertIsNotNone(_vet_read_only(["gh", "pr", "view", "42", "99", "--json", "state"]))
+
+
 # ---------------------------------------------------------------------------
 # Subprocess CLI wiring / regression coverage
 # ---------------------------------------------------------------------------
@@ -581,6 +694,93 @@ class RefsArtifactRefsViaRecordOutcomeCliTest(unittest.TestCase):
             self.assertIn("head:deadbeef", out)
             self.assertIn("artifact", out)
             self.assertIn("(resolve: -)", out)  # plain-string artifact rows have no resolve command
+
+
+class RefsLandingCliTest(unittest.TestCase):
+    """Issue #65's landing affordance end-to-end: `orc record --evidence-ref
+    gh-pr:N` -> `orc refs` derives a `landing` row (never journaled) with
+    the exact `gh pr view N --json ...` resolve command, and a run with no
+    `gh-pr:N` ref anywhere carries no `landing` row at all."""
+
+    def test_landing_row_present_with_exact_resolve_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal = str(tmp_dir / ".orc")
+            cfg = tmp_dir / "input.json"
+            cfg.write_text("{}")
+            pending = _run_cli(
+                tmp_dir, "dispatch", "refs landing demo", "--config", str(cfg),
+                "--run-id", "refs-landing", "--journal", journal,
+            )
+            self.assertEqual(pending.returncode, 3, msg=pending.stdout + pending.stderr)
+
+            recorded = _run_cli(
+                tmp_dir, "record", "refs-landing", "--work", "work-1", "--outcome", "completed",
+                "--evidence-ref", "gh-pr:65", "--journal", journal,
+            )
+            self.assertEqual(recorded.returncode, 0, msg=recorded.stdout + recorded.stderr)
+
+            settled = _run_cli(tmp_dir, "dispatch", "--run-id", "refs-landing", "--journal", journal)
+            self.assertEqual(settled.returncode, 3, msg=settled.stdout + settled.stderr)
+
+            result = _run_cli(tmp_dir, "refs", "refs-landing", "--journal", journal)
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            out = result.stdout
+
+            self.assertIn("landing", out)
+            self.assertIn(
+                "gh pr view 65 --json state,mergedAt,mergeCommit",
+                out,
+            )
+
+    def test_run_without_gh_pr_ref_carries_no_landing_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config = {
+                "attempts": {
+                    "work-1": [
+                        {"outcome": "completed", "candidate": {"label": "c1"}, "assurance": {"verdict": "accepted"}}
+                    ]
+                }
+            }
+            config_path = tmp_dir / "cfg.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            dispatch = _run_cli(tmp_dir, "dispatch", "no landing demo", "--config", str(config_path), "--run-id", "refs-no-landing")
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            result = _run_cli(tmp_dir, "refs", "refs-no-landing")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertNotRegex(result.stdout, r"(?m)^\[\d+\] landing\s")
+
+    def test_resolve_landing_row_degrades_honestly_when_gh_absent(self) -> None:
+        # HERMETIC gh-absence: the module's restricted PATH (/usr/bin:/bin)
+        # is NOT enough -- CI runners ship gh at /usr/bin/gh, where it fails
+        # on auth instead (a third, also-honest degradation this test is not
+        # about). Point PATH at an empty directory so `gh` is absent on any
+        # host: the CLI itself is invoked via sys.executable (PATH-free) and
+        # this flow shells out to nothing else.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            empty_bin = tmp_dir / "empty-bin"
+            empty_bin.mkdir()
+            no_gh = {"PATH": str(empty_bin)}
+            journal = str(tmp_dir / ".orc")
+            cfg = tmp_dir / "input.json"
+            cfg.write_text("{}")
+            _run_cli(
+                tmp_dir, "dispatch", "refs landing resolve demo", "--config", str(cfg),
+                "--run-id", "refs-landing-resolve", "--journal", journal, env=no_gh,
+            )
+            _run_cli(
+                tmp_dir, "record", "refs-landing-resolve", "--work", "work-1", "--outcome", "completed",
+                "--evidence-ref", "gh-pr:65", "--journal", journal, env=no_gh,
+            )
+            _run_cli(tmp_dir, "dispatch", "--run-id", "refs-landing-resolve", "--journal", journal, env=no_gh)
+
+            result = _run_cli(tmp_dir, "refs", "refs-landing-resolve", "--resolve", "landing", "--journal", journal, env=no_gh)
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("gh pr view 65 --json state,mergedAt,mergeCommit", result.stdout)
+            self.assertIn("binary not found", result.stdout)
 
 
 class RefsExecutionSessionCraftedJournalTest(unittest.TestCase):
@@ -780,6 +980,7 @@ class VetReadOnlyUnitTest(unittest.TestCase):
             ["bd", "--json", "-C", "/abs/ws", "show", "bd-1"],
             ["no-mistakes", "axi", "status", "--run", "r1"],
             ["no-mistakes", "axi", "logs", "--run", "r1", "--step", "review", "--full"],
+            ["gh", "pr", "view", "42", "--json", "state,mergedAt,mergeCommit"],
         ]
         for argv in vetted:
             self.assertIsNone(_vet_read_only(argv), msg=argv)
@@ -797,7 +998,9 @@ class VetReadOnlyUnitTest(unittest.TestCase):
             ["bd", "--json", "-C", "/abs/ws", "update", "bd-1"],
             ["no-mistakes", "axi", "run"],
             ["no-mistakes", "push"],
-            ["gh", "pr", "view", "1"],
+            ["gh", "pr", "view", "1"],  # bare form (no --json) stays refused
+            ["gh", "pr", "merge", "1"],
+            ["gh", "pr", "view", "1", "--web"],
             ["rm", "-rf", "/"],
             ["sh", "-c", "echo pwned"],
         ]
