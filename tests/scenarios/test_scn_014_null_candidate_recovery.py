@@ -1,4 +1,18 @@
-"""SCN-014: null candidate identification recovery (issue #191)."""
+"""SCN-014: null candidate identification recovery (issue #191).
+
+`CONF-CAND-004`: the null observation is non-binding, and every subsequent
+dispatch re-attempts identification with the SAME attempt-scoped
+`FX-IDENTIFY-CANDIDATE` idempotency key until a candidate binds or the
+attempt is legally abandoned --
+`test_null_then_present_redispatch_reidentifies_with_stable_key_and_heals`
+asserts the stable-key half directly (`len({... idempotency_key ...}) ==
+1` across the null and the healed dispatch); the port-re-invoked-every-
+dispatch half of "every subsequent dispatch re-attempts identification" is
+asserted by `test_repeated_null_redispatch_appends_on_change_not_per_
+dispatch` (`len(candidate.calls) == 3` across three redispatches) and
+`test_null_then_present_after_several_null_redispatches_appends_exactly_
+twice`.
+"""
 
 from __future__ import annotations
 

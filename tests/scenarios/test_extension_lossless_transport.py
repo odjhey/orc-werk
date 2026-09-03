@@ -153,6 +153,13 @@ class AssuranceContextProjectionTest(unittest.TestCase):
 
 
 class ExtensionLosslessTransportTest(unittest.TestCase):
+    """Also `CONF-EXT-002` (unknown-extension safety): the orchestrator and
+    reducer never registered/heard of `some-ext/v1` and still process the
+    canonical Execution/Assurance/Work objects to the identical outcome
+    (`STATE_ACCEPTED`, ordering, `INV-003`) an identical run without that
+    payload would reach -- an unrecognized extension changes nothing about
+    canonical meaning."""
+
     def test_unregistered_extensions_survive_jsonl_round_trip_and_outcome_is_unaffected(self) -> None:
         candidate_content = {"label": "C1"}
         fingerprint = fingerprint_of(candidate_content)
