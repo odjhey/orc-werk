@@ -83,6 +83,7 @@ description: Flat documentation index.
 - [Agent CLI usage playbook](playbooks/agent-cli-usage.md)
 - [Engineering method](playbooks/engineering-method.md)
 - [Portfolio cockpit](playbooks/portfolio-cockpit.md)
+- [ergo coexistence](playbooks/ergo-coexistence.md)
 - [CLI reference](cli/README.md)
 
 ## Dogfooding
