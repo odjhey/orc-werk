@@ -42,6 +42,7 @@ already do, invents no new canonical semantics, and records nothing.
 from __future__ import annotations
 
 import shlex
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -220,6 +221,28 @@ def _work_group_key(work_id: str, wp: WorkProjection) -> Optional[str]:
     return None
 
 
+def _group_works(projection: DeliveryProjection) -> tuple[dict[str, list[str]], list[str]]:
+    """The per-state grouping both `render_next_block` (text) and
+    `next_entries` (issue #53's structured `--json` sibling) key off:
+    every Work with an affordance, bucketed by `_work_group_key`, in
+    first-seen order over `sorted(projection.works)`. Extracted once so
+    the two renderers can never derive a different set of groups from the
+    same projection -- the single per-state map lives in
+    `_work_group_key`; this only shares its bucketing."""
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    for work_id in sorted(projection.works):
+        wp = projection.works[work_id]
+        key = _work_group_key(work_id, wp)
+        if key is None:
+            continue
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(work_id)
+    return groups, order
+
+
 def render_next_block(
     projection: DeliveryProjection,
     history: Sequence[Mapping[str, Any]],
@@ -234,17 +257,7 @@ def render_next_block(
     `journal_dir` and `config_path` should already be absolute (per-caller
     resolution) so every printed command is copy-pasteable regardless of
     the reader's cwd."""
-    groups: dict[str, list[str]] = {}
-    order: list[str] = []
-    for work_id in sorted(projection.works):
-        wp = projection.works[work_id]
-        key = _work_group_key(work_id, wp)
-        if key is None:
-            continue
-        if key not in groups:
-            groups[key] = []
-            order.append(key)
-        groups[key].append(work_id)
+    groups, order = _group_works(projection)
 
     if not groups:
         return []
@@ -363,4 +376,164 @@ def render_next_block(
     return lines
 
 
-__all__ = ["redispatch_command", "render_next_block"]
+@dataclass(frozen=True)
+class NextEntry:
+    """One structured `next:` affordance (issue #53's `--json` sibling of
+    `render_next_block`'s text bullets): `description` is the human
+    sentence, `command` is the exact runnable `orc`/`gh` command it names
+    -- or `None` for a bullet with no command of its own (e.g. "record the
+    execution outcome for work(s): ..."), never a fabricated one."""
+
+    description: str
+    command: Optional[str] = None
+
+
+def next_entries(
+    projection: DeliveryProjection,
+    history: Sequence[Mapping[str, Any]],
+    *,
+    run_id: str,
+    journal_dir: Path,
+    config_path: Optional[Path],
+    intent_text: Optional[str],
+) -> list[NextEntry]:
+    """Structured counterpart to `render_next_block` (issue #53 R2's `next:`
+    field on `orc-status/v1`): the exact same per-state grouping
+    (`_group_works`, itself keyed by `_work_group_key` -- the single
+    per-state affordance map this module's docstring describes) reduced to
+    `{description, command}` pairs instead of pre-formatted prose lines, so
+    a structured consumer gets the runnable command as its own field
+    rather than having to parse it back out of a sentence. Every branch
+    below mirrors exactly one `render_next_block` branch and reuses the
+    identical helper calls (`_block_budget`, `_candidate_head_sha`,
+    `_candidate_pr`, `redispatch_command`, `_resolved_config_token`) --
+    keep the two renderers' branches in sync when the per-state affordance
+    map changes; neither one derives Work state semantics independently of
+    `_work_group_key`."""
+    groups, order = _group_works(projection)
+    entries: list[NextEntry] = []
+
+    if not groups:
+        return entries
+
+    needs_redispatch = False
+    for key in order:
+        work_ids = groups[key]
+        ids_text = ", ".join(work_ids)
+        if key == "candidate-conflict":
+            for work_id in work_ids:
+                entries.append(
+                    NextEntry(
+                        description=(
+                            f"work {work_id} rests at a candidate-observation conflict "
+                            "verdict inheritance could not resolve (STATE-DELIVERY item 9): "
+                            "operator-only"
+                        ),
+                        command=(
+                            f"orc dispatch --run-id {run_id} --journal {journal_dir} --config "
+                            f"{config_path or journal_dir / run_id / 'config.json'} "
+                            f'--abandon-work {work_id} --abandon-reason "<why>"'
+                        ),
+                    )
+                )
+        elif key == "awaiting-candidate":
+            entries.append(
+                NextEntry(
+                    description=(
+                        f"work(s) {ids_text}: candidate identification returned no subject -- "
+                        "ensure candidate.repo_path exists and re-dispatch (re-derivation is "
+                        "automatic); if the subject is never coming back"
+                    ),
+                    command=(
+                        f"orc dispatch --run-id {run_id} --journal {journal_dir} --config "
+                        f"{_resolved_config_token(config_path=config_path, journal_dir=journal_dir, run_id=run_id)} "
+                        '--abandon-work <work_id> --abandon-reason "<why>"'
+                    ),
+                )
+            )
+            needs_redispatch = True
+        elif key == "pending-execution":
+            entries.append(NextEntry(description=f"record the execution outcome for work(s): {ids_text}"))
+            needs_redispatch = True
+        elif key == "pending-assurance":
+            entries.append(
+                NextEntry(
+                    description=(
+                        f"record the assurance verdict for work(s): {ids_text} -- needs a "
+                        "different agent than the one that recorded the settlement "
+                        "(canonical playbook discipline: PLAYBOOK-AGENT-CLI)"
+                    )
+                )
+            )
+            needs_redispatch = True
+            for work_id in work_ids:
+                wp = projection.works[work_id]
+                if wp.current_assurance_id is None:
+                    continue
+                head = _candidate_head_sha(history, work_id, wp)
+                head_text = head if head is not None else "(unknown)"
+                entries.append(
+                    NextEntry(
+                        description=(
+                            f"work {work_id}'s bound assurance is {wp.current_assurance_id} "
+                            f"(candidate head {head_text}); if it stays pending unexpectedly "
+                            "long, operator recovery is"
+                        ),
+                        command=(
+                            f"orc dispatch --run-id {run_id} --journal {journal_dir} --config "
+                            f"{config_path or journal_dir / run_id / 'config.json'} "
+                            f'--abandon-work {work_id} --abandon-reason "<why>"'
+                        ),
+                    )
+                )
+        elif key.startswith("blocked-"):
+            reason = key[len("blocked-") :]
+            for work_id in work_ids:
+                budget = _block_budget(history, work_id)
+                budget_note = ""
+                if reason == BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED:
+                    budget_note = " (retry budget exhausted -- no attempts remain)"
+                elif budget is not None and isinstance(budget[0], int) and isinstance(budget[1], int):
+                    remaining = max(0, budget[1] - budget[0])
+                    budget_note = (
+                        f" ({remaining} of {budget[1]} attempts technically unused, but "
+                        "STATE-DELIVERY routes an inconclusive verdict straight to BLOCKED -- "
+                        "no automatic retry)"
+                    )
+                entries.append(
+                    NextEntry(
+                        description=f"work {work_id} is BLOCKED (blocked_reason={reason}){budget_note}",
+                        command=f"orc history {run_id}",
+                    )
+                )
+        elif key == "accepted":
+            entries.append(
+                NextEntry(description=f"work(s) accepted: {ids_text}", command=f"orc report {run_id}")
+            )
+            for work_id in work_ids:
+                pr = _candidate_pr(history, work_id, projection.works[work_id])
+                if pr is not None:
+                    entries.append(
+                        NextEntry(
+                            description=f"work {work_id}'s candidate carries pr {pr}",
+                            command=f"gh pr view {pr}",
+                        )
+                    )
+
+    if needs_redispatch:
+        entries.append(
+            NextEntry(
+                description="then re-run",
+                command=redispatch_command(
+                    intent_text=intent_text,
+                    config_path=config_path,
+                    journal_dir=journal_dir,
+                    run_id=run_id,
+                ),
+            )
+        )
+
+    return entries
+
+
+__all__ = ["NextEntry", "next_entries", "redispatch_command", "render_next_block"]

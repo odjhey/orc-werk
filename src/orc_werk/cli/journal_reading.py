@@ -273,7 +273,7 @@ def _resolve_journal(target: str, explicit_journal_dir: Optional[str] = None) ->
     return resolve_journal_dir(explicit_journal_dir), target
 
 
-def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
+def _require_journal_file(directory: Path, run_id: str, *, target: str, quiet: bool = False) -> Path:
     """#18 CLI fix: `status`/`history`/`report` must fail closed with
     canonical `ERR-NOT-FOUND` naming the run id when the resolved journal
     file does not exist on disk, instead of the old fail-open "(no work
@@ -283,7 +283,15 @@ def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
     `.orc/` directory as a side effect. `layout.journal_path` resolves new
     vs. legacy layout the same way `JSONLJournal` itself does (issue #55
     H1), so this check agrees with what a subsequent `JSONLJournal.history`
-    call would actually read."""
+    call would actually read.
+
+    `quiet` (issue #53 R3, `--json` byte-discipline): when set, none of the
+    ERR-NOT-FOUND affordance lines below are printed to stdout -- only the
+    canonical error itself is raised, still stderr-bound as always. Nothing
+    is lost: every line normally printed here is ALSO folded into the
+    raised error's `next` field (issue #94), so a `--json` caller reading
+    only the canonical stderr error gets identical guidance. Used by
+    `orc status --json`, which must leave stdout empty on error."""
     path = layout.journal_path(directory, run_id)
     if not path.exists():
         # ERR-NOT-FOUND(run) affordance (issue #43's HATEOAS reframe): print
@@ -301,23 +309,30 @@ def _require_journal_file(directory: Path, run_id: str, *, target: str) -> Path:
         abs_dir_display = hyperlink_path(abs_dir)
         available = _available_run_ids(directory)
         available_window, available_total, available_truncated = paginate(available, limit=DEFAULT_LIMIT)
-        if available:
-            available_line = f"available runs in {abs_dir_display}: {', '.join(available_window)}"
-            print(available_line)
-            available_hint = (
-                size_hint(len(available_window), available_total, noun="runs", limit_flag="orc --limit 0")
-                if available_truncated
-                else None
+        available_hint = None
+        if not quiet:
+            if available:
+                available_line = f"available runs in {abs_dir_display}: {', '.join(available_window)}"
+                print(available_line)
+                available_hint = (
+                    size_hint(len(available_window), available_total, noun="runs", limit_flag="orc --limit 0")
+                    if available_truncated
+                    else None
+                )
+                if available_hint:
+                    print(available_hint)
+            else:
+                print(f"0 runs in {abs_dir_display}")
+            print("next:")
+        elif available and available_truncated:
+            available_hint = size_hint(
+                len(available_window), available_total, noun="runs", limit_flag="orc --limit 0"
             )
-            if available_hint:
-                print(available_hint)
-        else:
-            print(f"0 runs in {abs_dir_display}")
-        print("next:")
         dispatch_affordance = (
             f'orc dispatch "<intent text>" --config <path-to-dispatch-config.json> --journal {abs_dir}'
         )
-        print(f"  - {dispatch_affordance}")
+        if not quiet:
+            print(f"  - {dispatch_affordance}")
         # issue #94: the same content just printed above (stdout, unchanged
         # for backward compatibility -- existing callers scrape it) is ALSO
         # normalized into the canonical error's `next` field below, so a

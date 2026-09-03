@@ -61,6 +61,7 @@ from orc_werk.cli.config import (
     validate_config,
 )
 from orc_werk.cli.hyperlink import hyperlink_path
+from orc_werk.cli.jsonview import dump_json, index_document, index_run_document, status_document
 from orc_werk.cli.journal_reading import (
     BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED,
     _available_run_ids,
@@ -1136,8 +1137,15 @@ def cmd_cancel(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
+    json_output = getattr(args, "json", False)
     directory, run_id = _resolve_journal(args.target, args.journal)
-    _require_journal_file(directory, run_id, target=args.target)
+    # issue #53 R3 byte-discipline: with --json, stdout must be exactly one
+    # JSON document on success and EMPTY on error (the canonical error
+    # already goes to stderr, unchanged) -- quiet=True suppresses this
+    # helper's own pre-error stdout affordance lines without losing any
+    # guidance (it is folded into the raised error's `next` field either
+    # way, see _require_journal_file's own docstring).
+    _require_journal_file(directory, run_id, target=args.target, quiet=json_output)
     journal = JSONLJournal(directory)
     try:
         history = journal.history(delivery_run_id=run_id)
@@ -1145,8 +1153,22 @@ def cmd_status(args: argparse.Namespace) -> int:
     except CoreError as exc:
         raise _diagnose_replay_conflict(exc, run_id=run_id, self_is_status=True) from exc
 
-    print(f"run: {run_id}")
     intent_text = _intent_text(history)
+    any_blocked, any_non_accepted = _summarize_works(projection)
+    exit_code = _exit_code_for(any_blocked, any_non_accepted)
+
+    if json_output:
+        doc = status_document(
+            run_id=run_id,
+            projection=projection,
+            history=history,
+            directory=directory,
+            intent_text=intent_text,
+        )
+        print(dump_json(doc))
+        return exit_code
+
+    print(f"run: {run_id}")
     if intent_text is not None:
         print(f"intent: {intent_text}")
     if not projection.works:
@@ -1155,8 +1177,6 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     for work_id in sorted(projection.works):
         print(_work_line(work_id, projection.works[work_id], history))
-    any_blocked, any_non_accepted = _summarize_works(projection)
-    exit_code = _exit_code_for(any_blocked, any_non_accepted)
     if exit_code == EXIT_PENDING:
         pending_ids = [wid for wid, wp in projection.works.items() if is_pending(wp)]
         print(
@@ -1294,6 +1314,7 @@ def cmd_index(
     limit: int = DEFAULT_LIMIT,
     before: str | None = None,
     state: str | None = None,
+    json_output: bool = False,
 ) -> int:
     """`orc` with no arguments (issue #43 item 1, "content first" -- axi
     #8): a live text index of the default journal dir instead of an
@@ -1325,6 +1346,13 @@ def cmd_index(
     if not run_ids:
         if before is not None:
             window_before((), limit=limit, before=before, cursor_of=str, cursor_name="before")
+        if json_output:
+            # issue #53 R3/R5: index/v1 carries no affordance field of its
+            # own (unlike status/v1's `next`) -- the dispatch hint text
+            # prints is a generic pointer, not a per-work affordance keyed
+            # off any projection this empty-dir case even has.
+            print(dump_json(index_document(journal_dir=abs_dir, runs=[], total=0, truncated=False, next_page_command=None)))
+            return 0
         # Empty-dir case (issue #43 item 1): definitive "0 runs in <abs
         # dir>" plus the dispatch affordance to create the first one.
         print(f"0 runs in {abs_dir_display}")
@@ -1368,6 +1396,34 @@ def cmd_index(
     # Most-recently-active first for the at-a-glance scan (paginate keeps
     # append/chronological order, i.e. oldest-of-the-window first).
     window_entries = list(reversed(window_entries))
+
+    if json_output:
+        # issue #53 R2/M4B-001: `window_entries` is the SAME already-ordered
+        # sequence the text loop below iterates -- both surfaces are built
+        # from one ordering, so the unified-ordering invariant holds by
+        # construction rather than by two independently-sorted lists
+        # happening to agree.
+        runs = []
+        for run_id, _path in window_entries:
+            try:
+                projection = projections.get(run_id) or journal.load_projection(delivery_run_id=run_id)
+            except CoreError as exc:
+                runs.append({"run_id": run_id, "error": exc.error.get("error", "ERR-UNKNOWN")})
+                continue
+            runs.append(index_run_document(run_id, projection))
+        next_page_command = None
+        if truncated:
+            oldest_run_id = window_entries[-1][0]
+            next_page_command = f"orc --limit {limit} --before {oldest_run_id}"
+        doc = index_document(
+            journal_dir=abs_dir,
+            runs=runs,
+            total=corpus_total,
+            truncated=truncated,
+            next_page_command=next_page_command,
+        )
+        print(dump_json(doc))
+        return 0
 
     noun = "run" if corpus_total == 1 else "runs"
     print(f"{corpus_total} {noun} in {abs_dir_display}:")
@@ -1649,6 +1705,12 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument(
         "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
     )
+    status_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the orc-status/v1 machine projection as one JSON document on stdout instead of text "
+        "(exit codes unchanged; errors still print canonical error JSON on stderr with empty stdout)",
+    )
     status_parser.set_defaults(func=cmd_status)
 
     refs_parser = subparsers.add_parser(
@@ -1863,18 +1925,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
-    if not raw_args or raw_args[:1] in (["--limit"], ["--before"], ["--state"]):
+    if not raw_args or raw_args[:1] in (["--limit"], ["--before"], ["--state"], ["--json"]):
         # The content-first index is intentionally a promoted fast path,
         # not an argparse subcommand. Give that surface its own tiny parser
         # so `orc --limit N` retains the bare invocation while ordinary
         # top-level flags/subcommands (including `--help`) remain unchanged.
+        # issue #53: `--json` joins this same fast-path trigger set so
+        # `orc --json` (no other flag first) still resolves to the index,
+        # not a "command required" usage error.
         index_parser = argparse.ArgumentParser(prog="orc", add_help=False)
         index_parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
         index_parser.add_argument("--before", default=None)
         index_parser.add_argument("--state", default=None)
+        index_parser.add_argument("--json", action="store_true")
         index_args = index_parser.parse_args(raw_args)
         call = lambda: cmd_index(  # noqa: E731
-            limit=index_args.limit, before=index_args.before, state=index_args.state
+            limit=index_args.limit,
+            before=index_args.before,
+            state=index_args.state,
+            json_output=index_args.json,
         )
     else:
         parser = build_parser()
