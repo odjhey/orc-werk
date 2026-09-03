@@ -41,6 +41,19 @@ non-terminal. It is a journal-only terminal transition, not a verdict.
 7. Replaying each valid journal deterministically reconstructs the same
    clean, confirmed terminal `CANCELLED` projection. Such a run is settled,
    not active.
+8. Cancellation requires only the run's own journal. An unloadable or
+   schema-invalid persisted config — for example one still naming an
+   adapter removed by a later release (`ADR-0005`) — never blocks it: this
+   scenario's legality and journal state are unaffected by the CLI's
+   config-loading mechanics, since cancellation constructs no port and
+   consults no adapter vocabulary at all (item 4 above). Issue #236's field
+   evidence (23 stranded adopter runs, unreachable by any verb after an
+   adapter removal) is exactly this gap: the CLI used to load the
+   persisted config through the same full validation `orc dispatch`
+   requires before it could even determine whether cancellation was
+   legal, so a config an adapter removal invalidated made every pending
+   run unreachable by `cancel` too, not only by `dispatch` (which
+   correctly still refuses it — a real dispatch does need the adapter).
 
 ## Mutation check
 Removing `FACT-WORK-CANCELLED`'s transition branch, omitting `CANCELLED`
