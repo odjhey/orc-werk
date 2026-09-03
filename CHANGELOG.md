@@ -12,6 +12,44 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.9.0] — 2026-09-04
+
+No breaking changes. No migration.
+
+### Added
+- **`--json` on `orc status` and the bare index** (#53, PR #257): versioned
+  machine documents (`orc-status/v1`, `orc-index/v1`) carrying the
+  projection, journaled refs with resolve commands, and structured `next`
+  affordances sharing one helper with the text render so the two surfaces
+  cannot drift. Exit codes unchanged; byte-stable output; canonical errors
+  stay on stderr. Verified by a seat driving a full delivery lifecycle
+  through JSON alone.
+- **Landing as runnable resolve affordances** (#65, PR #258): a derived
+  `landing` row appears in `refs`/`show`/`report`/JSON wherever a run's
+  refs carry `gh-pr:N` — resolve command `gh pr view N --json
+  state,mergedAt,mergeCommit`. Per the reference-first doctrine nothing is
+  stored: the forge owns the merge, the ledger points, the viewer
+  resolves. `gh` enters the `--resolve` allowlist in the narrowest vetted
+  shape (`pr view` with `--json` required; web/repo/jq/template flags
+  refused). Closes the oldest open dogfood finding.
+- **Coverage hygiene** (PR #259): locking failure-matrix and
+  context-manager tests (`adapters/locking.py` measured 100% line and
+  branch), a deterministic pagination unit lane (100%), honest SCN/CONF
+  traceability citations (each verified to assert its clause; one
+  genuinely missing CONF-JOURNAL-004 test added), and true-coverage
+  accounting for subprocess-driven CLI tests documented in tests/README —
+  real overall coverage is 92.7% line / 84.5% branch; earlier lower
+  figures were measurement artifact.
+
+### Changed / Fixed
+- **`review-findings/v1` admits string entries** (#249, PR #255): the
+  free-text findings every verify seat records are now schema-conformant,
+  retroactively including the ledger's history; the structured object form
+  remains for richer producers. The #227 dev-gate's expected-failure
+  marker is gone — the suite runs with zero expected failures.
+- **String findings render** (#256, PR #258): `orc show`/`history` display
+  string findings instead of silently skipping them.
+
 ## [0.8.0] — 2026-09-03
 
 No breaking changes. Existing configs and journals need no migration; a

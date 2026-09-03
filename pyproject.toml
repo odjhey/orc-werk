@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orc-werk"
-version = "0.8.0"
+version = "0.9.0"
 description = "Opinionated, contract-driven orchestration kernel for autonomous work delivery"
 requires-python = ">=3.11"
 dependencies = []
