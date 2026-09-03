@@ -36,6 +36,10 @@ so every pending acp run became unreachable through any verb simultaneously.
 Recovery: pin back to `v0.4.1`, `orc cancel` all 23 with honest reasons, then
 upgrade again.
 
+*(Maintainer note at merge: reproduced on 0.7.0 and tracked as issue #236 —
+journal-only verbs should tolerate an invalid persisted config; the fix
+direction follows this report's own suggestion.)*
+
 The 0.5.0 release note *does* say to settle or cancel first. We read it
 carefully only after the upgrade. Two things would have helped an adopter who
 does the same:
@@ -132,7 +136,14 @@ than composed, and the deep merge had no unset. A dispatch was blocked until
 `.orc/profile.json` was emptied to `{}`.
 
 Every run's config in this deployment is therefore fully self-contained, and
-profile defaults are unused pending those issues.
+profile defaults were unused while those issues were open.
+
+*(Maintainer note at merge: #174/#175 were fixed in the 0.2.0 era (#173,
+#176). Re-verified empirically on 0.7.0: an explicit `--config` wins over the
+profile, nested objects compose, and `orc validate` layers the profile — it
+prints the layer provenance. The incident above is accurate for the versions
+it names; the self-contained-config posture is now a deployment choice, not a
+necessity.)*
 
 ### 1.6 A correction we owe the record
 
