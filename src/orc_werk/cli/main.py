@@ -53,6 +53,7 @@ from orc_werk.cli.config import (
     deep_merge_config,
     load_config,
     load_config_overlay,
+    load_persisted_config_tolerant,
     load_repo_profile,
     record_assurance_entry,
     record_execution_outcome_entry,
@@ -386,6 +387,25 @@ def _warn_candidate_divergence(
         )
 
 
+def _warn_journal_only_config_tolerated(warning: Optional[CoreError], *, verb: str) -> None:
+    """Issue #236: `orc cancel`/`orc dispatch --abandon-work` tolerate a
+    persisted config that fails full validation (`load_persisted_config_
+    tolerant`) instead of refusing the journal-only operation outright.
+    Silence would make that tolerance invisible to the operator; a one-line
+    stderr note names the error id being set aside so the audit trail
+    stays honest without blocking the journal-only action itself. No-op
+    when the persisted config loaded/validated cleanly (`warning is None`)
+    -- an ordinary cancel/abandon's output is therefore unchanged."""
+    if warning is None:
+        return
+    error_id = warning.error.get("error", ERR_VALIDATION)
+    print(
+        f"warning: persisted config invalid ({error_id}) -- proceeding: {verb} is journal-only "
+        "(issue #236)",
+        file=sys.stderr,
+    )
+
+
 class _DispatchPassResult(NamedTuple):
     """One `_dispatch_pass` invocation's outcome, consumed by both the
     ordinary (non-`--wait`) `cmd_dispatch` and the `--wait` loop
@@ -438,10 +458,35 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
     explicit = load_config_overlay(args.config) if args.config else {}
     run_id = args.run_id or explicit.get("run_id") or _derive_run_id(intent_text)
     persisted_config_path = layout.config_path(journal_dir, run_id)
-    persisted = load_config(str(persisted_config_path)) if persisted_config_path.exists() else {}
-    config = validate_config(
-        deep_merge_config(deep_merge_config(profile, persisted), explicit)
-    )
+    # Issue #236: `--abandon-work` is a journal-only operator verb (SCN-010,
+    # STATE-DELIVERY item 9, same lineage as `orc cancel`/SCN-011) -- it has
+    # no reason to care whether the persisted config still names a
+    # since-removed adapter (ADR-0005). ONLY this path loads the persisted
+    # layer tolerantly; an ordinary dispatch (`args.abandon_work is None`)
+    # is byte-for-byte unchanged below -- `load_config`/`validate_config`
+    # still refuse the same invalid config exactly as before.
+    if args.abandon_work is not None:
+        persisted, persisted_warning = load_persisted_config_tolerant(persisted_config_path)
+    else:
+        persisted = load_config(str(persisted_config_path)) if persisted_config_path.exists() else {}
+        persisted_warning = None
+    merged = deep_merge_config(deep_merge_config(profile, persisted), explicit)
+    config_warning: Optional[CoreError] = None
+    if persisted_warning is not None and not explicit:
+        # No input this pass supplies beyond the run's own journal and the
+        # (already known-invalid) persisted layer -- re-running
+        # `validate_config` here would just re-raise the identical
+        # rejection `load_persisted_config_tolerant` already caught, so it
+        # is not retried. An explicit `--config` alongside `--abandon-work`
+        # (untested combination; not exercised by any existing scenario)
+        # deliberately falls through to the strict branch below instead --
+        # operator-supplied input for THIS invocation still gets validated,
+        # only the historical persisted artifact is ever set aside.
+        config = merged
+        config_warning = persisted_warning
+    else:
+        config = validate_config(merged)
+    _warn_journal_only_config_tolerated(config_warning, verb="--abandon-work")
     run_id = args.run_id or config.get("run_id") or run_id
 
     if run_id not in existing_run_ids and intent_text in existing_run_ids:
@@ -1016,8 +1061,16 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     intent_text = _intent_text(history) or ""
     profile = load_repo_profile(directory) or {}
     persisted_path = layout.config_path(directory, run_id)
-    persisted = load_config(str(persisted_path)) if persisted_path.exists() else {}
-    config = validate_config(deep_merge_config(profile, persisted))
+    # Issue #236: cancel is journal-only (SCN-011, STATE-DELIVERY item 10) --
+    # it has no reason to care whether the persisted config still names a
+    # since-removed adapter (ADR-0005), so the persisted layer is loaded
+    # tolerantly here instead of through `validate_config`/`load_config`
+    # directly (that strict path remains `orc dispatch`'s own, unchanged).
+    persisted, config_warning = load_persisted_config_tolerant(persisted_path)
+    config = deep_merge_config(profile, persisted) if config_warning else validate_config(
+        deep_merge_config(profile, persisted)
+    )
+    _warn_journal_only_config_tolerated(config_warning, verb="cancel")
     run_config = build_run_config(config, max_attempts_override=None)
     work_graph = MemoryWorkGraph()
     execution, candidate, assurance = build_scripted_adapters(config, delivery_run_id=run_id)
