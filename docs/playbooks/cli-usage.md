@@ -188,6 +188,29 @@ Every run created under this code writes the **new per-run directory layout**: `
 
 A **legacy flat `.orc` directory from before issue #55 keeps working unmodified** — every read path (bare `orc` index, `status`/`history` by bare run id, `report`/`report --index`/`--all`/`--match`, sidecar discovery) accepts both layouts. Writes never migrate a run: once a run has a legacy `<run_id>.jsonl` file, its journal keeps being read from and appended to that exact flat path for the rest of its life — a run's journal never splits across both layouts mid-run. This is decided independently per artifact (journal, times sidecar), each checking only its own legacy filename's existence.
 
+### Storage locking (`CONTRACT-STORAGE-CONCURRENCY`)
+
+Every run's `journal.jsonl`/`config.json` pair is now protected by one OS
+advisory exclusive lock per run (`<journal-dir>/<run_id>/.state.lock` on
+the new layout, `<journal-dir>/<run_id>.lock` on the legacy flat layout),
+acquired by `orc_werk.adapters.locking.RunLock` before any journal append
+or `config.json` read-modify-write and held for exactly that transaction —
+never across a whole dispatch pass, never across a subprocess/agent call.
+**The lock file is permanent by design: do not delete it.** It is created
+on first use, never removed, and its mere existence on disk means
+nothing — only the kernel-managed OS lock, held or not, matters; deleting
+it does not "clean up" anything and does not help a stuck process (a
+crashed holder's lock releases automatically when its file descriptor
+closes, with no manual intervention ever required). Seeing `.state.lock`/
+`<run_id>.lock` files accumulate under `.orc/` across many runs is
+expected and harmless. If a lock acquisition times out, the CLI fails
+fast with canonical `ERR-BUSY` (`CONTRACT-ERRORS`) naming the lock path
+and configured timeout — never a silent unlocked write and never a hang.
+An `ERR-BUSY` on `orc record`/`orc dispatch` usually means another `orc`
+invocation against the SAME run is genuinely concurrent right now; retry
+immediately or after a short pause rather than treating it as a provider
+outage (`ERR-TEMPORARY`'s distinct meaning).
+
 ### Run-id namespace convention
 
 `delivery_run_id` becomes a filename/directory-name component, so it is restricted to a safe charset with no path separators (`/` is filename-unsafe and would try to create subdirectories). To organize related runs into groups a glob can select — e.g. all of one milestone's runs — use a **dot-separated namespace prefix** instead of a path: `m1.task-005`, `m1.task-006`, `m2.task-001`. `report --all --match 'm1.*'` then renders exactly that namespace's runs plus a scoped index, without touching runs outside it. This is a CLI/operator convention, not a canonical constraint — any safe run id works — but adopting it consistently is what makes `--match` useful as a grouping tool.

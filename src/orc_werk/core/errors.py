@@ -29,6 +29,11 @@ ERR_PROVIDER_UNAVAILABLE = "ERR-PROVIDER-UNAVAILABLE"
 ERR_UNSAFE_STATE = "ERR-UNSAFE-STATE"
 ERR_TEMPORARY = "ERR-TEMPORARY"
 ERR_PERMANENT = "ERR-PERMANENT"
+# `CONTRACT-STORAGE-CONCURRENCY` §11 / `docs/contracts/errors.md`: a purely
+# local, mechanically bounded lock-acquisition timeout -- never a provider
+# outage (`ERR-TEMPORARY`'s domain) and never grounds to fall back to an
+# unlocked write.
+ERR_BUSY = "ERR-BUSY"
 
 # CONTRACT-ERRORS registry.
 CANONICAL_ERROR_IDS = frozenset(
@@ -41,6 +46,7 @@ CANONICAL_ERROR_IDS = frozenset(
         ERR_UNSAFE_STATE,
         ERR_TEMPORARY,
         ERR_PERMANENT,
+        ERR_BUSY,
     }
 )
 
@@ -87,3 +93,11 @@ def conflict_error(message: str, *, next_steps: Optional[Sequence[str]] = None, 
 
 def not_found_error(message: str, *, next_steps: Optional[Sequence[str]] = None, **details: Any) -> CoreError:
     return CoreError(canonical_error(ERR_NOT_FOUND, message, next_steps=next_steps, **details))
+
+
+def busy_error(message: str, *, next_steps: Optional[Sequence[str]] = None, **details: Any) -> CoreError:
+    """`ERR-BUSY` (`CONTRACT-STORAGE-CONCURRENCY` §11): a local storage lock
+    could not be acquired within its bounded timeout. Raised only by
+    `orc_werk.adapters.locking` and its callers -- never by core policy,
+    which has no filesystem concerns at all (`CLAUDE.md` rule 8)."""
+    return CoreError(canonical_error(ERR_BUSY, message, next_steps=next_steps, **details))

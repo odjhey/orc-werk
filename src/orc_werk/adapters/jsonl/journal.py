@@ -125,16 +125,44 @@ guarantee above is unchanged by it:
   degrades per-line (skip a malformed line, keep the rest) rather than
   this adapter paying scan-before-every-append cost to prevent it.
 
-## Reopen / concurrency
+## Concurrency (`CONTRACT-STORAGE-CONCURRENCY`, implemented)
 
-Sequence numbers are derived by counting good records already on disk for a
-given `delivery_run_id`, cached in memory for the lifetime of one
-`JSONLJournal` instance and refreshed lazily. This is correct for the
-single-writer case M0 targets (one orchestrator process per DeliveryRun,
-reopening its own journal after a crash/restart) but is **not** safe for
-two `JSONLJournal` instances concurrently appending to the same file --
-that is out of scope for this milestone (see the PR body's "Ambiguities
-encountered").
+Concurrent same-file appenders to one run's journal are now IN SCOPE --
+this section previously declared them out of scope for M0 (see git
+history for that superseded text); `CONTRACT-STORAGE-CONCURRENCY` §6/A1
+closed the gap.
+
+Every append (`_append` below) acquires this run's group lock
+(`orc_werk.adapters.locking.RunLock` on `orc_werk.adapters.jsonl.layout
+.lock_path`, `CONTRACT-STORAGE-CONCURRENCY` A1 -- the SAME lock
+`orc_werk.cli.config`'s `config.json` read-modify-write acquires, since
+A1 covers both files as one group) BEFORE reading current on-disk state,
+and holds it through the write. Sequence numbers are derived by scanning
+good records already on disk for the given `delivery_run_id` -- freshly,
+under the lock, on every single append, never from a cross-call cache.
+This is deliberate: a prior version of this adapter cached the observed
+record count in memory for the lifetime of one `JSONLJournal` instance,
+which was correct only for the single-writer case (one orchestrator
+process per DeliveryRun, reopening its own journal after a crash/restart)
+and silently wrong the moment a SECOND process (or a second `JSONLJournal`
+instance in the same process) appended to the same `delivery_run_id`
+between two of this instance's own appends -- exactly `SCN-019` item 2's
+scenario. Rescanning under the lock on every append trades a small
+constant cost (this milestone's run sizes are tens to low hundreds of
+journal records; see the implementing PR body's perf-sanity numbers) for
+correctness under real concurrent multi-process appenders, which a purely
+in-memory cache cannot provide without its own cross-process invalidation
+protocol.
+
+The torn-tail heal (truncate) applied by `tailsafe.append_line` when a
+pending repair is detected is itself a mutation of the journal file, so it
+happens inside the SAME locked critical section as the append it precedes
+-- never as a separate, unlocked step.
+
+Readers (`history`, `load_projection`) remain UNLOCKED, per §6: a JSONL
+reader tolerant of a torn final line (this module's existing torn-tail
+recovery rule, unchanged by any of the above) does not need to coordinate
+with writers that always leave the file in a valid state after `flush()`.
 """
 
 from __future__ import annotations
@@ -147,6 +175,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from orc_werk.adapters.journal_support import build_effect_envelope, effective_max_attempts
 from orc_werk.adapters.jsonl import layout, tailsafe
+from orc_werk.adapters.locking import DEFAULT_TIMEOUT_S, RunLock
 from orc_werk.core.decisions import Decision
 from orc_werk.core.effects import Effect
 from orc_werk.core.errors import validation_error
@@ -171,11 +200,16 @@ def _observed_at_now() -> str:
 
 
 class JSONLJournal(JournalPort):
-    def __init__(self, directory: str | os.PathLike[str]) -> None:
+    def __init__(
+        self, directory: str | os.PathLike[str], *, lock_timeout_s: float = DEFAULT_TIMEOUT_S
+    ) -> None:
         self._directory = Path(directory)
         self._directory.mkdir(parents=True, exist_ok=True)
-        self._seq_cache: Dict[str, int] = {}
-        self._tail_repair: Dict[str, Optional[_TailRepair]] = {}
+        # `CONTRACT-STORAGE-CONCURRENCY` §11's bounded lock-acquisition
+        # timeout. Overridable per instance -- tests exercising item 6's
+        # timeout path (`SCN-019`) construct a short-timeout instance rather
+        # than waiting out the production default.
+        self._lock_timeout_s = lock_timeout_s
 
     def capabilities(self) -> frozenset[str]:
         return frozenset()
@@ -223,50 +257,57 @@ class JSONLJournal(JournalPort):
         path = self._path_for(delivery_run_id)
         return tailsafe.scan_tolerant(path, noun="journal")
 
-    def _ensure_scanned(self, delivery_run_id: str) -> None:
-        if delivery_run_id not in self._seq_cache:
-            records, repair = self._scan(delivery_run_id)
-            self._seq_cache[delivery_run_id] = len(records)
-            self._tail_repair[delivery_run_id] = repair
-
     def _append(
         self, delivery_run_id: str, build_envelope: Callable[[int], Mapping[str, Any]]
     ) -> Mapping[str, Any]:
-        self._ensure_scanned(delivery_run_id)
-        seq = self._seq_cache[delivery_run_id] + 1
-        envelope = build_envelope(seq)
-        try:
-            # allow_nan=False: strict JSON only -- never Python's
-            # non-standard NaN/Infinity literals (module docstring).
-            line = json.dumps(envelope, sort_keys=True, allow_nan=False)
-        except ValueError as exc:
-            raise validation_error(
-                "journal record is not strict portable JSON (non-finite float?)",
-                delivery_run_id=delivery_run_id,
-                record_id=str(envelope.get("id")),
-            ) from exc
+        # `_path_for` validates delivery_run_id (safe filename component)
+        # before anything else, including before the lock is acquired --
+        # a rejected id never touches the filesystem at all.
         path = self._path_for(delivery_run_id)
-        # issue #55 H1: a brand-new run_id resolves to a path under its own
-        # per-run directory (orc_werk.adapters.jsonl.layout), which does
-        # not exist on disk yet -- create it now, deferred until immediately
-        # before the first actual write (never before validation/
-        # `_path_for`'s safety check above has already passed), so a
-        # rejected write never leaves a stray empty run directory behind. A
-        # no-op for every other case: a legacy-layout run's parent is
-        # `self._directory`, already created by `__init__`.
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # M0 scripted-context durability stance (module docstring): the
-        # shared `tailsafe.append_line` primitive flushes without
-        # `os.fsync(fh.fileno())` -- an explicit choice, not an oversight.
-        tailsafe.append_line(path, line, repair=self._tail_repair.pop(delivery_run_id, None))
-        # only commit the cached seq once the write above has succeeded.
-        self._seq_cache[delivery_run_id] = seq
-        # Observed-at sidecar stamp, strictly after the canonical append
-        # above has already succeeded (module docstring's "Observed-at
-        # time sidecar" section) -- best-effort, never able to affect the
-        # canonical record just written.
-        self._stamp_observed_at(delivery_run_id, seq)
-        return json.loads(line)
+        lock_file = layout.lock_path(self._directory, delivery_run_id)
+        # `CONTRACT-STORAGE-CONCURRENCY` §6/A1: acquire this run's group
+        # lock BEFORE reading current on-disk state (module docstring's
+        # "Concurrency" section) and hold it through the write below.
+        with RunLock(lock_file, timeout_s=self._lock_timeout_s):
+            # issue #55 H1: a brand-new run_id resolves to a path under its
+            # own per-run directory (orc_werk.adapters.jsonl.layout), which
+            # may not exist on disk yet -- create it now, inside the lock,
+            # before the scan below (a no-op for every other case: a
+            # legacy-layout run's parent is `self._directory`, already
+            # created by `__init__`).
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Freshly scan under the lock, every time -- never trust a
+            # cross-call cache (module docstring's "Concurrency" section
+            # explains why: another process may have appended to this same
+            # delivery_run_id since this instance last looked).
+            records, repair = self._scan(delivery_run_id)
+            seq = len(records) + 1
+            envelope = build_envelope(seq)
+            try:
+                # allow_nan=False: strict JSON only -- never Python's
+                # non-standard NaN/Infinity literals (module docstring).
+                line = json.dumps(envelope, sort_keys=True, allow_nan=False)
+            except ValueError as exc:
+                raise validation_error(
+                    "journal record is not strict portable JSON (non-finite float?)",
+                    delivery_run_id=delivery_run_id,
+                    record_id=str(envelope.get("id")),
+                ) from exc
+            # M0 scripted-context durability stance (module docstring): the
+            # shared `tailsafe.append_line` primitive flushes without
+            # `os.fsync(fh.fileno())` -- an explicit choice, not an
+            # oversight. The torn-tail heal (truncate), when `repair` is not
+            # None, happens inside this same locked critical section.
+            tailsafe.append_line(path, line, repair=repair)
+            # Observed-at sidecar stamp, strictly after the canonical
+            # append above has already succeeded (module docstring's
+            # "Observed-at time sidecar" section) -- best-effort, never
+            # able to affect the canonical record just written. Kept
+            # inside the lock: cheap, no network/agent work (§3 is
+            # unaffected), and it removes even the minor risk of two
+            # processes' sidecar stamps interleaving.
+            self._stamp_observed_at(delivery_run_id, seq)
+            return json.loads(line)
 
     # -- PORT-JOURNAL --------------------------------------------------------
 

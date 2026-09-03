@@ -273,6 +273,8 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 from orc_werk.adapters.beads.mirror import BeadsMirror
 from orc_werk.adapters.command.assurance import CommandAssurance
 from orc_werk.adapters.git.candidate import GitDiffCandidate
+from orc_werk.adapters.jsonl import layout as jsonl_layout
+from orc_werk.adapters.locking import DEFAULT_TIMEOUT_S, RunLock
 from orc_werk.cli.observers import DEFAULT_TIMEOUT_SECONDS, OBSERVER_TRIGGERS, resolve_command_path
 from orc_werk.adapters.scripted.assurance import ScriptedAssurance
 from orc_werk.adapters.scripted.candidate import ScriptedCandidate, fingerprint_of
@@ -968,10 +970,62 @@ def _entry_slot(updated: dict[str, Any], *, work_id: str, attempt_number: int) -
     return entries[index]
 
 
-def _atomic_replace_config(path: Path, updated: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Shared by `record_assurance_entry`/`record_execution_outcome_entry`:
-    write `updated` to `path` via a same-directory temp file + `os.replace`
-    (atomic on POSIX), never a partially-written config."""
+def _lock_path_for(config_path: Path) -> Path:
+    """`CONTRACT-STORAGE-CONCURRENCY` A1: derive a config file's run-group
+    lock path (the SAME lock `JSONLJournal` acquires for this run's
+    `journal.jsonl` -- one lock per run, covering both files as a group)
+    from the config file's own path, without requiring every caller to
+    separately thread `directory`/`run_id` through.
+
+    `orc_werk.adapters.jsonl.layout.config_path` always places `config.json`
+    at `<directory>/<run_id>/config.json` -- it has no legacy fallback of
+    its own (that module's docstring, `config_path`'s own note) -- so
+    `directory`/`run_id` are recoverable by walking back up two path
+    components, then delegating to `layout.lock_path`'s existing
+    legacy/new-layout discriminator (which checks THIS run's journal, not
+    config -- config has no legacy form to check)."""
+    run_directory = config_path.parent
+    directory = run_directory.parent
+    run_id = run_directory.name
+    return jsonl_layout.lock_path(directory, run_id)
+
+
+def atomic_replace_config(
+    path: Path, updated: Mapping[str, Any], *, lock_timeout_s: Optional[float] = None
+) -> Mapping[str, Any]:
+    """`CONTRACT-STORAGE-CONCURRENCY` §5's snapshot-replacement mechanics
+    (same-directory `tempfile.mkstemp`, `fsync`, `os.replace`) -- ALREADY
+    correct on the *replacement* half before this contract landed -- PLUS
+    the enclosing lock §2 also requires, acquired here for the caller.
+
+    This is the write-only entry point: it has no read of its own to
+    protect, so acquiring the lock immediately before the write (rather
+    than earlier) is correct and sufficient -- `orc_werk.cli.main
+    ._persist_effective_config` (a plain overwrite, not a
+    read-modify-write) is this function's only caller today.
+
+    A TRUE read-modify-write (read current value, decide the new value
+    based on it) MUST instead hold the lock across its own read, not just
+    the write -- `record_assurance_entry`/`record_execution_outcome_entry`
+    below do exactly that: they acquire their own `RunLock` before calling
+    `load_config`, and finish the transaction by calling the lock-free
+    `_replace_config_unlocked` directly (never this function), because
+    acquiring a SECOND, independent lock on the same already-locked
+    resource from within the same process would self-deadlock rather than
+    reenter."""
+    lock_path = _lock_path_for(path)
+    with RunLock(lock_path, timeout_s=lock_timeout_s if lock_timeout_s is not None else DEFAULT_TIMEOUT_S):
+        return _replace_config_unlocked(path, updated)
+
+
+def _replace_config_unlocked(path: Path, updated: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The lock-free replacement mechanics themselves (§5's temp-file +
+    fsync + atomic-rename sequence). Never called directly by anything
+    outside this module's own lock-holding wrappers -- `record_*_entry`
+    below already hold the run lock across their own read before reaching
+    here, so this inner function must not acquire (or reacquire) it
+    itself, or the read-then-lock ordering §2 forbids would silently
+    reappear one call frame down."""
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -992,21 +1046,36 @@ def _atomic_replace_config(path: Path, updated: Mapping[str, Any]) -> Mapping[st
 
 
 def record_assurance_entry(
-    path: Path, *, work_id: str, attempt_number: int, assurance: Mapping[str, Any]
+    path: Path,
+    *,
+    work_id: str,
+    attempt_number: int,
+    assurance: Mapping[str, Any],
+    lock_timeout_s: Optional[float] = None,
 ) -> Mapping[str, Any]:
-    """Merge one assurance entry into a persisted config and replace atomically."""
-    current = load_config(str(path))
-    updated = json.loads(json.dumps(current))
-    entry = _entry_slot(updated, work_id=work_id, attempt_number=attempt_number)
-    if "assurance" in entry:
-        raise conflict_error(
-            f"attempt {attempt_number} of work {work_id!r} already has a recorded assurance entry",
-            work_id=work_id,
-            attempt_number=attempt_number,
-        )
-    entry["assurance"] = dict(assurance)
-    validate_config(updated)  # reuse all assurance/extension/adapter checks
-    return _atomic_replace_config(path, updated)
+    """Merge one assurance entry into a persisted config and replace
+    atomically. `CONTRACT-STORAGE-CONCURRENCY` §2: the run-group lock
+    (`_lock_path_for`, A1) is acquired BEFORE the initial `load_config`
+    read below and held through `_replace_config_unlocked`'s commit/rename
+    -- never read-then-lock, and never a second, independent lock
+    acquisition for the write half (which would self-deadlock against the
+    one already held by this same process). `lock_timeout_s` overrides the
+    module default (tests exercising `SCN-019` item 6's timeout path)."""
+    lock_path = _lock_path_for(path)
+    timeout = lock_timeout_s if lock_timeout_s is not None else DEFAULT_TIMEOUT_S
+    with RunLock(lock_path, timeout_s=timeout):
+        current = load_config(str(path))
+        updated = json.loads(json.dumps(current))
+        entry = _entry_slot(updated, work_id=work_id, attempt_number=attempt_number)
+        if "assurance" in entry:
+            raise conflict_error(
+                f"attempt {attempt_number} of work {work_id!r} already has a recorded assurance entry",
+                work_id=work_id,
+                attempt_number=attempt_number,
+            )
+        entry["assurance"] = dict(assurance)
+        validate_config(updated)  # reuse all assurance/extension/adapter checks
+        return _replace_config_unlocked(path, updated)
 
 
 def record_execution_outcome_entry(
@@ -1017,6 +1086,7 @@ def record_execution_outcome_entry(
     outcome: str,
     artifact_refs: Optional[Sequence[Any]] = None,
     extensions: Optional[Mapping[str, Any]] = None,
+    lock_timeout_s: Optional[float] = None,
 ) -> Mapping[str, Any]:
     """`orc record --outcome`'s sibling of `record_assurance_entry`: merge one
     ship-seat execution outcome into a persisted config and replace
@@ -1032,23 +1102,30 @@ def record_execution_outcome_entry(
     same passthrough `record_assurance_entry` uses for `role: "verify"`).
     Never writes `candidate`: a real (`git`) candidate is identified by the
     next dispatch pass, and a scripted candidate's payload stays
-    hand-authored."""
-    current = load_config(str(path))
-    updated = json.loads(json.dumps(current))
-    entry = _entry_slot(updated, work_id=work_id, attempt_number=attempt_number)
-    if "outcome" in entry:
-        raise conflict_error(
-            f"attempt {attempt_number} of work {work_id!r} already has a recorded execution outcome",
-            work_id=work_id,
-            attempt_number=attempt_number,
-        )
-    entry["outcome"] = outcome
-    if artifact_refs:
-        entry["artifact_refs"] = list(artifact_refs)
-    if extensions:
-        entry["extensions"] = dict(extensions)
-    validate_config(updated)  # reuse all outcome/extension/adapter checks
-    return _atomic_replace_config(path, updated)
+    hand-authored.
+
+    `CONTRACT-STORAGE-CONCURRENCY` §2: same lock-before-read discipline as
+    `record_assurance_entry` above -- see that function's docstring for the
+    full rationale, identical here."""
+    lock_path = _lock_path_for(path)
+    timeout = lock_timeout_s if lock_timeout_s is not None else DEFAULT_TIMEOUT_S
+    with RunLock(lock_path, timeout_s=timeout):
+        current = load_config(str(path))
+        updated = json.loads(json.dumps(current))
+        entry = _entry_slot(updated, work_id=work_id, attempt_number=attempt_number)
+        if "outcome" in entry:
+            raise conflict_error(
+                f"attempt {attempt_number} of work {work_id!r} already has a recorded execution outcome",
+                work_id=work_id,
+                attempt_number=attempt_number,
+            )
+        entry["outcome"] = outcome
+        if artifact_refs:
+            entry["artifact_refs"] = list(artifact_refs)
+        if extensions:
+            entry["extensions"] = dict(extensions)
+        validate_config(updated)  # reuse all outcome/extension/adapter checks
+        return _replace_config_unlocked(path, updated)
 
 
 def load_config_overlay(path: str) -> Mapping[str, Any]:
@@ -1451,6 +1528,7 @@ def build_run_config(config: Mapping[str, Any], *, max_attempts_override: int | 
 
 
 __all__ = [
+    "atomic_replace_config",
     "build_dispatch_ports",
     "build_mirror",
     "build_real_assurance_script",
