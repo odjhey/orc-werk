@@ -9,6 +9,24 @@ description: Behavioral semantics for review-findings/v1.
 
 # `review-findings/v1` semantics
 
+## Entry interpretation (string vs. structured)
+
+`findings` entries admit two forms (`schema.md`, additive amendment,
+issue #249). A string entry is a **complete, valid, unstructured finding**
+in its own right — it is not a partial, deprecated, or degraded structured
+finding, and consumers MUST NOT treat its presence as an error, an
+incomplete record, or a signal to synthesize missing structured dimensions
+(severity, disposition, category, confidence, status) for it.
+
+Consumers of `review-findings/v1` MUST accept both forms in the same
+`findings` array and MUST NOT reject a payload, or an individual entry,
+solely because it is a string rather than an object (or vice versa). A
+consumer that only understands one form and encounters the other should
+fall back to treating the entry as opaque (e.g. for display, show the raw
+string; for structured-dimension queries such as "list blocking findings",
+a string entry simply has no severity/disposition/etc. to match against —
+it is neither blocking nor non-blocking, it is unclassified).
+
 ## Severity
 
 Severity answers: **what is the consequence if this finding is real?**

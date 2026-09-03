@@ -88,3 +88,55 @@ The enclosing assurance observation might have canonical verdict `rejected`.
 ```
 
 These examples intentionally demonstrate that severity and disposition are independent.
+
+## Unstructured (string) entries — `orc record --finding` shape
+
+This is the shape `orc record --verdict --finding TEXT` actually emits
+(`src/orc_werk/cli/main.py`, `cmd_record`) and what the entire live ledger's
+`review-findings/v1` payloads carry as of issue #249's amendment. Each
+`--finding` occurrence becomes one plain-string entry; there is no
+structured object involved.
+
+```json
+{
+  "extensions": {
+    "review-findings/v1": {
+      "findings": [
+        "looks good",
+        "nit: consider renaming this variable for clarity"
+      ]
+    }
+  }
+}
+```
+
+## Mixed entries
+
+A single `findings` array MAY combine unstructured and structured entries;
+both forms are independently valid per entry.
+
+```json
+{
+  "extensions": {
+    "review-findings/v1": {
+      "findings": [
+        "looks good overall",
+        {
+          "id": "finding-9",
+          "severity": "medium",
+          "disposition": "non-blocking",
+          "category": "style",
+          "confidence": "medium",
+          "status": "open",
+          "evidence": [
+            {
+              "kind": "explanation",
+              "summary": "Naming is inconsistent with the surrounding module."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
