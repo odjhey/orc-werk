@@ -753,26 +753,31 @@ class RefsLandingCliTest(unittest.TestCase):
             self.assertNotRegex(result.stdout, r"(?m)^\[\d+\] landing\s")
 
     def test_resolve_landing_row_degrades_honestly_when_gh_absent(self) -> None:
-        # `gh` is deliberately absent from the restricted test PATH (this
-        # module's own docstring) -- an honest "binary not found" degrade,
-        # never a crash, exactly like `--resolve` on any other vetted-but-
-        # unavailable tool.
+        # HERMETIC gh-absence: the module's restricted PATH (/usr/bin:/bin)
+        # is NOT enough -- CI runners ship gh at /usr/bin/gh, where it fails
+        # on auth instead (a third, also-honest degradation this test is not
+        # about). Point PATH at an empty directory so `gh` is absent on any
+        # host: the CLI itself is invoked via sys.executable (PATH-free) and
+        # this flow shells out to nothing else.
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
+            empty_bin = tmp_dir / "empty-bin"
+            empty_bin.mkdir()
+            no_gh = {"PATH": str(empty_bin)}
             journal = str(tmp_dir / ".orc")
             cfg = tmp_dir / "input.json"
             cfg.write_text("{}")
             _run_cli(
                 tmp_dir, "dispatch", "refs landing resolve demo", "--config", str(cfg),
-                "--run-id", "refs-landing-resolve", "--journal", journal,
+                "--run-id", "refs-landing-resolve", "--journal", journal, env=no_gh,
             )
             _run_cli(
                 tmp_dir, "record", "refs-landing-resolve", "--work", "work-1", "--outcome", "completed",
-                "--evidence-ref", "gh-pr:65", "--journal", journal,
+                "--evidence-ref", "gh-pr:65", "--journal", journal, env=no_gh,
             )
-            _run_cli(tmp_dir, "dispatch", "--run-id", "refs-landing-resolve", "--journal", journal)
+            _run_cli(tmp_dir, "dispatch", "--run-id", "refs-landing-resolve", "--journal", journal, env=no_gh)
 
-            result = _run_cli(tmp_dir, "refs", "refs-landing-resolve", "--resolve", "landing", "--journal", journal)
+            result = _run_cli(tmp_dir, "refs", "refs-landing-resolve", "--resolve", "landing", "--journal", journal, env=no_gh)
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
             self.assertIn("gh pr view 65 --json state,mergedAt,mergeCommit", result.stdout)
             self.assertIn("binary not found", result.stdout)
