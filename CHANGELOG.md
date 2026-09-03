@@ -12,6 +12,40 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.7.3] — 2026-09-03
+
+### Fixed
+- **Journal-only verbs tolerate invalid persisted configs** (#236, PR #246):
+  `orc cancel` and `orc dispatch --abandon-work` now act on a run whose
+  persisted config fails validation (a loud one-line warning, then the
+  journal-only operation proceeds). Pending legacy runs are no longer
+  stranded by a breaking adapter removal — the pin-back recovery dance is
+  obsolete. `dispatch`'s own refusal of invalid configs is unchanged.
+- **Null-candidate identification heals instead of crashing** (#244, PR
+  #247): a `FX-IDENTIFY-CANDIDATE` that journaled `candidate: null` (e.g.
+  the worktree was deleted before settlement) crashed every subsequent
+  verb with an `AttributeError`; the defect was a None-unsafe read dating
+  to PR #189, not the `SCN-014` machinery, which is reaffirmed unchanged.
+  Now: no crash, a `next:` line names the cause and the fix ("ensure
+  `candidate.repo_path` exists and re-dispatch — re-derivation is
+  automatic"), already-damaged journals replay cleanly, and restoring the
+  path lets the run settle truthfully.
+- **SCN-017/SCN-018 timing tests are deterministic under load** (#232, PR
+  #245): event-bound assertions with generous early-exit deadlines replace
+  wall-clock margins; proven 20/20 green under a triple-suite host
+  saturation. The flake class that caused one spurious review rejection is
+  closed.
+
+### Added
+- **Producer-side extension dev-gate** (#227, PR #248, operator ruling:
+  dev-gate only): the test suite now validates extension payloads emitted
+  by orc's own code paths against their registered schemas, with a
+  registry-coverage guard that fails loudly when a newly registered
+  extension lacks a validator. Runtime opacity (`CONF-EXT-006`) is
+  untouched. The gate found a real mismatch on its first run — tracked as
+  #249 (`--finding` strings vs the structured `review-findings/v1`
+  schema), carried as an expected failure until reconciled.
+
 ## [0.7.2] — 2026-09-03
 
 ### Fixed
