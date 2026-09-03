@@ -445,7 +445,7 @@ config schema: `docs/playbooks/cli-usage.md`'s "Observer hooks" section,
 ### Bare `orc` run index
 
 ```text
-usage: orc [--limit LIMIT] [--before RUN_ID] [--state active]
+usage: orc [--limit LIMIT] [--before RUN_ID] [--state active] [--json]
 ```
 
 The content-first invocation lists the most-recently-active runs in the
@@ -457,6 +457,74 @@ state filter is canonical `ERR-VALIDATION`. A truncated listing names
 `orc --limit 0` and prints an exact next-(older)-page command;
 `orc report --index` is the secondary HTML view.
 The journal directory resolves from `ORC_JOURNAL_DIR`, then `./.orc`.
+
+#### `--json` (issue #53)
+
+`--json` (must be the first token, same as `--limit`/`--before`/`--state`,
+so `orc --json` alone still resolves to the index rather than an argparse
+usage error) emits the `orc-index/v1` machine projection: one JSON
+document on stdout, sorted keys, byte-stable across repeated invocations
+of an unchanged journal directory. `runs` is in the exact same
+most-recently-active-first order the text listing prints (the
+`TASK-M4B-001` unified-ordering invariant now holds across both surfaces
+by construction -- see `orc_werk.cli.jsonview`'s module docstring for the
+full shape and rationale, including why this lives here rather than
+behind a new `orc json-schema` subcommand). A run whose projection could
+not be replayed appears as `{"run_id": ..., "error": "ERR-..."}` instead
+of the text listing's parenthetical `(unreadable: ...)` note. Continuing
+the "First scripted dispatch" + "Pending/incremental mode" runs above
+(`demo-pending` then `demo-run-1`, `ORC_JOURNAL_DIR=./.orc orc --json`,
+pretty-printed here for readability -- the real command emits it as one
+line):
+
+```json
+{
+    "journal_dir": "/abs/path/.orc",
+    "next_page_command": null,
+    "runs": [
+        {
+            "flags": ["pending"],
+            "run_id": "demo-pending",
+            "states": {"EXECUTING": 1},
+            "works": [
+                {
+                    "attempts": 1,
+                    "awaiting": "execution-outcome",
+                    "blocked_reason": null,
+                    "pending": true,
+                    "state": "EXECUTING",
+                    "work_id": "work-1"
+                }
+            ]
+        },
+        {
+            "flags": [],
+            "run_id": "demo-run-1",
+            "states": {"ACCEPTED": 1},
+            "works": [
+                {
+                    "attempts": 1,
+                    "awaiting": null,
+                    "blocked_reason": null,
+                    "pending": false,
+                    "state": "ACCEPTED",
+                    "work_id": "work-1"
+                }
+            ]
+        }
+    ],
+    "schema": "orc-index/v1",
+    "total": 2,
+    "truncated": false
+}
+```
+
+An unparseable/empty journal directory is `{"schema": "orc-index/v1",
+"journal_dir": ..., "total": 0, "truncated": false, "next_page_command":
+null, "runs": []}` -- no dispatch-affordance prose (R3/R5: `--json`
+carries no `next` field of its own on `orc-index/v1`, unlike
+`orc status --json` below; a structured consumer already knows to
+dispatch when `total` is `0`).
 
 ```bash
 orc
@@ -544,7 +612,7 @@ the operator identity defaults to `$USER`/`whoami`.
 ### `orc status`
 
 ```text
-usage: orc status [-h] [--journal JOURNAL] target
+usage: orc status [-h] [--journal JOURNAL] [--json] target
 ```
 
 Per-work state, attempt count, current candidate fingerprint,
@@ -554,6 +622,7 @@ pending/blocked detail, and next-step affordances for one run.
 |---|---|---|
 | `target` (positional) | required | journal path (dir or `<run>.jsonl`) or bare run id |
 | `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
+| `--json` | off | emit the `orc-status/v1` machine projection instead of text (issue #53, below) |
 
 For a bare run id, the journal directory resolves with `--journal` >
 `ORC_JOURNAL_DIR` > `./.orc` precedence.
@@ -563,6 +632,71 @@ orc status my-run-id
 orc status my-run-id --journal ./.orc
 orc status ./.orc/my-run-id.jsonl
 ```
+
+#### `--json` (issue #53)
+
+Emits `orc-status/v1`: one JSON document on stdout, sorted keys, no other
+output -- exit codes are UNCHANGED (still 0/1/2/3, so a caller that only
+branches on the exit code needs no changes at all), and byte-stable across
+repeated invocations of an unchanged journal. On error the canonical
+error JSON still prints to stderr exactly as it does today and stdout is
+left EMPTY (no partial text before the error, unlike the text surface's
+own `available runs in ...` preamble). See `orc_werk.cli.jsonview`'s
+module docstring for the full field-by-field shape and the design
+rationale (why this lives there rather than behind a new `orc
+json-schema` subcommand). Continuing the "First scripted dispatch" run
+above (`demo-run-1`, pretty-printed here for readability -- the real
+command emits it as one line):
+
+```bash
+orc status demo-run-1 --journal ./.orc --json
+```
+
+```json
+{
+    "intent": "ship the widget",
+    "next": [
+        {"command": "orc report demo-run-1", "description": "work(s) accepted: work-1"}
+    ],
+    "refs": [
+        {
+            "kind": "evidence",
+            "provider": "-",
+            "resolve_command": "-",
+            "value": "evidence-for-fp-30dd7c8c1f588de26f8f26c8",
+            "verdict": "accepted"
+        }
+    ],
+    "run_id": "demo-run-1",
+    "schema": "orc-status/v1",
+    "works": [
+        {
+            "attempt": null,
+            "attempts": 1,
+            "awaiting": null,
+            "blocked_reason": null,
+            "candidate_fingerprint": "fp-30dd7c8c1f588de26f8f26c8",
+            "pending": false,
+            "state": "ACCEPTED",
+            "work_id": "work-1"
+        }
+    ]
+}
+```
+
+`refs` is `orc refs`'s own row list (`orc_werk.cli.refs.collect_refs`),
+field for field -- this is the load-bearing part for the issue #65
+follow-on lane: a structured consumer walks `refs` here instead of
+scraping `orc refs`'s text table. `next` is the same per-state affordance
+map `next:` renders from (`orc_werk.cli.affordances.next_entries`, the
+structured sibling of `render_next_block`), one entry per text bullet,
+with `command` split out as its own field (`null` when a bullet names no
+runnable command, e.g. "record the execution outcome for work(s): ...").
+`attempt` is `null` unless `pending` is `true` (mirrors the text line,
+which only ever prints `attempt=N` alongside `awaiting=` for a pending
+Work); `candidate_fingerprint`/`blocked_reason`/`awaiting` are `null`
+when absent, never omitted, so a consumer can destructure a fixed key set
+without a presence check.
 
 ### `orc verdict`
 
@@ -1098,3 +1232,13 @@ convention" sections -- this reference does not duplicate it.
   -- the reference-first doctrine `orc refs` projects
   (`docs/extensions/execution-session/` is the schema its first source
   reads).
+- `src/orc_werk/cli/jsonview.py` -- `orc-status/v1`/`orc-index/v1` schema
+  source of truth (issue #53's `--json` on `orc status` and the bare
+  index, above). Deliberately scoped to those two surfaces only:
+  `history`/`show`/`report`/`refs` have no `--json` flag -- `history`'s
+  underlying journal is already portable JSONL (`cat run.jsonl | jq`, the
+  issue's own trigger observation), and `refs`' structured data already
+  rides `orc status --json`'s `refs` field, so a second, narrower `orc
+  refs --json` would only duplicate it. A future consumer needing one of
+  the other three structured is the next named pull trigger for that
+  surface specifically, not a blanket precedent.
