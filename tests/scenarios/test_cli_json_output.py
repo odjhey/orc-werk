@@ -191,6 +191,60 @@ class StatusJsonShapeTest(unittest.TestCase):
             self.assertIn("BLOCKED", doc["next"][0]["description"])
 
 
+class RefsLandingJsonShapeTest(unittest.TestCase):
+    """Issue #65: the derived `landing` row flows through `orc-status/v1`'s
+    `refs[]` automatically -- `collect_refs` is the single source `orc
+    refs`/`--json` both compose from, proven here field-for-field exactly
+    like `StatusJsonShapeTest.test_accepted_run_shape`'s existing generic
+    parity check does, PLUS an explicit assertion that a `landing` row is
+    actually present with the schema fields this ship lane added no new
+    field for (kind/provider/value/resolve_command/verdict -- unchanged)."""
+
+    def test_gh_pr_ref_yields_landing_row_in_json_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config = {
+                "run_id": "j65-landing",
+                "attempts": {
+                    "work-1": [
+                        {
+                            "outcome": "completed",
+                            "candidate": {"label": "hello"},
+                            "assurance": {"verdict": "accepted", "evidence_refs": ["gh-pr:65"]},
+                        }
+                    ]
+                },
+            }
+            config_path = _write_config(tmp_dir, "j65-cfg.json", config)
+            dispatch = _run_cli(tmp_dir, "dispatch", "landing json demo", "--config", str(config_path))
+            self.assertEqual(dispatch.returncode, 0, msg=dispatch.stdout + dispatch.stderr)
+
+            result = _run_cli(tmp_dir, "status", "j65-landing", "--json")
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            doc = json.loads(result.stdout)
+
+            journal = JSONLJournal(tmp_dir / ".orc")
+            history = journal.history(delivery_run_id="j65-landing")
+            expected_refs = collect_refs(tmp_dir / ".orc", "j65-landing", history)
+            self.assertEqual(len(doc["refs"]), len(expected_refs))
+            for actual, row in zip(doc["refs"], expected_refs):
+                self.assertEqual(actual["kind"], row.kind)
+                self.assertEqual(actual["provider"], row.provider)
+                self.assertEqual(actual["value"], row.value)
+                self.assertEqual(actual["resolve_command"], row.resolve.display)
+                self.assertEqual(actual["verdict"], row.verdict)
+
+            landing_rows = [row for row in doc["refs"] if row["kind"] == "landing"]
+            self.assertEqual(len(landing_rows), 1)
+            self.assertEqual(landing_rows[0]["value"], "gh-pr:65")
+            self.assertEqual(landing_rows[0]["provider"], "-")
+            self.assertEqual(
+                landing_rows[0]["resolve_command"],
+                "gh pr view 65 --json state,mergedAt,mergeCommit",
+            )
+            self.assertIsNone(landing_rows[0]["verdict"])
+
+
 class StatusJsonByteDisciplineTest(unittest.TestCase):
     """R3: stdout is exactly one JSON document; on error it is empty and
     the canonical error still lands on stderr, unchanged."""
