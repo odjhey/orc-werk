@@ -76,21 +76,34 @@ grep -n "Delivery ledger (orc)" AGENTS.md   # the agents-block landed
 
 ### A3. The day-to-day loop
 
-Full protocol detail (role separation, mechanics, exit codes, the independent-derivation rule) lives in `PLAYBOOK-AGENT-CLI` — read it before recording your first observation as a ship or verify seat. This is the loop in outline:
+Full protocol detail (role separation, mechanics, exit codes, the independent-derivation rule) lives in `PLAYBOOK-AGENT-CLI` — read it before recording your first observation as a ship or verify seat.
+
+Use the `git` candidate adapter for any work that lives in a repository — derived identity beats hand-recorded identity (the field report's own adoption decision, §3), and with it candidate identification is automatic on re-dispatch: no hand-authored candidate step exists anywhere in the loop. Minimal config:
+
+```json
+{ "candidate": {"adapter": "git", "repo_path": "<absolute path to the repo the work lands in>"} }
+```
+
+The loop, with that config — every step is exactly the command shown, in order:
 
 ```
-1.  orc dispatch "<intent>" --run-id <id> [--config cfg.json]   # creates/claims Work, starts execution
+1.  orc dispatch "<intent>" --run-id <id> --config cfg.json      # creates/claims Work, starts execution
 2.  exit 3 (pending, awaiting execution-outcome) is healthy — not an error
 3.  the external executor (you, another agent, a CI job) does the work
-4.  orc record <id> --work <work-id> --outcome completed|failed [--evidence-ref ...]   # ship seat pushes its observation in
-5.  orc dispatch --run-id <id>                                   # re-dispatch: picks up the settlement, moves to ASSURING
-6.  exit 3 again (pending, awaiting assurance-verdict) is healthy
-7.  a DIFFERENT agent independently derives candidate identity and records:
-    orc record <id> --work <work-id> --verdict accepted|rejected [--derived-identity '{"...":"..."}']
-8.  orc dispatch --run-id <id>                                   # re-dispatch: binds the verdict, accepts/completes
+4.  orc record <id> --work <work-id> --outcome completed|failed [--evidence-ref ...]   # ship seat pushes its observation in;
+                                                                 # this verb NEVER sets candidate identity
+5.  orc dispatch --run-id <id>                                   # re-dispatch: picks up the settlement AND the git adapter identifies
+                                                                 # the candidate itself (head sha, diff digest) — moves to ASSURING
+6.  exit 3 again (pending, awaiting assurance-verdict) is healthy; the output names the bound candidate head
+7.  a DIFFERENT agent independently derives the candidate identity itself (git rev-parse HEAD, run by the verifier) and records:
+    orc record <id> --work <work-id> --verdict accepted|rejected --derived-identity '{"head_sha": "<self-derived sha>"}'
+8.  orc dispatch --run-id <id>                                   # re-dispatch: binds the verdict ("derived_identity corroborated"),
+                                                                 # accepts/completes
 9.  exit 0 — Work ACCEPTED
 10. every step's output ends with a `next:` block naming the exact legal next command — trust it over inventing your own procedure
 ```
+
+One note for the non-git case only: with a *scripted* candidate config (no `candidate.adapter: "git"`), `record --outcome` still never sets candidate identity, so after step 5 the run rests at `EXECUTING` until you hand-author the attempt entry's `candidate` payload in the run's persisted config (`orc config-schema` prints the attempt-entry shape) — the git adapter is what makes that extra step disappear.
 
 Re-dispatching the identical command is always safe (idempotent by effect key, `INV-020`) — it is the crash-recovery move, not just the happy path.
 
@@ -218,7 +231,7 @@ Self-assert every line before declaring onboarding complete:
 
 - [ ] `orc version` (PATH form) or the module-form fallback prints an identity line — resolvable, and loud if it were not (A1).
 - [ ] `.claude/skills/orc-ledger` resolves and `AGENTS.md` (or the repo's equivalent) contains the generated `## Delivery ledger (orc)` block (A2).
-- [ ] One throwaway run was driven `dispatch → record --outcome → dispatch → record --verdict → dispatch` to `ACCEPTED` (exit 0), then cancelled/cleaned up if you don't want it in the real ledger (`orc cancel <run> --work <work> --reason "..."`, then remove its run directory) — the loop in A3 actually works in this repo, not just on paper.
+- [ ] One throwaway run, using A3's git-candidate config, was driven `dispatch → record --outcome → dispatch (candidate binds automatically) → record --verdict (different seat, self-derived identity) → dispatch` to `ACCEPTED` (exit 0) — the loop in A3 actually works in this repo, not just on paper. Then cleaned up if you don't want it in the real ledger: an `ACCEPTED` run is removed by deleting its run directory (`<journal-dir>/<run-id>/`); `orc cancel <run> --work <work> --reason "..."` is only for closing a throwaway you abandon while it is still pending (`ACCEPTED` is terminal — cancel is rejected from there).
 - [ ] If Part B was done: one ergo task was driven ready → claim → an orc run → `done` written only by the observer, with the orc run id visible in the ergo task's result.
 - [ ] The adopting repo's own agent-instructions file was updated per A4 (and B4, if ergo is in play) — a fresh session opening it finds the pointer back to this document.
 
