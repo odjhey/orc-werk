@@ -42,9 +42,10 @@ persistence paths).
 
 ## When / Then, by required test
 
-Each numbered item below is one required automated test
-(`CONTRACT-STORAGE-CONCURRENCY` §12, items 1–4 and 6–8; item 5, SQLite
-writers, is not applicable — no shipped adapter uses SQLite, §7).
+Each numbered item below is one required automated test, numbered exactly
+as `CONTRACT-STORAGE-CONCURRENCY` §12 numbers them. All eight source items
+are specified here — including item 5, whose applicability is conditional
+and stated in place, the same way that contract handles §7/§8.
 
 ### 1. Concurrent read-modify-write loses nothing
 
@@ -89,7 +90,20 @@ written, truncated, or otherwise invalid file. A leftover temp file (if the
 crash lands before `os.replace`) is inert and never mistaken for the
 target by any reader.
 
-### 5. Lock timeout surfaces `ERR-BUSY`, never an unlocked fallback
+### 5. Many simultaneous SQLite writers produce the expected final state
+
+No SQLite storage implementation currently exists in Orc Werk
+(`CONTRACT-STORAGE-CONCURRENCY` §7); this item binds any future one. It is
+kept in place, at the source's number, rather than dropped or renumbered.
+**When** (for any future SQLite-backed adapter) N processes each perform a
+transactional read-then-modify write (`BEGIN IMMEDIATE ... COMMIT`, §7's
+preferred pattern) against the same database concurrently.
+**Then** the final database state is exactly what serial execution of the
+same N operations would produce — no lost update, no constraint bypass,
+no partial transaction visible — and the test lands with, not after, the
+first such adapter.
+
+### 6. Lock timeout surfaces `ERR-BUSY`, never an unlocked fallback
 
 **When** a process holds the run's lock for longer than another process's
 configured bounded timeout, and the second process attempts a
@@ -98,7 +112,7 @@ lock-requiring operation during that window.
 `ERR-BUSY` (`CONTRACT-ERRORS`) — never silently proceeding without the
 lock, never corrupting state, never hanging past the bound.
 
-### 6. Multiple-resource locking never deadlocks
+### 7. Multiple-resource locking never deadlocks
 
 **When** an operation legitimately requires more than one lock (an
 out-of-scope case for ordinary single-run operations under A1, but
@@ -109,15 +123,27 @@ sorted lock paths in that sorted order and releases them in reverse order;
 running many such multi-lock operations concurrently, with overlapping
 resource sets across participants, never deadlocks.
 
-### 7. Malformed/incomplete final record recovers cleanly
+### 8. Malformed/incomplete final JSONL or WAL records recover cleanly
 
-**When** a run's `journal.jsonl` (or, in the future, any WAL-shaped log
-this contract governs) ends in a malformed or incomplete final line, with
-at least one valid record preceding it.
-**Then** a reader treats the final line as a torn write, ignores it, and
-continues from the last good record — the existing `PORT-JOURNAL` torn-tail
-rule, exercised here specifically under concurrent-writer conditions
-rather than single-writer crash conditions.
+This is Orc Werk's strongest already-existing behavior in the whole
+battery: the torn-tail truncate-heal rule is implemented and shipping
+today (`orc_werk.adapters.jsonl.tailsafe`, factored out of `JSONLJournal`
+for reuse by any same-shape log), so this item mostly codifies what exists
+rather than demanding new machinery — what is new is exercising it under
+this scenario's separate-OS-process concurrency conditions rather than the
+single-writer crash conditions it was built for.
+**When** a run's `journal.jsonl` (or any WAL-shaped log this contract
+governs) ends in a malformed or incomplete final line, with at least one
+valid record preceding it — whether left by a crash mid-append or by a
+concurrent-writer interleaving fault.
+**Then** a reader treats the final line as a torn write and ignores it,
+continuing from the last good record, and the torn bytes are truncated
+away on the next append so the file returns to
+one-valid-JSON-object-per-line form (heal-while-use) — the existing
+`PORT-JOURNAL` durable-journal recovery rule. Any malformed NON-final
+record remains real corruption and fails closed with `ERR-VALIDATION`,
+and a file with zero valid records is rejected with `ERR-VALIDATION`
+rather than presented as empty history, exactly per that rule.
 
 ## Mutation check
 
@@ -127,22 +153,26 @@ duplicated record under concurrent appenders (item 2); a stale lock that
 blocks a subsequent process indefinitely, or requires manual cleanup,
 after the holder crashes (item 3); a config or journal file observably
 torn (neither the complete old nor complete new snapshot) after a
-mid-replacement crash (item 4); a lock-timeout path that falls back to an
-unlocked write instead of returning `ERR-BUSY` (item 5); a multi-lock
+mid-replacement crash (item 4); a future SQLite adapter landing without
+item 5's simultaneous-writer test, or silently dropping/renumbering item 5
+from this battery (item 5); a lock-timeout path that falls back to an
+unlocked write instead of returning `ERR-BUSY` (item 6); a multi-lock
 operation that deadlocks or acquires locks out of the canonical sorted
-order (item 6); a malformed non-final record silently skipped instead of
-failing closed with `ERR-VALIDATION` (item 7, `PORT-JOURNAL`'s existing
-rule); or any test in this battery passing only under threads/async tasks
-while failing under real separate OS processes.
+order (item 7); a malformed non-final record silently skipped instead of
+failing closed with `ERR-VALIDATION`, or a torn final line that is not
+healed away on the next append (item 8, `PORT-JOURNAL`'s existing rule);
+or any test in this battery passing only under threads/async tasks while
+failing under real separate OS processes.
 
 ## Verifies
 
-- `CONTRACT-STORAGE-CONCURRENCY` — every numbered item above maps directly
-  to that contract's §12 required-test list and exercises its §2, §5, §6,
-  §10, and §11 rules plus the A1 lock-identity amendment.
-- `PORT-JOURNAL` — the durable-journal torn-tail recovery rule (item 7)
+- `CONTRACT-STORAGE-CONCURRENCY` — the numbered items above map one-to-one,
+  keeping the source numbering, onto that contract's §12 required-test
+  list, and exercise its §2, §5, §6, §7 (conditionally, item 5), §10, and
+  §11 rules plus the A1 lock-identity amendment.
+- `PORT-JOURNAL` — the durable-journal torn-tail recovery rule (item 8)
   and the `seq` ordering identity (item 2).
-- `CONTRACT-ERRORS` — `ERR-BUSY` (item 5).
+- `CONTRACT-ERRORS` — `ERR-BUSY` (item 6).
 - `INV-020` — idempotent, deterministic replay is unaffected by concurrent
   storage access: re-dispatch after any of the above recovers cleanly
   because idempotency keys derive from durable canonical state, never

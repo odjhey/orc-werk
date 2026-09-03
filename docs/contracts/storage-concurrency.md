@@ -31,7 +31,7 @@ This contract assumes:
 - multiple `orc` CLI processes may invoke against the same local state concurrently;
 - storage is on a local filesystem;
 - processes may terminate unexpectedly;
-- supported state includes JSON (dispatch config, effective-config copies), JSONL (the run journal, `PORT-JOURNAL`'s durable adapter), and — hypothetically, see §7/§8 — SQLite.
+- supported state includes JSON, TXT, JSONL, WAL-like logs, and SQLite. (Orc Werk's concrete instances today: JSON — the dispatch config and effective-config copies; JSONL — the run journal, `PORT-JOURNAL`'s durable adapter, which is also this repo's WAL-like log; TXT and SQLite have no shipped instance, see §7/§8 for SQLite's conditional applicability.)
 
 Network/NFS/SMB filesystems are NOT supported by this concurrency contract.
 Orc Werk has no SQLite-backed adapter today; §7/§8 are retained for
@@ -108,10 +108,10 @@ locks are unavoidable:
 3. acquire them in sorted order;
 4. release them in reverse order.
 
-All application code MUST use the same ordering. Never acquire locks in
+All applications MUST use the same ordering. Never acquire locks in
 arbitrary business-operation order. Never upgrade a shared lock to an
-exclusive lock — release and reacquire, or acquire exclusive access from
-the start.
+exclusive lock. Release and reacquire according to the defined protocol,
+or acquire exclusive access from the beginning.
 
 Per A1 below, ordinary single-run Orc Werk operations acquire exactly one
 lock (the run-group lock), so this section's multi-lock ordering
@@ -206,10 +206,20 @@ external state alongside canonical storage: the Beads mirror
 
 If one command must modify SQLite and non-SQLite state as one logical
 operation, an outer application lock MAY be used to prevent concurrent
-operations — but an outer lock provides concurrency protection only, not
-crash-atomicity across independent files. Prefer one of: (1) store all
-authoritative related state inside one transaction; (2) make external
-files projections that can be regenerated from the authoritative store;
+operations.
+
+Example:
+
+```
+.workspace.lock
+state.sqlite
+events.jsonl
+```
+
+However, an outer lock provides concurrency protection only. It DOES NOT
+make changes to SQLite and other files crash-atomic. Prefer one of:
+(1) store all authoritative related state inside one SQLite transaction;
+(2) make external files projections that can be regenerated from SQLite;
 (3) use an explicit WAL/recovery protocol. Do not claim atomicity across
 independent files merely because an exclusive lock is held.
 
@@ -286,7 +296,7 @@ Every storage implementation MUST have automated tests covering:
 2. many concurrent JSONL appenders with every record preserved and parseable;
 3. process termination while holding a lock followed by successful acquisition from another process;
 4. process termination during snapshot replacement leaving either the old or new valid snapshot;
-5. many simultaneous SQLite writers producing the expected final state (not applicable — §7);
+5. many simultaneous SQLite writers producing the expected final state (no SQLite storage implementation currently exists, §7; this item binds any future one);
 6. lock timeout behavior;
 7. multiple-resource locking without deadlock;
 8. malformed/incomplete final JSONL or WAL records during recovery.
