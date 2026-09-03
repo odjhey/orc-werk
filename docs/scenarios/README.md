@@ -28,3 +28,4 @@ The pure core must pass these scenarios with scripted/in-memory adapters before 
 16. [`SCN-016`](SCN-016-acp-worker-vanished.md) corroborated ACP worker disappearance with startup-transient guard (issue #206, `CONF-EXEC-005`) (superseded, ADR-0005)
 17. [`SCN-017`](SCN-017-wait-resting-point.md) blocking wait for the next resting point — `dispatch --wait` as internalized re-dispatch, invisible to the journal (issue #210)
 18. [`SCN-018`](SCN-018-observer-hooks.md) observer hooks — config-declared, fire-and-forget commands spawned after facts newly appended by the current pass, at-most-once by contract (issue #193)
+19. [`SCN-019`](SCN-019-storage-concurrency.md) storage concurrency — locking, atomic replacement, and append safety under multiple independent CLI processes stated as the required test battery (`CONTRACT-STORAGE-CONCURRENCY`)

@@ -41,7 +41,7 @@ This contract is the completeness ledger: every category of non-core durable inf
 
 Disposition: narrative/report content is provider-owned and the ledger journals resolvable references; sidecar extensions are the fallback where no provider-native store exists, with `execution-session/v1` and `EXT-CREW-REPORT-V1` as instances.
 
-`CONTRACT-CAPABILITIES` records the normative rule tying advertised capabilities to these durability obligations; see "Capability durability obligations" below.
+`CONTRACT-CAPABILITIES` records the normative rule tying advertised capabilities to these durability obligations; see "Capability durability obligations" below. Multi-process concurrency safety for local file-backed storage — locking, atomic replacement, append safety — is a separate concern owned by `CONTRACT-STORAGE-CONCURRENCY`, not this contract: this document answers what survives which crash and who owns it durably; that one answers what stays correct when more than one process touches the same storage concurrently.
 
 ## Capability durability obligations
 

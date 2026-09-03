@@ -25,6 +25,7 @@ description: Flat documentation index.
 - [Capabilities](contracts/capabilities.md)
 - [Extensions](contracts/extensions.md)
 - [Durability responsibilities](contracts/durability-responsibilities.md)
+- [Storage concurrency](contracts/storage-concurrency.md)
 - [Ports](contracts/ports/README.md)
 
 ## Protocol
