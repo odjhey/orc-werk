@@ -16,6 +16,7 @@ row is `TASK-M3B-001`, `STATE-DELIVERY` mechanical fact sequencing item 9):
 |-------------------------------------|--------------------------------------------------------------------------|
 | PENDING @ EXECUTING (`is_pending`)  | record the execution outcome, then re-dispatch (exact command)          |
 | PENDING @ ASSURING  (`is_pending`)  | record the assurance verdict -- a different agent than the settlement recorder (playbook discipline), then re-dispatch |
+| AWAITING-CANDIDATE @ EXECUTING (`abandon_legality(...).awaiting_candidate`, issue #244/SCN-014) | candidate identification returned no subject -- ensure `candidate.repo_path` exists and re-dispatch (re-derivation is automatic) |
 | CANDIDATE-CONFLICT @ EXECUTING (`has_candidate_conflict`) | operator-only: `orc dispatch --abandon-work <id> --abandon-reason "<why>"` (`TASK-M3B-001`) -- verdict inheritance could not resolve this re-observed candidate |
 | BLOCKED                             | `orc history <run>` root-cause pointer + retry-budget note              |
 | ACCEPTED                            | `orc report <run>` (+ `gh pr view <n>` when the candidate carries a `pr` field) |
@@ -48,6 +49,7 @@ from orc_werk.adapters.jsonl import layout
 from orc_werk.app.orchestrator import has_candidate_conflict, is_pending
 from orc_werk.cli.journal_reading import BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED, _awaiting_label
 from orc_werk.core.decisions import DEC_BLOCK
+from orc_werk.core.reducer import abandon_legality
 from orc_werk.core.state import (
     STATE_ACCEPTED,
     STATE_ASSURING,
@@ -100,6 +102,23 @@ def redispatch_command(
         f"orc dispatch {intent_token} --config {config_token} "
         f"--journal {journal_dir} --run-id {run_id}"
     )
+
+
+def _resolved_config_token(*, config_path: Optional[Path], journal_dir: Path, run_id: str) -> str:
+    """The same persisted-config-preferred precedence `redispatch_command`
+    already documents (issue #55 H2): a run dispatched at least once has
+    its effective config durably copied to `<journal_dir>/<run_id>/
+    config.json`, which every later reader can rely on regardless of
+    which (possibly ephemeral, possibly another session's) `--config` path
+    invoked this dispatch. Used by affordance lines that name a concrete
+    `orc dispatch ... --config <path>` command outside of
+    `redispatch_command` itself (e.g. the `--abandon-work` escape hatch)."""
+    persisted_config = layout.config_path(journal_dir, run_id)
+    if persisted_config.exists():
+        return str(persisted_config)
+    if config_path is not None:
+        return str(config_path)
+    return str(journal_dir / run_id / "config.json")
 
 
 def _block_budget(history: Sequence[Mapping[str, Any]], work_id: str) -> Optional[tuple[Any, Any]]:
@@ -177,6 +196,17 @@ def _work_group_key(work_id: str, wp: WorkProjection) -> Optional[str]:
     action at `READY`)."""
     if has_candidate_conflict(wp):
         return "candidate-conflict"
+    # Issue #244/SCN-014: a settled Execution still resting at EXECUTING with
+    # no bound Candidate because the latest FX-IDENTIFY-CANDIDATE observation
+    # was null (PORT-CAND-001's legitimate no-subject result) is neither
+    # `is_pending` (its Execution outcome IS observed) nor a candidate
+    # conflict -- a third, distinct resting shape with its own affordance.
+    # `abandon_legality` is the single source of truth for this exact
+    # predicate (issue #200; also what `abandon_attempt`'s preflight and the
+    # reducer's replay-time legality check use), so this can never drift
+    # from what a subsequent `--abandon-work` will accept.
+    if abandon_legality(wp).awaiting_candidate:
+        return "awaiting-candidate"
     if is_pending(wp):
         if wp.state == STATE_EXECUTING:
             return "pending-execution"
@@ -238,6 +268,24 @@ def render_next_block(
                     f"{config_path or journal_dir / run_id / 'config.json'} "
                     f"--abandon-work {work_id} --abandon-reason \"<why>\""
                 )
+        elif key == "awaiting-candidate":
+            # Issue #244/SCN-014: null identification is non-binding --
+            # re-dispatch re-derives automatically once the subject exists
+            # again (e.g. the configured `candidate.repo_path` is restored).
+            # No operator recording action is required here (contrast
+            # pending-execution/pending-assurance above); the only affordance
+            # is naming the likely cause and pointing at re-dispatch, plus
+            # the `--abandon-work` escape hatch (`TASK-M3B-001`) for a
+            # subject that stays absent.
+            lines.append(
+                f"  - work(s) {ids_text}: candidate identification returned no subject -- "
+                "ensure candidate.repo_path exists and re-dispatch (re-derivation is "
+                "automatic); if the subject is never coming back: orc dispatch --run-id "
+                f"{run_id} --journal {journal_dir} --config "
+                f"{_resolved_config_token(config_path=config_path, journal_dir=journal_dir, run_id=run_id)} "
+                f"--abandon-work <work_id> --abandon-reason \"<why>\""
+            )
+            needs_redispatch = True
         elif key == "pending-execution":
             lines.append(f"  - record the execution outcome for work(s): {ids_text}")
             needs_redispatch = True

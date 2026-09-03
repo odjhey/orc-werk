@@ -1210,13 +1210,26 @@ def _observed_candidate_fingerprints(history: Iterable[Mapping[str, Any]]) -> di
 def _observed_candidate_bindings(
     history: Iterable[Mapping[str, Any]],
 ) -> dict[str, list[tuple[str, Mapping[str, Any]]]]:
-    """Read fingerprint and identity together from durable identify effects."""
+    """Read fingerprint and identity together from durable identify effects.
+
+    Issue #244 (SCN-014 regression): a `FX-IDENTIFY-CANDIDATE` record's
+    `dispatch_result.candidate` is explicitly `null` for a non-binding null
+    observation (`PORT-CAND-001`'s legitimate no-subject result) -- present
+    as a key with a `None` value, not an absent key, so a bare
+    `.get("candidate", {})` does NOT fall back to its default and instead
+    returns `None`. Guard with `isinstance(candidate, Mapping)` before
+    reading `fingerprint`/`subject_identity` off it, matching every other
+    `dispatch_result.get("candidate")` reader in this codebase (`cli.show`,
+    `cli.affordances`, `cli.main`, `cli.refs`, `cli.report`) -- this was the
+    one call site that skipped the guard."""
     by_work: dict[str, list[tuple[str, Mapping[str, Any]]]] = {}
     for record in history:
         if record.get("kind") != "effect" or record.get("id") != FX_IDENTIFY_CANDIDATE:
             continue
         data = record.get("data", {})
-        candidate = data.get("dispatch_result", {}).get("candidate", {})
+        candidate = data.get("dispatch_result", {}).get("candidate")
+        if not isinstance(candidate, Mapping):
+            continue
         work_id = data.get("work_id")
         fingerprint = candidate.get("fingerprint")
         subject_identity = candidate.get("subject_identity")
