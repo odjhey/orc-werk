@@ -60,6 +60,7 @@ from orc_werk.cli.journal_reading import (
     _root_cause_for_work,
     resolve_journal_dir,
 )
+from orc_werk.cli.refs import _landing_rows
 from orc_werk.core.errors import CoreError, not_found_error, validation_error
 from orc_werk.core.state import (
     STATE_ACCEPTED,
@@ -607,6 +608,46 @@ def _render_verdicts_table(history: Sequence[Mapping[str, Any]], work_id: str, w
     )
 
 
+def _work_settled_records_for_landing(
+    history: Sequence[Mapping[str, Any]], work_id: str
+) -> list[Mapping[str, Any]]:
+    """This Work's own `FACT-EXEC-SETTLED`/`FACT-ASSURE-SETTLED` records,
+    scoped exactly the way `_execution_artifact_refs`/`_verdict_evidence_
+    refs` above already scope by `work_id` -- the input `_landing_rows`
+    (`orc_werk.cli.refs`, issue #65) needs to derive this work's `landing`
+    row(s) without ever conflating a `gh-pr:N` ref recorded against a
+    DIFFERENT work in a multi-work run."""
+    return [
+        record
+        for record in history
+        if record.get("kind") == "fact"
+        and record.get("id") in ("FACT-EXEC-SETTLED", "FACT-ASSURE-SETTLED")
+        and record.get("data", {}).get("work_id") == work_id
+    ]
+
+
+def _render_landing_section(history: Sequence[Mapping[str, Any]], work_id: str) -> str:
+    """Issue #65's landing affordance, HTML-rendered: the runnable resolve
+    command near the verdict/acceptance section (`_render_verdicts_table`
+    just above this call site) -- doctrine-compliant (`CONTRACT-DURABILITY`'s
+    reference-first disposition): this is a STATIC render of an already-
+    derived `landing` row's display command, never a network call at render
+    time, and nothing here is journaled -- the row itself only exists when a
+    `gh-pr:N` ref this Work already carries makes `_landing_rows` derive
+    it."""
+    rows = _landing_rows(_work_settled_records_for_landing(history, work_id))
+    if not rows:
+        return ""
+    items = "\n".join(
+        "<li>"
+        f'<code>{html.escape(row.value)}</code> &middot; resolve: '
+        f'<code>{html.escape(row.resolve.display)}</code>'
+        "</li>"
+        for row in rows
+    )
+    return f'<h3>Landing</h3><ul class="landing-list">{items}</ul>'
+
+
 def _render_work_section(
     work_id: str,
     wp: WorkProjection,
@@ -641,6 +682,7 @@ def _render_work_section(
 
     parts.append(_render_candidates_table(history, work_id, wp))
     parts.append(_render_verdicts_table(history, work_id, wp))
+    parts.append(_render_landing_section(history, work_id))
 
     parts.append("<h3>Timeline</h3>")
     parts.append('<ol class="timeline">')
@@ -1104,6 +1146,8 @@ h3 { font-size: 0.9rem; color: var(--ink-secondary); margin-top: 1.5rem; text-tr
 .meta-line { color: var(--ink-secondary); font-size: 0.9rem; margin: 0.3rem 0; }
 .muted { color: var(--ink-muted); }
 .scroll { overflow-x: auto; }
+ul.landing-list { list-style: none; margin: 0.35rem 0 0; padding: 0; font-size: 0.9rem; }
+ul.landing-list li { padding: 0.2rem 0; word-break: break-word; }
 table.data-table, table.index-table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
 table.data-table th, table.data-table td,
 table.index-table th, table.index-table td {

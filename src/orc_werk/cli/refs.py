@@ -17,7 +17,7 @@ adds no new normative semantics of its own; it composes exactly the same
 public `JournalPort` reads (`history`, and this run's persisted dispatch
 config) `orc status`/`orc report` already use.
 
-Five independently optional sources, walked in this order, each rendered
+Six independently optional sources, walked in this order, each rendered
 only when present -- absence is never fabricated (`CLAUDE.md` #3):
 
 1. `execution-session/v1` payloads carried on `FACT-EXEC-SETTLED`'s
@@ -78,7 +78,18 @@ only when present -- absence is never fabricated (`CLAUDE.md` #3):
    opaque (`PORT-CANDIDATE`); these three field names are the ones this
    command was asked to surface, not a claim that every candidate carries
    them.
-5. The Beads mirror block, read from the run's own persisted dispatch
+5. A `landing` row, DERIVED (never journaled) from any plain-string
+   `gh-pr:<N>` entry found in `FACT-EXEC-SETTLED.artifact_refs` or
+   `FACT-ASSURE-SETTLED.evidence_refs` -- the `orc record --evidence-ref
+   gh-pr:<N>` convention (`PLAYBOOK-AGENT-CLI`) that already threads
+   through sources 2/3 above. This is the CLI-side instance of issue #65's
+   amended ruling's follow-on UX ("status/report render journaled refs as
+   runnable view commands... resolvable from any cwd"): the landing/merge
+   itself lives in the forge and is never journaled; this row only makes an
+   already-recorded reference to it legible, with resolve `gh pr view <N>
+   --json state,mergedAt,mergeCommit` (`_landing_rows`). One row per
+   distinct PR number, first-occurrence order.
+6. The Beads mirror block, read from the run's own persisted dispatch
    config (`<journal-dir>/<run_id>/config.json`, issue #55 H2's
    `_persist_effective_config`) when both the file and its `mirror` key
    exist: one `mirror` row naming the run label + workspace (resolve:
@@ -104,6 +115,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import shutil
 import subprocess
@@ -201,6 +213,27 @@ _BD_VALUE_FLAGS = frozenset({"--label", "--status"})
 _NOMISTAKES_BOOL_FLAGS = frozenset({"--full", "--json"})
 _NOMISTAKES_VALUE_FLAGS = frozenset({"--run", "--step"})
 
+# gh (issue #65/#256 landing wave): the MINIMAL read-only invocation shape
+# needed for a `landing` row's resolve command -- `gh pr view <N> --json
+# <fields>` -- and nothing wider. Only `pr view` is vetted (every other `gh`
+# subcommand, including anything mutating like `pr merge`/`pr close`/`pr
+# comment`, is refused by the subcommand check below, never reaching this
+# flag policy). `--json` is the ONLY admitted flag, and -- unlike every
+# other per-tool policy in this module -- it is REQUIRED, not merely
+# allowed: a bare `gh pr view <N>` with no `--json` still refuses (see the
+# explicit check in `_vet_read_only`), preserving `_candidate_rows`'
+# pre-existing `candidate-pr` row's documented "display only, never
+# executes" behavior for that unconditional, no-`--json` form (issue #94 /
+# PR #104 precedent) -- this addition only ever admits the narrower,
+# field-selecting shape a `landing` row's resolve command builds.
+# Deliberately EXCLUDED (and therefore refused): `-w`/`--web` (opens a
+# browser -- an exec-adjacent side effect, not a pure read), `-R`/`--repo`
+# (redirects the query to an attacker-influencable other repo), `-c`/
+# `--comments`, `--jq`, `-t`/`--template` (output-reshaping/scripting
+# surface beyond the fixed field set this row needs). `gh`'s vetted
+# audited-version evidence lives in the PR body (issue #65's ship lane).
+_GH_PR_VIEW_VALUE_FLAGS = frozenset({"--json"})
+
 
 def _vet_flags(
     rest: Sequence[str],
@@ -262,13 +295,16 @@ def _vet_read_only(argv: Sequence[str]) -> Optional[str]:
     Two levels, BOTH required (the first-round escape passed the first and
     skipped the second): (1) a hard tool+subcommand allowlist -- `cat`;
     `git [-C <path>] show`; `acpx <agent> sessions <history|show>`; `bd
-    [--json] [-C <path>] <list|show>`; `no-mistakes axi <status|logs>`,
-    nothing else; and (2) a per-tool FLAG policy over every token after the
-    subcommand (`_vet_flags`), so a write/exec-shaped option like `git show
-    --output=<path>` is refused even though its subcommand is allowed.
-    Notably `gh pr view <pr>` (the `candidate-pr` row's display) is NOT in
-    the allowlist at all (see the PR body's Ambiguities section) -- that row
-    displays but never executes.
+    [--json] [-C <path>] <list|show>`; `no-mistakes axi <status|logs>`; `gh
+    pr view <pr> --json <fields>` (issue #65/#256, `--json` REQUIRED, not
+    merely allowed -- see `_GH_PR_VIEW_VALUE_FLAGS`), nothing else; and (2) a
+    per-tool FLAG policy over every token after the subcommand (`_vet_flags`),
+    so a write/exec-shaped option like `git show --output=<path>` is refused
+    even though its subcommand is allowed. Notably the BARE form `gh pr view
+    <pr>` with no `--json` (the pre-existing `candidate-pr` row's display) is
+    still NOT admitted (see the PR body's Ambiguities section) -- that row
+    displays but never executes; only the `landing` row's narrower,
+    `--json`-bearing form is.
 
     Interpolated tool-position tokens are guarded too: the `acpx` agent
     (`argv[1]`, derived from an adapter-owned `provider` string) is refused
@@ -344,6 +380,30 @@ def _vet_read_only(argv: Sequence[str]) -> Optional[str]:
             bool_flags=_NOMISTAKES_BOOL_FLAGS,
             value_flags=_NOMISTAKES_VALUE_FLAGS,
         )
+    if tool == "gh":
+        # issue #65/#256: minimal `pr view` admission for a `landing` row's
+        # resolve command -- see `_GH_PR_VIEW_VALUE_FLAGS`'s comment for the
+        # exact scope and what is deliberately excluded.
+        if len(argv) < 3 or argv[1] != "pr" or argv[2] != "view":
+            return "gh: only 'pr view' is vetted"
+        rest = argv[3:]
+        reason = _vet_flags(
+            rest,
+            tool_label="gh pr view",
+            bool_flags=frozenset(),
+            value_flags=_GH_PR_VIEW_VALUE_FLAGS,
+            min_positionals=1,
+            max_positionals=1,
+        )
+        if reason is not None:
+            return reason
+        if not any(tok == "--json" or tok.startswith("--json=") for tok in rest):
+            # `--json` is REQUIRED, not merely allowed -- a bare `gh pr view
+            # <N>` (no `--json`) still refuses, so `_candidate_rows`'
+            # pre-existing `candidate-pr` row (which never carries `--json`)
+            # stays exactly as documented: display-only, never executable.
+            return "gh pr view: --json is required (the minimal landing-resolve shape)"
+        return None
     return f"tool {tool!r} is not in the vetted read-only allowlist"
 
 
@@ -713,11 +773,14 @@ def _candidate_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
             # issue #94 folded item / PR #104 verifier recommendation:
             # unconditional, matching orc_werk.cli.affordances._candidate_pr's
             # own unconditional `gh pr view <pr>` precedent for the
-            # ACCEPTED-state next: block -- no repo-context gate. `gh` is
-            # not in TASK-M3C-002's execution allowlist (see
-            # `_vet_read_only`'s docstring), so this row's resolve command
-            # keeps displaying unchanged but never executes under
-            # `--resolve`/`--resolve-all` -- refused, not silently dropped.
+            # ACCEPTED-state next: block -- no repo-context gate. This BARE
+            # form (no `--json`) is still not in TASK-M3C-002's execution
+            # allowlist (see `_vet_read_only`'s docstring -- issue #65/#256
+            # only admitted the narrower `gh pr view <pr> --json <fields>`
+            # shape a `landing` row's resolve command builds), so this row's
+            # resolve command keeps displaying unchanged but never executes
+            # under `--resolve`/`--resolve-all` -- refused, not silently
+            # dropped.
             rows.append(
                 RefRow(
                     kind="candidate-pr",
@@ -730,7 +793,77 @@ def _candidate_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
 
 
 # ---------------------------------------------------------------------------
-# Source 5: Beads mirror (persisted dispatch config)
+# Source 5: landing (derived from a gh-pr:N artifact/evidence ref -- issue
+# #65's amended "reference-first narrative doctrine": the merge/PR itself
+# lives in the forge, never journaled; this row is DERIVED at read time from
+# a ref the run already carries, never a new stored shape.)
+# ---------------------------------------------------------------------------
+
+_GH_PR_REF_PATTERN = re.compile(r"^gh-pr:(\d+)$")
+
+# The fixed field set a `landing` row's resolve command requests -- exactly
+# what issue #65's follow-on UX asks for (state, merge time, merge commit),
+# nothing else. Kept as one named constant so the builder and any future
+# consumer never drift.
+_GH_PR_VIEW_LANDING_FIELDS = "state,mergedAt,mergeCommit"
+
+
+def _landing_rows(history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
+    """One `landing` row per DISTINCT PR number named by a plain-string
+    `gh-pr:<N>` entry (the `orc record --evidence-ref gh-pr:<N>` convention,
+    `PLAYBOOK-AGENT-CLI`) in either `FACT-EXEC-SETTLED.artifact_refs` or
+    `FACT-ASSURE-SETTLED.evidence_refs` -- mirroring `_artifact_ref_rows`/
+    `_evidence_ref_rows`'s own field reads exactly, so a caller that already
+    filtered `history` to one attempt/work (as `show.py`'s `_render_next_
+    deeper` does) gets the same per-attempt scoping for free. Only a plain
+    string entry matches this convention -- a structured entry that happens
+    to embed `"gh-pr:42"` as a nested value does NOT (the same "structural,
+    never a guess" discipline `_command_field` documents for the sibling
+    evidence-command detection). Absent (no `gh-pr:N` ref recorded yet) is
+    never fabricated: yields no rows, never a placeholder.
+
+    A run that records the SAME `gh-pr:N` more than once (e.g. once on the
+    execution settlement, again on a later verify pass's evidence_refs)
+    yields exactly one row for that number, first-occurrence order
+    preserved -- a landing affordance is a fact about one PR, not a per-
+    mention tally."""
+    rows: list[RefRow] = []
+    seen: set[str] = set()
+    for record in history:
+        if record.get("kind") != "fact":
+            continue
+        record_id = record.get("id")
+        if record_id == FACT_EXEC_SETTLED:
+            field = "artifact_refs"
+        elif record_id == FACT_ASSURE_SETTLED:
+            field = "evidence_refs"
+        else:
+            continue
+        entries = record.get("data", {}).get(field)
+        if not entries:
+            continue
+        for entry in entries:
+            if not isinstance(entry, str):
+                continue
+            match = _GH_PR_REF_PATTERN.match(entry)
+            if match is None or match.group(1) in seen:
+                continue
+            seen.add(match.group(1))
+            rows.append(
+                RefRow(
+                    kind="landing",
+                    provider="-",
+                    value=entry,
+                    resolve=ResolveCommand.of(
+                        ["gh", "pr", "view", match.group(1), "--json", _GH_PR_VIEW_LANDING_FIELDS]
+                    ),
+                )
+            )
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Source 6: Beads mirror (persisted dispatch config)
 # ---------------------------------------------------------------------------
 
 
@@ -782,15 +915,18 @@ def _mirror_row(directory: Path, run_id: str) -> Optional[RefRow]:
 def collect_refs(directory: Path, run_id: str, history: Sequence[Mapping[str, Any]]) -> list[RefRow]:
     """Every resolvable reference row for one run, in source order
     (execution-session -> execution artifact_refs -> assurance evidence/base
-    -> candidate identity -> mirror). Pure: reads `history` (already loaded
-    by the caller) plus this run's persisted config file; never writes
-    anything."""
+    -> candidate identity -> landing -> mirror). Pure: reads `history`
+    (already loaded by the caller) plus this run's persisted config file;
+    never writes anything -- the `landing` row itself is DERIVED from a
+    `gh-pr:N` ref already present in `history`, not a new journaled or
+    persisted shape (issue #65's reference-first doctrine)."""
     rows: list[RefRow] = []
     rows.extend(_execution_session_rows(history))
     rows.extend(_artifact_ref_rows(history))
     rows.extend(_evidence_ref_rows(history))
     rows.extend(_assurance_context_rows(history))
     rows.extend(_candidate_rows(history))
+    rows.extend(_landing_rows(history))
     mirror_row = _mirror_row(directory, run_id)
     if mirror_row is not None:
         rows.append(mirror_row)

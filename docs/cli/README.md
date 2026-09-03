@@ -800,9 +800,10 @@ just the one named), per attempt:
   fresh judgment. An abandoned attempt (`DEC-ABANDON-ATTEMPT`,
   `TASK-M3B-001`) renders who/why instead.
 - **NEXT/DEEPER** -- this attempt's own resolvable references (session,
-  transcript, evidence, candidate), reusing `orc refs`'s own row builders
-  and resolve-command derivation verbatim -- never a second, drifting
-  copy of that logic.
+  transcript, evidence, candidate, and a derived `landing` row when this
+  attempt's `artifact_refs`/`evidence_refs` carries a `gh-pr:N` entry --
+  issue #65), reusing `orc refs`'s own row builders and resolve-command
+  derivation verbatim -- never a second, drifting copy of that logic.
 
 A compact run header (intent first line, per-work state+attempts summary)
 precedes the per-work sections; each work ends with a state trailer
@@ -864,7 +865,7 @@ DURABILITY`'s disposition sentence, "narrative/report content is
 provider-owned and the ledger journals resolvable references"): lists
 every resolvable reference recorded for one run, one indexed row per
 reference, with columns `kind`, `provider`, `value`, and a runnable
-`resolve` command. Five independently optional sources, each silently
+`resolve` command. Six independently optional sources, each silently
 absent when the run carries none of it -- never fabricated:
 `execution-session/v1` session/resume/transcript refs
 (`EXT-EXECUTION-SESSION-V1-SCHEMA`) off `FACT-EXEC-SETTLED`; execution
@@ -872,8 +873,13 @@ absent when the run carries none of it -- never fabricated:
 assurance
 `evidence_refs` off `FACT-ASSURE-SETTLED` (`PROTOCOL-FACTS`); candidate
 identity (`head_sha`/`branch`/`repo_path`/`pr`) off the journaled
-`FX-IDENTIFY-CANDIDATE` effect; and the Beads mirror's run label +
-workspace, read from the run's own persisted dispatch config when one
+`FX-IDENTIFY-CANDIDATE` effect; a `landing` row DERIVED from a plain-
+string `gh-pr:<N>` entry in either `artifact_refs` or `evidence_refs`
+above (issue #65's amended "reference-first narrative doctrine" -- the
+landing/merge itself lives in the forge and is never journaled; this row
+only makes an already-recorded pointer to it legible, resolve `gh pr view
+<N> --json state,mergedAt,mergeCommit`); and the Beads mirror's run label
++ workspace, read from the run's own persisted dispatch config when one
 configured a `mirror` block. The plain listing never shells out to
 anything -- resolve commands are DISPLAY strings only.
 
@@ -899,12 +905,36 @@ run: my-run-id
 [3] transcript   external-agent   /abs/path/transcript.log  (resolve: cat /abs/path/transcript.log)
 [4] evidence     -                {"exit_code":0,"script":"/abs/repo/assure.sh","script_sha256":"306c6ca7...","timed_out":false} verdict=accepted  (resolve: -)
 [5] candidate    -                {"branch":"feature/widget","head_sha":"abc123","repo_path":"/abs/worktree"}  (resolve: git -C /abs/worktree show abc123 --stat)
-[6] mirror       beads            label=run:my-run-id workspace=/abs/bd-workspace  (resolve: bd --json -C /abs/bd-workspace list --label run:my-run-id)
+[6] landing      -                gh-pr:65  (resolve: gh pr view 65 --json state,mergedAt,mergeCommit)
+[7] mirror       beads            label=run:my-run-id workspace=/abs/bd-workspace  (resolve: bd --json -C /abs/bd-workspace list --label run:my-run-id)
 ```
 
 A run with no resolvable references at all prints a definitive `0 refs
 for <run-id>` plus a one-line pointer at `orc status <run-id>` (same
 "content first" empty-state convention as bare `orc`/`orc report`).
+
+#### Landing: a real captured example (issue #65)
+
+A settlement recorded with `--evidence-ref gh-pr:65` (`orc record`'s
+`--evidence-ref`, or a scripted-mode `evidence_refs` entry) derives a
+`landing` row -- captured verbatim from a real `orc dispatch` +
+`orc refs` run, config `{"assurance": {"verdict": "accepted",
+"evidence_refs": ["gh-pr:65"]}}`:
+
+```console
+$ orc refs docs-landing-demo --journal ./.orc
+run: docs-landing-demo
+[1] evidence     -                gh-pr:65 verdict=accepted  (resolve: -)
+[2] candidate    -                {"head_sha":"abc123def456","repo_path":"/abs/repo"}  (resolve: git -C /abs/repo show abc123def456 --stat)
+[3] landing      -                gh-pr:65  (resolve: gh pr view 65 --json state,mergedAt,mergeCommit)
+```
+
+Nothing here is journaled by `orc refs` itself: the `landing` row is
+derived at read time from the `gh-pr:65` string already present in
+`[1]`'s `evidence_refs` entry -- the merge/PR itself lives in the forge
+(`gh pr view 65`), never the ledger. `orc show <run>` (per attempt, near
+JUDGED) and `orc report <run>` (HTML, a `<h3>Landing</h3>` section per
+Work, near the assurance-verdicts table) render the same derived row.
 
 #### `--resolve`/`--resolve-all` (`TASK-M3C-002`)
 
@@ -926,9 +956,10 @@ command assurance adapter). Vetting has TWO layers, both required: (1) a
 tool+subcommand allowlist -- `cat <path>`; `git [-C <path>] show ...` (no
 other git subcommand); `acpx <agent> sessions <history|show> ...`; `bd
 [--json] [-C <path>] <list|show> ...`; `no-mistakes axi <status|logs>
-...`, nothing else; and (2) a **per-tool FLAG policy** over every token
-AFTER the subcommand (`_vet_flags`), because vetting the subcommand alone
-is an arbitrary-file-WRITE hole -- `git show --output=<path>` is a
+...`; `gh pr view <pr> --json <fields>` (issue #65/#256, `--json`
+REQUIRED) -- nothing else; and (2) a **per-tool FLAG policy** over every
+token AFTER the subcommand (`_vet_flags`), because vetting the subcommand
+alone is an arbitrary-file-WRITE hole -- `git show --output=<path>` is a
 documented git write primitive that passes layer 1 (its subcommand is
 `show`). **Note (`ADR-0005` ruling A2):** the `acpx`/`no-mistakes` tool
 entries above are retained specifically to resolve refs recorded by
@@ -947,11 +978,15 @@ session/agent ref) that begin with `-` are ALSO rejected at build time --
 the builder never mints a token that could be read as a flag (`git show
 --stat -- <sha>` can't guard the sha positionally: git would read it as a
 pathspec, so the guard is build-time `-`-lead rejection plus the flag
-policy). Notably `gh pr view <pr>` (the `candidate-pr` row) is NOT in the
-allowlist at all, so that row keeps displaying unchanged but never
-executes. A command outside either layer -- a mutating one smuggled into a
-journal's `evidence_refs` (`git push`, `bd create`, `rm -rf`) OR a write-
-flag smuggled onto an allowed subcommand (`git show --output=...`, via an
+policy). Notably the BARE form `gh pr view <pr>` (the `candidate-pr` row,
+no `--json`) is still NOT in the allowlist, so that row keeps displaying
+unchanged but never executes -- only a `landing` row's narrower,
+`--json`-bearing form is (`gh`'s vetted surface is deliberately minimal:
+ONLY `pr view` with a REQUIRED `--json`, excluding `-w`/`--web`,
+`-R`/`--repo`, `-c`/`--comments`, `--jq`, `-t`/`--template`). A command
+outside either layer -- a mutating one smuggled into a journal's
+`evidence_refs` (`git push`, `bd create`, `rm -rf`) OR a write-flag
+smuggled onto an allowed subcommand (`git show --output=...`, via an
 evidence string or a crafted `head_sha`) -- REFUSES to execute: it prints
 `REFUSED: <reason>` plus the manual command, and writes nothing.
 

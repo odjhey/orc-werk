@@ -128,6 +128,17 @@ a copy. Use the existing reference-carrying surfaces:
 - **`orc refs <run>`** surfaces every resolvable reference a run carries,
   across all of the above, each with a runnable resolve command.
 
+**The landing/merge itself lives in the forge, never the ledger** (issue
+#65's amended "reference-first narrative doctrine," ruling item 4: "the
+landing-shape question RESOLVED by the doctrine ... No `landed/v1`
+extension"). The seat recording a settlement SHOULD include the forge PR
+ref (`gh-pr:<N>`, e.g. `--evidence-ref gh-pr:42`) among its refs — that is
+the ledger's pointer to the landing, not a copy of it. `orc refs`/`orc
+show`/`orc report` derive a `landing` row from that ref at read time
+(never journaled itself), with resolve `gh pr view <N> --json
+state,mergedAt,mergeCommit` — the forge's own tooling stays the viewer for
+the landing's actual state.
+
 There is no longer a place to journal free-form claimed-verdict narration
 per turn; a claim about your own progress belongs in your own session/
 transcript (referenced, not duplicated) or, if it must be canonical, in

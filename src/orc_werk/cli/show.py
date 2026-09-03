@@ -81,6 +81,7 @@ from orc_werk.cli.refs import (
     _candidate_rows,
     _evidence_ref_rows,
     _execution_session_rows,
+    _landing_rows,
     _load_persisted_config,
     _row_line,
 )
@@ -325,12 +326,25 @@ def _finding_summary(entry: Mapping[str, Any]) -> str:
 
 
 def _render_findings(findings: Sequence[Any], *, run_id: str) -> list[str]:
+    """Issue #256: `review-findings/v1`'s amended schema (issue #249) admits
+    a plain string as a COMPLETE, valid, unstructured finding in its own
+    right -- not a partial/degraded structured one (`EXT-REVIEW-FINDINGS-V1-
+    SEMANTICS`'s "Entry interpretation" section). A string entry therefore
+    renders as its own finding line (severity `-`, unclassified -- the
+    semantics doc's own "for display, show the raw string" fallback), never
+    silently skipped; a structured (mapping) entry renders exactly as
+    before. A `findings` array MAY mix both forms (`schema.md`'s "Entry
+    forms"); this renders each in the array's own order."""
     total = len(findings)
     lines = [f"    findings: {total}"]
     for index, entry in enumerate(findings[:_FINDINGS_PREVIEW_LIMIT], start=1):
-        if not isinstance(entry, Mapping):
-            continue
-        lines.append(f"      [{_finding_severity(entry)}] {_finding_id(entry, index)}: {_finding_summary(entry)}")
+        if isinstance(entry, Mapping):
+            lines.append(f"      [{_finding_severity(entry)}] {_finding_id(entry, index)}: {_finding_summary(entry)}")
+        elif isinstance(entry, str):
+            lines.append(f"      [-] finding-{index}: {_one_line(entry)}")
+        # else: neither string nor mapping -- not a conforming entry per
+        # EXT-REVIEW-FINDINGS-V1-SCHEMA's "Entry forms"; skipped rather than
+        # rendered as a fabricated placeholder (CLAUDE.md #3).
     if total > _FINDINGS_PREVIEW_LIMIT:
         lines.append(
             f"      ... showing {_FINDINGS_PREVIEW_LIMIT} of {total} findings; "
@@ -409,12 +423,19 @@ def _render_judged(
 def _render_next_deeper(records: Sequence[Mapping[str, Any]]) -> list[str]:
     rows = []
     settled = _first(records, "fact", FACT_EXEC_SETTLED)
-    rows.extend(_execution_session_rows([settled] if settled is not None else []))
-    rows.extend(_artifact_ref_rows([settled] if settled is not None else []))
+    settled_slice = [settled] if settled is not None else []
+    rows.extend(_execution_session_rows(settled_slice))
+    rows.extend(_artifact_ref_rows(settled_slice))
     assure_settled = _first(records, "fact", FACT_ASSURE_SETTLED)
-    rows.extend(_evidence_ref_rows([assure_settled] if assure_settled is not None else []))
+    assure_settled_slice = [assure_settled] if assure_settled is not None else []
+    rows.extend(_evidence_ref_rows(assure_settled_slice))
     identify_effect = _first(records, "effect", FX_IDENTIFY_CANDIDATE)
     rows.extend(_candidate_rows([identify_effect] if identify_effect is not None else []))
+    # issue #65's derived `landing` row -- the same doctrine-compliant
+    # affordance `orc refs`/`orc report` surface, rendered near JUDGED
+    # (this run's verdict/acceptance narrative) here too, scoped to this
+    # one attempt's own settled records exactly like the rows above.
+    rows.extend(_landing_rows(settled_slice + assure_settled_slice))
     if not rows:
         return []
     lines = ["  NEXT/DEEPER:"]
