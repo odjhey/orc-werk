@@ -12,6 +12,39 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.8.0] — 2026-09-03
+
+No breaking changes. Existing configs and journals need no migration; a
+permanent `.state.lock` file now appears in each run directory (by design —
+its existence carries no meaning and it is never deleted).
+
+### Added
+- **`CONTRACT-STORAGE-CONCURRENCY`** (PR #251, operator ruling): the
+  file-backed CLI concurrency contract — locking, lock scope and ordering,
+  atomic snapshot replacement, append-only discipline, durability levels,
+  canonical lock identity, failure behavior, and a required multi-process
+  test battery — adopted verbatim with three orc amendments (per-run
+  `.state.lock` group identity; a timestamp carve-out preserving replay
+  determinism; the one-dispatcher-per-run rule demoted from correctness
+  precondition to seat semantics). New canonical error `ERR-BUSY`. New
+  scenario `SCN-019`.
+- **The storage layer now honors it** (PR #252): OS advisory locking
+  (`fcntl`) around every journal append and config read-modify-write,
+  lock-before-read on both record paths, `_persist_effective_config`
+  upgraded from a bare write to locked atomic replacement, the
+  `profile.json` writer covered, bounded lock timeouts surfacing
+  structured `ERR-BUSY` (never an unlocked fallback), and the `SCN-019`
+  eight-item battery running in separate OS processes — including
+  SIGKILL-while-holding-lock recovery and unlocked-storm mutation checks
+  proving the tests detect lost updates. Correctness under concurrent CLI
+  processes no longer depends on the one-dispatcher convention (§13).
+
+### Changed
+- Journal appends re-derive `seq` under the lock instead of trusting a
+  per-instance cache (the cache was unsafe under independent concurrent
+  appenders); measured cost ~1.2ms per append on a 500-record journal,
+  noise at typical sizes, trade documented in the journal module.
+
 ## [0.7.3] — 2026-09-03
 
 ### Fixed
