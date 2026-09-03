@@ -23,6 +23,19 @@ inside ``execution``, ``candidate``, ``assurance``, or ``mirror`` drops keys
 inherited from the previous adapter that are exclusive to it; keys supplied by
 the overlay and inherited adapter-agnostic keys remain.
 
+Issue #240: ``max_attempts`` is special-cased beyond ordinary layering once a
+run exists. The journaled ``FX-CREATE-WORK.data.max_attempts`` -- not this
+module's merged config -- is the single authority for an existing run's
+retry decisions (``orc_werk.core.reducer.journaled_max_attempts``,
+``SCN-008``'s budget-authority clause); this module's ``build_run_config``
+is consulted for that only at run creation. An explicit ``--max-attempts``
+flag or ``--config`` file's ``max_attempts`` supplied for an EXISTING run
+that disagrees with the journaled value is refused with ``ERR-VALIDATION``
+(match-or-refuse) rather than silently applied or silently diverging; a
+flag-supplied value at creation is persisted into the run's own
+``config.json`` so a later bare ``--run-id`` resume's merged config already
+agrees with the journal from birth.
+
 ```json
 {
   "run_id": "optional-explicit-delivery-run-id",

@@ -22,8 +22,9 @@ idempotency markers (`assurance_started_for_current`, `completed_confirmed`,
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, NamedTuple, Optional
+from typing import Any, Iterable, Mapping, NamedTuple, Optional, Sequence
 
+from orc_werk.core.effects import FX_CREATE_WORK
 from orc_werk.core.errors import conflict_error, not_found_error, validation_error
 from orc_werk.core.facts import (
     EXEC_OUTCOMES,
@@ -42,6 +43,7 @@ from orc_werk.core.facts import (
     FACT_WORK_READY,
     Fact,
 )
+from orc_werk.core.serialization import KIND_EFFECT
 from orc_werk.core.state import (
     STATE_ACCEPTED,
     STATE_ASSURING,
@@ -56,6 +58,40 @@ from orc_werk.core.state import (
 )
 
 DEFAULT_MAX_ATTEMPTS = 3
+
+
+def journaled_max_attempts(history: Sequence[Mapping[str, Any]]) -> int:
+    """The single-authority retry budget for a run that already has a
+    journal (`CONTRACT-DURABILITY`'s topology/budget row, `PORT-JOURNAL-005`,
+    issue #52; single-authority ruling issue #240): the run's own recorded
+    `data.max_attempts` from its `FX-CREATE-WORK` effect record -- never an
+    adapter default, a caller's `RunConfig`, or the reading process's own
+    effective config. Every verb (read-side `load_projection`, and every
+    app-layer write-side fold: `Orchestrator._reconcile_ports`,
+    `Orchestrator.projection`, `Orchestrator.cancel_work`,
+    `Orchestrator._apply_decision`) MUST derive `max_attempts` from this one
+    function so a single journal reconstructs one identical projection
+    regardless of which verb or process replays it (`CONF-JOURNAL-003`,
+    `SCN-008`'s budget-authority clause). `core` owns this because it is
+    pure/portable envelope arithmetic -- no provider dependency, no I/O --
+    even though it inspects Effect-record shape rather than folding Facts.
+
+    A journal written before this field existed (or with no `FX-CREATE-WORK`
+    record at all, e.g. an empty/not-yet-bootstrapped run) falls back to the
+    reducer's own schema default (`DEFAULT_MAX_ATTEMPTS`), exactly as if the
+    run had used that default -- a documented read-fallback (issue #55
+    layout-fallback precedent), not an error."""
+    for record in history:
+        if record.get("kind") != KIND_EFFECT:
+            continue
+        if record.get("id") != FX_CREATE_WORK:
+            continue
+        data = record.get("data") or {}
+        recorded = data.get("max_attempts")
+        if isinstance(recorded, int) and not isinstance(recorded, bool) and recorded > 0:
+            return recorded
+        return DEFAULT_MAX_ATTEMPTS
+    return DEFAULT_MAX_ATTEMPTS
 
 
 class AbandonLegality(NamedTuple):

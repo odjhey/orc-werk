@@ -76,6 +76,7 @@ from orc_werk.cli.refs import FACT_ASSURE_SETTLED, cmd_refs
 from orc_werk.cli.report import _index_state_rollup, cmd_report, ordered_run_entries
 from orc_werk.cli.show import _render_findings, cmd_show
 from orc_werk.core.errors import ERR_VALIDATION, CoreError, conflict_error, not_found_error, validation_error
+from orc_werk.core.reducer import journaled_max_attempts
 from orc_werk.core.state import STATE_ACCEPTED, STATE_ASSURING, STATE_BLOCKED, STATE_EXECUTING, WorkProjection
 from orc_werk.ports.capabilities import validate_capabilities
 
@@ -482,6 +483,65 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
             config, delivery_run_id=run_id, intent_text=intent_text, journal=journal
         )
 
+    # issue #55 H2 config persistence: whether to persist/refresh below is
+    # decided from the journal's *pre-dispatch* state -- "first dispatch"
+    # means this run had no history at all before this call, checked here
+    # (read-only, before bootstrap's own first append) rather than after,
+    # since bootstrap/run below will have already written records by then.
+    history_before_dispatch = journal.history(delivery_run_id=run_id)
+    is_first_dispatch = not history_before_dispatch
+
+    # R2 (#240 match-or-refuse ruling): the journaled budget is the single
+    # authority for an EXISTING run (R1, `Orchestrator._effective_max_attempts`)
+    # -- an explicit `--max-attempts` flag or explicit `--config` file's
+    # `max_attempts` supplied on a resume either matches that journaled
+    # value (no-op) or is refused here, loudly, naming both values, rather
+    # than silently applying (an operator's explicit input is never
+    # silently discarded) or silently diverging (the #240 wedge).
+    # Deliberately NOT compared: the repo-wide `profile.json` ambient
+    # default (an existing run resuming under a profile whose default
+    # differs from that run's own creation-time override is the ordinary,
+    # expected case -- not a fresh per-invocation request for THIS run)
+    # and the persisted `config.json` layer itself (a reflection of a
+    # prior dispatch, not a fresh request; R3 keeps it in agreement with
+    # the journal from birth). See the PR body's "Ambiguities encountered"
+    # for this scoping choice. An ordinary bare `--run-id` resume with no
+    # explicit max_attempts opinion is therefore never refused -- it simply
+    # resumes under the journaled budget (R1).
+    if not is_first_dispatch:
+        journaled_budget = journaled_max_attempts(history_before_dispatch)
+        requested_max_attempts = args.max_attempts
+        if requested_max_attempts is None:
+            requested_max_attempts = explicit.get("max_attempts")
+        if requested_max_attempts is not None and requested_max_attempts != journaled_budget:
+            raise validation_error(
+                f"run {run_id!r}'s budget was fixed at creation: {journaled_budget}; requested "
+                f"max_attempts ({requested_max_attempts!r}) differs and would diverge from the "
+                "journaled budget every replay must honor (issue #240 R2)",
+                run_id=run_id,
+                journaled_max_attempts=journaled_budget,
+                requested_max_attempts=requested_max_attempts,
+                next_steps=[
+                    f"orc dispatch --run-id {run_id} --journal {journal_dir.resolve()} "
+                    "(omit --max-attempts/config max_attempts to resume under the run's own budget)",
+                ],
+            )
+
+    # R3 (#240 persistence-gap-closed-as-belt ruling): an explicit
+    # `--max-attempts` flag was the #240 trigger -- it reached `RunConfig`
+    # but never round-tripped into `config`, the dict persisted to disk
+    # below, exactly UNLIKE a config-file-supplied `max_attempts` (already
+    # part of `config` via the ordinary layering above and therefore
+    # already persisted correctly). Round-trip ONLY the flag, and ONLY
+    # when one was actually given this invocation -- an ordinary dispatch
+    # that never mentions `max_attempts` at all keeps `config.json` exactly
+    # as it always has (no key added), preserving every existing config's
+    # persisted shape. R1/R2 above remain the actual authority/guard for an
+    # existing run; this purely closes the gap that let a first dispatch's
+    # flag silently diverge from what got persisted.
+    if args.max_attempts is not None:
+        config = {**config, "max_attempts": run_config.max_attempts}
+
     orchestrator = Orchestrator(
         delivery_run_id=run_id,
         journal=journal,
@@ -492,12 +552,6 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
         config=run_config,
     )
     plan = config.get("plan")
-    # issue #55 H2 config persistence: whether to persist/refresh below is
-    # decided from the journal's *pre-dispatch* state -- "first dispatch"
-    # means this run had no history at all before this call, checked here
-    # (read-only, before bootstrap's own first append) rather than after,
-    # since bootstrap/run below will have already written records by then.
-    is_first_dispatch = not journal.history(delivery_run_id=run_id)
     orchestrator.bootstrap(intent_id=run_id, text=intent_text, plan=plan)
 
     abandoned_attempt: Optional[int] = None

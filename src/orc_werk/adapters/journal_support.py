@@ -10,6 +10,14 @@ merged into the persisted envelope (`build_effect_envelope`), and how
 `load_projection` recovers the run's own effective retry budget from
 history before folding it (`effective_max_attempts`, issue #52).
 
+Issue #240 (single-authority ruling): `effective_max_attempts` is now a
+thin re-export of `orc_werk.core.reducer.journaled_max_attempts` -- the
+same function `orc_werk.app.orchestrator.Orchestrator` uses for every
+write-side fold, so the read path (`load_projection`, this module) and the
+write path (the app layer) can never derive two different budgets from one
+journal again (`SCN-008`'s budget-authority clause). The name stays here,
+unchanged, for every existing adapter caller.
+
 `orc_werk.core.serialization.effect_to_envelope` deliberately does not
 invent the dispatch-result placement -- its docstring says a caller
 appending a settled effect record "may add [dispatch outcome] to the
@@ -26,13 +34,13 @@ encountered" for why this is a stopgap rather than a normative shape.
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
-from orc_werk.core.effects import FX_CREATE_WORK, Effect
+from orc_werk.core.effects import Effect
 from orc_werk.core.errors import validation_error
 from orc_werk.core.portable import to_portable
-from orc_werk.core.reducer import DEFAULT_MAX_ATTEMPTS
-from orc_werk.core.serialization import KIND_EFFECT, effect_to_envelope
+from orc_werk.core.reducer import journaled_max_attempts
+from orc_werk.core.serialization import effect_to_envelope
 
 DISPATCH_RESULT_KEY = "dispatch_result"
 
@@ -60,34 +68,14 @@ def build_effect_envelope(
     return envelope
 
 
-def effective_max_attempts(history: Sequence[Mapping[str, Any]]) -> int:
-    """`PORT-JOURNAL-005`/`CONF-JOURNAL-003` (issue #52): the retry budget
-    `load_projection` must fold this run's Facts under -- the run's own
-    recorded `data.max_attempts` from its `FX-CREATE-WORK` effect record
-    (`CONTRACT-DURABILITY`'s topology/budget row), journaled by
-    `Orchestrator.bootstrap` alongside `data.plan` and read back the same
-    way `Orchestrator._replay_effect_record` already reads `data.plan`
-    back (the ratified topology-durability precedent, issue #41).
-
-    A journal written before this field existed carries a `FX-CREATE-WORK`
-    record with `data.plan` but no `data.max_attempts` -- this is a
-    documented read-fallback (issue #55 layout fallback precedent), not an
-    error: such a run folds under the reducer's own schema default
-    (`DEFAULT_MAX_ATTEMPTS`), exactly as if it had used that default. A
-    run with no `FX-CREATE-WORK` record at all (an empty/not-yet-bootstrapped
-    journal) also falls back to the schema default -- there is nothing to
-    read yet."""
-    for record in history:
-        if record.get("kind") != KIND_EFFECT:
-            continue
-        if record.get("id") != FX_CREATE_WORK:
-            continue
-        data = record.get("data") or {}
-        recorded = data.get("max_attempts")
-        if isinstance(recorded, int) and not isinstance(recorded, bool) and recorded > 0:
-            return recorded
-        return DEFAULT_MAX_ATTEMPTS
-    return DEFAULT_MAX_ATTEMPTS
+# `PORT-JOURNAL-005`/`CONF-JOURNAL-003` (issue #52); single-authority
+# ruling (issue #240): kept as a same-signature re-export so every
+# existing `effective_max_attempts` caller (`JSONLJournal.load_projection`,
+# `MemoryJournal.load_projection`) is unaffected -- the implementation now
+# lives once, in `orc_werk.core.reducer.journaled_max_attempts`, which
+# `orc_werk.app.orchestrator.Orchestrator`'s write-side folds also call, so
+# there is exactly one place this arithmetic can drift.
+effective_max_attempts = journaled_max_attempts
 
 
 def deep_copy_portable(value: Any) -> Any:

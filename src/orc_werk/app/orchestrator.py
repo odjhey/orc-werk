@@ -59,7 +59,7 @@ from orc_werk.core.effects import (
     Effect,
     make_effect,
 )
-from orc_werk.core.errors import ERR_CONFLICT, CoreError, not_found_error, validation_error
+from orc_werk.core.errors import ERR_CONFLICT, CoreError, conflict_error, not_found_error, validation_error
 from orc_werk.core.facts import (
     FACT_ASSURE_SETTLED,
     FACT_ASSURE_STARTED,
@@ -79,7 +79,13 @@ from orc_werk.core.facts import (
 from orc_werk.core.idempotency import idempotency_key as derive_idempotency_key
 from orc_werk.core.models import Candidate
 from orc_werk.core.policy import decide
-from orc_werk.core.reducer import DEFAULT_MAX_ATTEMPTS, abandon_legality, apply_fact, reduce
+from orc_werk.core.reducer import (
+    DEFAULT_MAX_ATTEMPTS,
+    abandon_legality,
+    apply_fact,
+    journaled_max_attempts,
+    reduce,
+)
 from orc_werk.core.serialization import KIND_EFFECT, KIND_FACT, fact_from_envelope
 from orc_werk.core.state import (
     STATE_ACCEPTED,
@@ -227,6 +233,69 @@ class Orchestrator:
         # (ARCH-REPOSITORY-STRUCTURE "self-healing boundary").
         self._reconcile_ports()
 
+    # -- budget authority (R1, issue #240) -----------------------------------
+
+    def _effective_max_attempts(self, history: Sequence[Mapping[str, Any]]) -> int:
+        """R1 (#240 ruling): the journaled budget is the single authority
+        for EVERY verb, on EVERY pass over an EXISTING run -- never
+        `self.config.max_attempts` (the effective config/flag value for
+        *this* process/invocation). `self.config.max_attempts` is input
+        only at run creation (`bootstrap`, where `history` is still empty
+        and this call correctly falls through to it, because it is about
+        to become the very `FX-CREATE-WORK` record `journaled_max_attempts`
+        would otherwise read back). Every other write-side fold
+        (`_reconcile_ports`, `projection`, `cancel_work`, `_apply_decision`)
+        routes through this one method so a bare `--run-id` resume can
+        never again decide retries under a different budget than the one
+        its own journal already recorded (the #240 wedge)."""
+        if history:
+            return journaled_max_attempts(history)
+        return self.config.max_attempts
+
+    def _assert_replay_consistent(self) -> None:
+        """R4 (#240 ruling): post-decision replay assertion. Called at the
+        end of every write path that just appended one or more records
+        (`run`, `abandon_attempt`, `cancel_work`) -- re-derives the
+        projection from a completely fresh read of `self.journal.history`
+        under `_effective_max_attempts`, exactly what any independent later
+        reader (a fresh `Orchestrator`, `status`, `history`, `record`) will
+        do. If that fold raises, this pass just wedged its own journal:
+        fail LOUDLY, here, at the source, naming the offending record,
+        instead of leaving a divergence for a *different* verb to discover
+        later as an inexplicable `ERR-CONFLICT` on a journal that this
+        process itself just wrote (`SCN-008`'s divergence-is-forbidden
+        clause).
+
+        Cost (assessed for the PR body): one extra full-history Fact fold
+        per call. `Orchestrator.run`'s own loop already re-derives
+        `self.projection()` -- an identical fold -- after every appended
+        phase (ADR-0001, "replay is the state source"), so for the `run()`
+        call site this assertion adds no new O() term, only an explicit,
+        named failure mode instead of an incidental one; `abandon_attempt`/
+        `cancel_work` do add one genuinely extra fold each, but golden-
+        scenario and dogfood journals are small (dozens of records, not
+        thousands), so this stays algorithmically and practically cheap.
+        Should a future real-world journal grow large enough for this to
+        register, the fix is to assert only the pass's own new records
+        against the pre-pass projection rather than a full refold -- not
+        implemented here because nothing today measures as hot."""
+        history = self.journal.history(delivery_run_id=self.delivery_run_id)
+        facts = [fact_from_envelope(r) for r in history if r["kind"] == KIND_FACT]
+        try:
+            reduce(
+                facts,
+                delivery_run_id=self.delivery_run_id,
+                max_attempts=self._effective_max_attempts(history),
+            )
+        except CoreError as exc:
+            offending = exc.to_canonical()
+            raise conflict_error(
+                "post-decision replay assertion failed (#240 R4): this pass appended a "
+                f"record its own fresh replay now rejects -- {offending.get('message')}",
+                delivery_run_id=self.delivery_run_id,
+                offending_record=offending,
+            ) from exc
+
     # -- construction-time port reconciliation ------------------------------
 
     def _reconcile_ports(self) -> None:
@@ -235,7 +304,7 @@ class Orchestrator:
             return
         facts = [fact_from_envelope(r) for r in history if r["kind"] == KIND_FACT]
         projection = reduce(
-            facts, delivery_run_id=self.delivery_run_id, max_attempts=self.config.max_attempts
+            facts, delivery_run_id=self.delivery_run_id, max_attempts=self._effective_max_attempts(history)
         )
         for record in history:
             if record["kind"] != KIND_EFFECT:
@@ -382,7 +451,11 @@ class Orchestrator:
     def projection(self) -> DeliveryProjection:
         history = self.journal.history(delivery_run_id=self.delivery_run_id)
         facts = [fact_from_envelope(r) for r in history if r["kind"] == KIND_FACT]
-        return reduce(facts, delivery_run_id=self.delivery_run_id, max_attempts=self.config.max_attempts)
+        return reduce(
+            facts,
+            delivery_run_id=self.delivery_run_id,
+            max_attempts=self._effective_max_attempts(history),
+        )
 
     def step(self) -> bool:
         """Perform at most one phase's worth of progress (claim/ready, poll
@@ -411,17 +484,27 @@ class Orchestrator:
         """Advance the DeliveryRun until every Work is terminal
         (ACCEPTED/BLOCKED, confirmed) or no further progress is possible.
         Every iteration replays the journal from scratch -- replay IS the
-        state source (ADR-0001)."""
+        state source (ADR-0001). R4 (#240): if this call appended anything,
+        it ends with an explicit `_assert_replay_consistent` before
+        returning -- this pass must never hand back control having left a
+        record in the journal that a fresh replay of that same journal
+        would reject."""
         self._identification_attempted.clear()
         projection = self.projection()
+        appended = False
         for _ in range(max_iterations):
             if self._all_terminal(projection):
+                if appended:
+                    self._assert_replay_consistent()
                 return projection
             if not self._advance_one_phase(projection):
                 # No progress possible this pass (e.g. genuinely blocked on
                 # an external settlement, or a candidate that never
                 # materializes).
+                if appended:
+                    self._assert_replay_consistent()
                 return projection
+            appended = True
             projection = self.projection()
         raise RuntimeError(
             f"orchestrator exceeded max_iterations={max_iterations} without reaching a stable state "
@@ -716,6 +799,7 @@ class Orchestrator:
                 reason=reason,
             )
         )
+        self._assert_replay_consistent()
 
     def cancel_work(self, *, work_id: str, reason: str, by: str) -> None:
         """Operator-only terminal closure (`STATE-DELIVERY` item 10).
@@ -738,8 +822,8 @@ class Orchestrator:
             work_id=work_id,
             reason=reason,
         )
-        apply_fact(wp, fact, max_attempts=self.config.max_attempts)
         history = self.journal.history(delivery_run_id=self.delivery_run_id)
+        apply_fact(wp, fact, max_attempts=self._effective_max_attempts(history))
         basis_record = next(
             (
                 record
@@ -761,6 +845,7 @@ class Orchestrator:
             )
         )
         self.journal.append_fact(fact)
+        self._assert_replay_consistent()
 
     # -- phase 3: policy decisions --------------------------------------------
 
@@ -776,7 +861,7 @@ class Orchestrator:
         return progressed
 
     def _apply_decision(self, wp: WorkProjection, history: Sequence[Mapping[str, Any]]) -> bool:
-        outcome = decide(wp, max_attempts=self.config.max_attempts)
+        outcome = decide(wp, max_attempts=self._effective_max_attempts(history))
         if outcome is None:
             return False
         effect = outcome.effects[0]  # v0 policy: exactly one effect per Decision.
