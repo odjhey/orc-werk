@@ -75,9 +75,11 @@ import importlib.util
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Optional
 
+from orc_werk.adapters.locking import RunLock
 from orc_werk.cli.config import load_repo_profile
 from orc_werk.cli.hyperlink import hyperlink_path
 from orc_werk.cli.journal_reading import ORC_JOURNAL_DIR_ENV, resolve_journal_dir
@@ -213,6 +215,29 @@ _PROFILE_REL = Path(".orc") / "profile.json"
 _STARTER_PROFILE = "{}\n"
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """`CONTRACT-STORAGE-CONCURRENCY` §5: same-directory temp file + fsync
+    + `os.replace`, never an in-place rewrite of an authoritative snapshot
+    file -- the same mechanics `orc_werk.cli.config._replace_config_unlocked`
+    uses for `config.json`, reimplemented minimally here rather than
+    imported (this module's write is unconditional text, not a JSON
+    document, and `profile.json`'s lock is single-resource, not the
+    run-group lock that helper assumes)."""
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 # --- Step 1: gitignore --------------------------------------------------------
 
 
@@ -244,21 +269,29 @@ def _step_gitignore(target: Path, *, ledger: str) -> str:
 
 
 def _step_profile(target: Path, *, force: bool) -> str:
+    """`profile.json` is a workspace-level mutable file OUTSIDE any run
+    directory -- `CONTRACT-STORAGE-CONCURRENCY` A1's own example of this
+    case -- so it gets a `<file>.lock` single-resource lock (§2's ordinary
+    form), never the per-run group lock `JSONLJournal`/`orc record` use.
+    Read-modify-write (`path.exists()`/`read_text` -> conditional
+    `write_text`), so the lock is acquired BEFORE the initial read, per §2,
+    exactly like `record_assurance_entry`'s discipline for `config.json`."""
     path = target / _PROFILE_REL
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        current = path.read_text(encoding="utf-8")
-        if current == _STARTER_PROFILE:
-            return f"profile: starter already present at {hyperlink_path(path.resolve())} -- skip"
-        if not force:
-            return (
-                f"profile: skip -- {hyperlink_path(path.resolve())} exists and differs from the starter "
-                "(operator-modified); rerun with --force to overwrite"
-            )
-        path.write_text(_STARTER_PROFILE, encoding="utf-8")
-        return f"profile: overwritten (--force) at {hyperlink_path(path.resolve())}"
-    path.write_text(_STARTER_PROFILE, encoding="utf-8")
-    return f"profile: created starter at {hyperlink_path(path.resolve())}"
+    with RunLock(path.with_name(path.name + ".lock")):
+        if path.exists():
+            current = path.read_text(encoding="utf-8")
+            if current == _STARTER_PROFILE:
+                return f"profile: starter already present at {hyperlink_path(path.resolve())} -- skip"
+            if not force:
+                return (
+                    f"profile: skip -- {hyperlink_path(path.resolve())} exists and differs from the "
+                    "starter (operator-modified); rerun with --force to overwrite"
+                )
+            _atomic_write_text(path, _STARTER_PROFILE)
+            return f"profile: overwritten (--force) at {hyperlink_path(path.resolve())}"
+        _atomic_write_text(path, _STARTER_PROFILE)
+        return f"profile: created starter at {hyperlink_path(path.resolve())}"
 
 
 # --- Step 3: skill install -----------------------------------------------------

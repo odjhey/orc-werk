@@ -46,6 +46,7 @@ from orc_werk.cli.config import (
     _CANDIDATE_ADAPTERS,
     _EXECUTION_ADAPTERS,
     _MIRROR_ADAPTERS,
+    atomic_replace_config,
     build_dispatch_ports,
     build_mirror,
     build_run_config,
@@ -209,16 +210,33 @@ def _persist_effective_config(path: Path, config: Mapping[str, Any]) -> None:
     dispatch that never reaches a journal write, never leaves a stray
     config.json (or run directory) behind.
 
+    `CONTRACT-STORAGE-CONCURRENCY` §2/§5: this used to be a plain,
+    non-atomic `Path.write_text` -- no temp file, no atomic rename, no
+    lock (the contract's "Current gaps at adoption" row naming this
+    function by name). It now goes through `atomic_replace_config`
+    (`orc_werk.cli.config`), the same run-group-lock + same-directory-temp
+    + `os.replace` sequence `record_assurance_entry`/
+    `record_execution_outcome_entry` use for this run's `config.json` --
+    so a reader can never observe a partially-written file, and a
+    concurrent `orc record` RMW against the same run's config can never
+    race this write (both go through the SAME lock, A1).
+
     Best-effort, mirroring `JSONLJournal`'s own observed-at sidecar stance
     (`orc_werk.adapters.jsonl.journal`'s module docstring): a dispatch that
     has already durably succeeded must never be reported as failed --or,
     worse, retried and duplicated-- merely because this convenience copy
-    could not be written (permissions, a full disk, whatever)."""
+    could not be written (permissions, a full disk, a lock-acquisition
+    timeout, whatever)."""
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(dict(config), sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        atomic_replace_config(path, dict(config))
     except OSError:
         pass
+    except CoreError as exc:
+        # ERR-BUSY (lock timeout) degrades the same way any other
+        # best-effort write failure here does -- never surfaced as a
+        # dispatch failure (docstring above), never retried automatically.
+        if exc.to_canonical().get("error") != "ERR-BUSY":
+            raise
 
 
 def _package_version(package_dir: Path) -> str:
@@ -669,6 +687,33 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
         # Placed after orchestrator.run() so the run's own directory (new
         # layout) already exists by the time this writes into it -- never
         # created ahead of a successful dispatch.
+        #
+        # `CONTRACT-STORAGE-CONCURRENCY` §8's cross-file note, applied: this
+        # dispatch pass just journaled facts/decisions/effects (each append
+        # above, inside `orchestrator.run()`, independently acquired and
+        # released this run's group lock -- `JSONLJournal._append`) and is
+        # about to write `config.json` too (`_persist_effective_config`,
+        # its own independent, short lock acquisition below). These are
+        # DELIBERATELY two separate short critical sections, never one lock
+        # held across both: `orchestrator.run()` itself may call OUT to
+        # real ports between journal appends (a `git` candidate's repo
+        # inspection, a `command` assurance script's subprocess -- up to
+        # `timeout_s` seconds), and §3 forbids holding a storage lock across
+        # any of that provider work. A1's "one lock covers journal AND
+        # config as a group" is about LOCK IDENTITY (both files share the
+        # same lock path), not about a single acquisition spanning the
+        # whole pass. Consequently this run-group lock provides
+        # concurrency protection for each individual file transaction, but
+        # -- exactly as §8 warns for any cross-file outer lock -- it does
+        # NOT make "journal already durably updated, config not yet
+        # persisted" cross-file-atomic: a crash between the two leaves the
+        # journal ahead of the config copy. That gap's recovery story is
+        # `INV-020` (idempotent, deterministic replay from durable journal
+        # state), not this lock -- `config.json` is a convenience/resume
+        # aid (module docstring above), never itself replayed as canonical
+        # state, so a stale or briefly-missing copy self-heals on the next
+        # dispatch that supplies `--config` again or simply re-reads
+        # whatever was last durably persisted.
         _persist_effective_config(layout.config_path(journal_dir, run_id), config)
 
     print(f"run: {run_id}")

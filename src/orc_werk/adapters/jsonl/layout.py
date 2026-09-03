@@ -8,6 +8,8 @@ observed-at time sidecar (issue #55, H1).
 <directory>/<run_id>/times.jsonl     -- observed-at sidecar (was <run_id>+times.jsonl)
 <directory>/<run_id>/report.html     -- orc report's default output for this run
 <directory>/<run_id>/config.json     -- persisted effective dispatch config (issue #55 H2)
+<directory>/<run_id>/.state.lock     -- run-group advisory lock, covers journal.jsonl AND
+                                         config.json together (CONTRACT-STORAGE-CONCURRENCY A1)
 ```
 
 Run lifecycle = directory lifecycle for the new layout: the run's own
@@ -62,6 +64,11 @@ JOURNAL_FILENAME = "journal.jsonl"
 TIMES_FILENAME = "times.jsonl"
 REPORT_HTML_FILENAME = "report.html"
 CONFIG_FILENAME = "config.json"
+# `CONTRACT-STORAGE-CONCURRENCY` A1's new-layout lock-identity filename --
+# the run-group lock covering `journal.jsonl` AND `config.json` together as
+# one resource (`lock_path` below). Permanent by design (§2): never deleted
+# after release, existence never meaningful.
+LOCK_FILENAME = ".state.lock"
 
 
 def run_dir(directory: Path, run_id: str) -> Path:
@@ -121,6 +128,30 @@ def config_path(directory: Path, run_id: str) -> Path:
     return run_dir(directory, run_id) / CONFIG_FILENAME
 
 
+def lock_path(directory: Path, run_id: str) -> Path:
+    """`CONTRACT-STORAGE-CONCURRENCY` A1's lock-identity mapping: one lock
+    per run directory, covering that run's `journal.jsonl` AND
+    `config.json` together as a single group (§10's group form,
+    `<workspace>/.state.lock`).
+
+    New-layout run -> `<run_dir>/.state.lock`. Legacy flat-layout run (no
+    run directory of its own to hold a lock file in) -> `<directory>/
+    <run_id>.lock` instead -- still the same canonical single-resource form
+    (§10), scoped by the run id rather than a directory.
+
+    Uses the SAME discriminator `report_html_path` above already uses: which
+    layout THIS run's own journal resolved to (`journal_path`'s per-artifact
+    legacy-fallback rule) -- not a separate check of this function's own,
+    so a run's lock identity can never disagree with its journal's actual
+    on-disk layout."""
+    journal = journal_path(directory, run_id)
+    if journal.parent == directory:
+        # journal_path resolved to the legacy flat file -- no run directory
+        # exists (or will be created) for this run.
+        return directory / f"{run_id}.lock"
+    return run_dir(directory, run_id) / LOCK_FILENAME
+
+
 def discover_run_ids(directory: Path) -> list[str]:
     """Every run id under `directory`, new-layout and legacy, sorted.
     New-layout runs are subdirectories that actually contain a
@@ -145,11 +176,13 @@ def discover_run_ids(directory: Path) -> list[str]:
 __all__ = [
     "CONFIG_FILENAME",
     "JOURNAL_FILENAME",
+    "LOCK_FILENAME",
     "REPORT_HTML_FILENAME",
     "TIMES_FILENAME",
     "config_path",
     "discover_run_ids",
     "journal_path",
+    "lock_path",
     "report_html_path",
     "run_dir",
     "times_path",

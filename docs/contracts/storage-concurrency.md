@@ -144,10 +144,15 @@ normally do not require a shared lock when all writers follow atomic
 replacement. Readers requiring consistency across several resources MUST
 participate in the corresponding locking protocol.
 
-`orc_werk.cli.config._atomic_replace_config` (same-directory `tempfile.mkstemp`,
-`fsync`, `os.replace`) already implements this section's *replacement*
-mechanics correctly for `config.json`. What it does not yet do is the
-*enclosing lock* — see "Current gaps at adoption" below.
+`orc_werk.cli.config._replace_config_unlocked` (same-directory
+`tempfile.mkstemp`, `fsync`, `os.replace`) implements this section's
+*replacement* mechanics for `config.json`; the public
+`orc_werk.cli.config.atomic_replace_config` adds this section's enclosing
+lock around it for a plain (non-RMW) write, while `record_assurance_entry`/
+`record_execution_outcome_entry` acquire the SAME run-group lock (A1)
+themselves, before their own read, and call the unlocked replacement
+directly to avoid a self-deadlocking second acquisition — see "Current
+gaps at adoption" below for the closure record.
 
 ## 6. JSONL / append-only files
 
@@ -387,24 +392,26 @@ and `CONTRACT-DURABILITY`, which this contract does not duplicate.
 ## Current gaps at adoption
 
 Honest, watchtower-verified inventory as of this contract's adoption
-(`v0.7.3`, `07c0209`). This is PR 2's (implementation) checklist — nothing
-below is fixed by this docs-only PR.
+(`v0.7.3`, `07c0209`). This was PR 2's (implementation) checklist; every
+row below is now resolved by that PR (`feat(storage): per-run advisory
+locking + ERR-BUSY + SCN-019 multi-process battery`).
 
-| Gap | Section(s) violated | Location |
-|---|---|---|
-| No OS advisory locks exist anywhere in `src/` | §2, §10 | repo-wide |
-| The JSONL journal's append path acquires no lock before appending; the adapter's own docstring declares concurrent same-file appenders out of scope | §6 (writer half), §13 | `src/orc_werk/adapters/jsonl/journal.py` |
-| `orc record`'s read-modify-write reads the current config before acquiring any lock — the atomic-replace mechanics on the write half already satisfy most of §5, but the enclosing lock required by §2 does not exist | §2, §5 (partial) | `src/orc_werk/cli/config.py` — `_atomic_replace_config`, `record_assurance_entry`, `record_execution_outcome_entry` (~953–1009) |
-| `_persist_effective_config` is a plain, non-atomic `Path.write_text` — no temp file, no atomic rename, no lock | §5 (entirely) | `src/orc_werk/cli/main.py` `_persist_effective_config` (~201–219) |
-| No bounded lock-timeout or structured busy error exists, because no lock exists to time out | §11 | repo-wide; `ERR-BUSY` (`CONTRACT-ERRORS`) is registered by this PR but unused until PR 2 |
-| Concurrency safety today is provided entirely by the one-dispatcher-per-run social convention, not by the storage layer (the gap A3 names explicitly) | §13 | `docs/playbooks/agent-cli-usage.md` |
-| No automated concurrency test battery (§12's eight items) exists | §12 | deferred to PR 2 (`SCN-019`) |
+| Gap | Section(s) violated | Location | Status |
+|---|---|---|---|
+| No OS advisory locks exist anywhere in `src/` | §2, §10 | repo-wide | **Resolved.** `orc_werk.adapters.locking.RunLock` (`fcntl.flock`-based, canonicalized path, context-manager API) plus `acquire_sorted` for §4's multi-lock protocol. |
+| The JSONL journal's append path acquires no lock before appending; the adapter's own docstring declares concurrent same-file appenders out of scope | §6 (writer half), §13 | `src/orc_werk/adapters/jsonl/journal.py` | **Resolved.** `_append` acquires the run-group lock (A1) before scanning current on-disk state and holds it through the write; the module docstring's "Concurrency" section replaces the former out-of-scope declaration. |
+| `orc record`'s read-modify-write reads the current config before acquiring any lock — the atomic-replace mechanics on the write half already satisfy most of §5, but the enclosing lock required by §2 does not exist | §2, §5 (partial) | `src/orc_werk/cli/config.py` — `record_assurance_entry`, `record_execution_outcome_entry` | **Resolved.** Both acquire the run-group lock (`_lock_path_for`, A1) BEFORE the initial `load_config` read and hold it through the atomic replace (`_replace_config_unlocked`). |
+| `_persist_effective_config` is a plain, non-atomic `Path.write_text` — no temp file, no atomic rename, no lock | §5 (entirely) | `src/orc_werk/cli/main.py` `_persist_effective_config` | **Resolved.** Now calls `orc_werk.cli.config.atomic_replace_config` (lock + same-directory temp file + `fsync` + `os.replace`). |
+| No bounded lock-timeout or structured busy error exists, because no lock exists to time out | §11 | repo-wide; `ERR-BUSY` was registered but unused | **Resolved.** `RunLock.acquire` retries with capped exponential backoff until a bounded timeout, then raises canonical `ERR-BUSY` (`orc_werk.core.errors.busy_error`) naming the lock path and timeout; never an unlocked fallback. |
+| Concurrency safety today is provided entirely by the one-dispatcher-per-run social convention, not by the storage layer (the gap A3 names explicitly) | §13 | `docs/playbooks/agent-cli-usage.md` | **Resolved.** The storage layer itself (this PR) is now the correctness boundary; A3 stands as written — the playbook convention remains seat semantics only, no longer load-bearing for corruption-avoidance. |
+| No automated concurrency test battery (§12's eight items) exists | §12 | landed | **Resolved.** `tests/scenarios/test_scn_019_storage_concurrency.py` — all eight items at source numbering, separate OS processes, including the item 1/2 unlocked-storm mutation checks. |
 
-The live symptom this contract closes: two seats recording into the same
-multi-work run's `config.json` concurrently can lose an update today —
-both read the pre-mutation file, both compute a merge, the second
-`os.replace` silently wins and the first seat's recorded outcome is gone
-from disk with no error raised.
+The live symptom this contract closed: two seats recording into the same
+multi-work run's `config.json` concurrently could lose an update — both
+read the pre-mutation file, both computed a merge, the second `os.replace`
+silently won and the first seat's recorded outcome was gone from disk
+with no error raised. The run-group lock (A1) now serializes that
+read-modify-write end to end.
 
 ## Related
 
