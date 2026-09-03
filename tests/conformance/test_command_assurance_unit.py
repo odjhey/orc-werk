@@ -1,4 +1,29 @@
-"""Adapter-local command assurance termination, containment, and stdout tests."""
+"""Adapter-local command assurance termination, containment, and stdout
+tests (`SCN-015`, `docs/adapters/command/conformance.md`).
+
+Traceability (per `docs/adapters/command/conformance.md`'s own evidence
+column, made explicit here as stable-ID citations):
+
+- `CONF-ASSURE-006` (exit-status honesty): `test_full_exit_status_table`
+  (clean 0/1 map to accepted/rejected; every other exit code maps to
+  inconclusive, never guessed) and `test_signal_and_timeout_are_
+  inconclusive` (signal termination and timeout both map to inconclusive).
+- `CONF-ASSURE-007` (hostile-stdout containment): `test_stdout_validation_
+  table_drops_only_enrichment` and `test_oversized_stdout_dropped_and_
+  valid_enrichment_transported` -- malformed/oversized/non-portable/non-
+  allowlisted stdout never changes verdict/state/fingerprint, and the drop
+  itself is recorded in evidence (`stdout_enrichment: "dropped"`).
+- `CONF-EXT-004` (canonical fields win): the `"unknown": '{"verdict":
+  "rejected"}'` case inside `test_stdout_validation_table_drops_only_
+  enrichment` is a stdout payload naming a canonical-looking `verdict`
+  field that must not (and does not) override the exit-code-determined
+  `"accepted"` verdict actually observed.
+- `CONF-EXT-005` (capability honesty): `test_capability_withholding_is_
+  constructor_enforced` -- a provider that cannot durably produce
+  `CAP-ASSURE-MAY-MUTATE-CANDIDATE`/`CAP-ASSURE-STRUCTURED-FINDINGS`
+  semantics does not advertise them; the constructor refuses to accept
+  either capability at all.
+"""
 
 from __future__ import annotations
 
