@@ -75,6 +75,15 @@ started by a foreign/orphaned session no seat here can observe.
    that would be a forged verdict, exactly what `DEC-ABANDON-ATTEMPT` is
    designed to avoid (`PROTOCOL-DECISIONS`).
 
+## Additional note
+
+Like `orc cancel` (`SCN-011` item 8), `--abandon-work` requires only the
+run's own journal to determine legality and act: an unloadable or
+schema-invalid persisted config — for example one still naming an adapter
+removed by a later release (`ADR-0005`) — never blocks it (issue #236). An
+ordinary `orc dispatch` of that same config is refused unchanged; only this
+journal-only escape hatch opens.
+
 ## Mutation check
 Removing `FACT-ATTEMPT-ABANDONED`'s legality as a continuation from either
 resting point (reverting to: no legal Fact ever consumes an unresolved
