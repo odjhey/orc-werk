@@ -12,6 +12,24 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.7.2] — 2026-09-03
+
+### Fixed
+- **Replay divergence on flag-supplied retry budgets** (#240, PR #242): a
+  `--max-attempts` given only as a dispatch flag was journaled into
+  `FX-CREATE-WORK` but never persisted, so a bare `--run-id` resume evaluated
+  retry policy under the default budget — journaling a `DEC-RETRY` the run's
+  own recorded budget forbids and permanently wedging the read verbs
+  (`status`/`history`/`record` raised `ERR-CONFLICT` on the run's own journal
+  while `dispatch` kept advancing). Now, per the `SCN-008` amendment: the
+  **journaled budget is the single authority for every verb**; an explicit
+  differing `--max-attempts`/config value on resume is refused with
+  `ERR-VALIDATION` naming both values; a flag-supplied budget persists into
+  the run's `config.json` at creation; and every mutating pass asserts its own
+  journal replays cleanly before exiting, so any future divergence fails
+  loudly at the source instead of wedging. Journals already wedged by the old
+  behavior are documented as unrecoverable legacy (the #52/#77 precedent).
+
 ## [0.7.1] — 2026-09-03
 
 Documentation-only release; no code changes (`src/` and `tests/` are
