@@ -12,6 +12,30 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [0.7.1] — 2026-09-03
+
+Documentation-only release; no code changes (`src/` and `tests/` are
+byte-identical to 0.7.0). Cut so adopting projects can pin a tagged version
+that carries the onboarding surface.
+
+### Added
+- **`PLAYBOOK-AGENT-ONBOARDING`** (`docs/playbooks/agent-onboarding.md`,
+  #239, closes #238): the single file an operator points an agent at —
+  "onboard this project to use orc (+ergo), see this file". Imperative,
+  sandbox-verified end to end: install with loud failure (including the
+  shell-alias invisibility trap), `orc onboard`, the ten-step delivery loop
+  with a git candidate config, updating the adopting repo's own agent docs,
+  optional ergo wiring via observers, and a done-when checklist.
+  `PRODUCT-ADOPTION` and `PLAYBOOK-ERGO-COEXISTENCE` now point to it.
+- **`PLAYBOOK-ERGO-COEXISTENCE`** (`docs/playbooks/ergo-coexistence.md`,
+  #235): running ergo (agent backlog) and orc side by side — division of
+  authority, observer wiring as the sole writer of terminal ergo states,
+  run-id conventions.
+- **Second-repo adoption field report** (`docs/reports/2026-09-03-xatu-adoption-field-report.md`,
+  #237): five incidents with costs from operating 0.4.1 → 0.7.0, merged with
+  maintainer verification amendments; its promotions are tracked (#236 landed
+  as an issue; #238 closed by the onboarding guide).
+
 ## [0.7.0] — 2026-09-03
 
 No breaking changes. Existing configs and journals need no migration.
