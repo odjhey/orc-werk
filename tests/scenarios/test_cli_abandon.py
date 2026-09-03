@@ -180,6 +180,61 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
             self.assertTrue(any(r["kind"] == "decision" and r["id"] == DEC_ABANDON_ATTEMPT for r in history))
             self.assertTrue(any(r["kind"] == "fact" and r["id"] == FACT_ATTEMPT_ABANDONED for r in history))
 
+    def test_abandon_tolerates_persisted_config_naming_removed_adapter(self) -> None:
+        """Issue #236 repro, abandon half: `--abandon-work` is journal-only
+        (`SCN-010`, `STATE-DELIVERY` item 9) exactly like `orc cancel`
+        (`SCN-011`) -- a persisted config that still names a since-removed
+        adapter (`acp`, ADR-0005) must not block it from a legal abandon
+        state, even though an ordinary `orc dispatch` of that exact config
+        is refused unchanged (requirement (d))."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            config_path = tmp_dir / "cfg.json"
+            config = {
+                "run_id": "abandon-legacy",
+                "max_attempts": 3,
+                "attempts": {"work-1": [{"outcome": "completed", "candidate": {"label": "A"}}]},
+            }
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            # Get the Work to ASSURING, pending (no verdict recorded yet) --
+            # a legal abandon state (SCN-010's unsettleable-assurance shape).
+            dispatch1 = _run_cli(tmp_dir, "dispatch", "abandon me", "--config", str(config_path))
+            self.assertEqual(dispatch1.returncode, 3, msg=dispatch1.stdout + dispatch1.stderr)
+            self.assertIn("state=ASSURING", dispatch1.stdout)
+
+            # Simulate the field scenario: an install upgrade removes the
+            # `acp` adapter (ADR-0005) out from under the persisted config.
+            persisted_path = tmp_dir / ".orc" / "abandon-legacy" / "config.json"
+            persisted = json.loads(persisted_path.read_text())
+            persisted["execution"] = {"adapter": "acp", "agent": "claude", "cwd": "/tmp"}
+            persisted_path.write_text(json.dumps(persisted), encoding="utf-8")
+
+            # (d) an ordinary dispatch (no --abandon-work) of that exact
+            # config is refused UNCHANGED.
+            refused = _run_cli(tmp_dir, "dispatch", "--run-id", "abandon-legacy")
+            self.assertEqual(refused.returncode, 2)
+            self.assertEqual(json.loads(refused.stderr)["error"], "ERR-VALIDATION")
+
+            # (b) --abandon-work tolerates it: journal-only, acts on the
+            # journal alone, and names the tolerated error on stderr.
+            abandoned = _run_cli(
+                tmp_dir, "dispatch", "--run-id", "abandon-legacy",
+                "--abandon-work", "work-1", "--abandon-reason", "adapter session orphaned",
+                "--abandon-by", "test-operator",
+            )
+            self.assertEqual(abandoned.returncode, 3, msg=abandoned.stdout + abandoned.stderr)
+            self.assertIn("now READY", abandoned.stdout)
+            self.assertIn("persisted config invalid", abandoned.stderr)
+            self.assertIn("ERR-VALIDATION", abandoned.stderr)
+            self.assertIn("journal-only", abandoned.stderr)
+
+            # Journal-clean read-back.
+            history = JSONLJournal(tmp_dir / ".orc").history(delivery_run_id="abandon-legacy")
+            facts = [r for r in history if r["kind"] == "fact" and r["id"] == FACT_ATTEMPT_ABANDONED]
+            self.assertEqual(len(facts), 1)
+            self.assertEqual(facts[0]["data"]["reason"], "adapter session orphaned")
+
 
 class AbandonIllegalCliTest(unittest.TestCase):
     def test_unknown_abandon_work_is_canonical_not_found(self) -> None:
@@ -255,6 +310,22 @@ class AbandonIllegalCliTest(unittest.TestCase):
             payload = json.loads(result.stderr)
             self.assertEqual(payload["error"], "ERR-VALIDATION")
             self.assertIn("FACT-ATTEMPT-ABANDONED illegal", payload["message"])
+
+    def test_abandon_missing_run_is_still_refused(self) -> None:
+        """(c): the issue #236 escape hatch is scoped to an invalid
+        *persisted config* for an EXISTING run -- a genuinely missing run
+        is refused exactly as before this fix (unaffected: `--abandon-work`
+        shares `orc dispatch`'s ordinary "unknown run without a fresh
+        intent" refusal, `ERR-VALIDATION`, not the config-loading path this
+        fix touches at all)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            result = _run_cli(
+                tmp_dir, "dispatch", "--run-id", "no-such-run",
+                "--abandon-work", "work-1", "--abandon-reason", "x",
+            )
+            self.assertEqual(result.returncode, 2, msg=result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stderr)["error"], "ERR-VALIDATION")
 
 
 class CandidateConflictAffordanceTest(unittest.TestCase):

@@ -902,6 +902,54 @@ def load_config(path: str) -> Mapping[str, Any]:
     return validate_config(_read_config_mapping(Path(path)))
 
 
+def load_persisted_config_tolerant(path: Path) -> tuple[Mapping[str, Any], Optional[CoreError]]:
+    """Journal-only-verb counterpart to `load_config` (issue #236). `orc
+    cancel` and `orc dispatch --abandon-work` act on the journal alone
+    (`SCN-011`, `SCN-010`, `STATE-DELIVERY` items 9/10: no port Effect,
+    adapter vocabulary irrelevant) -- but both used to load a run's
+    persisted `config.json` through the same full `validate_config` an
+    ordinary dispatch requires, so a config left behind by a since-removed
+    adapter (ADR-0005; `_REMOVED_ADAPTERS`) made a pending run unreachable
+    by EVERY verb at once, not just the ones that actually need the
+    adapter. `orc dispatch`'s own refusal of an invalid config is
+    unchanged (`load_config`, still called directly on that path) -- this
+    is a separate, deliberately more tolerant entry point only journal-only
+    callers use.
+
+    Returns `(persisted, warning)`. When the file is absent: `({}, None)`.
+    When it loads and validates cleanly: identical to `load_config`, with
+    `warning=None` -- a valid config's cancel/abandon behavior and output
+    are therefore byte-for-byte unchanged by this function's existence.
+    When full validation fails (the ADR-0005 repro: an unknown adapter or
+    adapter-exclusive key), the persisted layer is still read leniently --
+    JSON-parsed and portability-checked only, no schema/adapter-vocabulary
+    check -- and returned together with the `CoreError` `load_config` would
+    have raised, so the caller can act on the journal while still telling
+    the operator why the persisted config was set aside (a one-line stderr
+    note, not silence -- this codebase's established preference for loud
+    over quiet, `_assert_replay_consistent`'s docstring). Only when even
+    that lenient read fails (the file is not valid JSON, or is not a
+    portable JSON object at all -- corruption, not an adapter-vocabulary
+    rejection) does this fall back to `{}`: cancel/abandon need nothing
+    from an unreadable file, and `attempts`/`execution_capabilities`
+    (`build_scripted_adapters`) plus `max_attempts`/`resume_capability`
+    (`build_run_config`) -- the only fields either caller's Orchestrator
+    construction actually reads -- are never adapter-vocabulary-sensitive,
+    so validating them narrowly at their own call sites (as those builders
+    already do) is the CANCEL/ABANDON gate that fires; this function's own
+    job is only to stop the merged config's `validate_config` from
+    firing first."""
+    if not path.exists():
+        return {}, None
+    try:
+        return load_config(str(path)), None
+    except CoreError as exc:
+        try:
+            return _read_config_mapping(path), exc
+        except CoreError:
+            return {}, exc
+
+
 def _entry_slot(updated: dict[str, Any], *, work_id: str, attempt_number: int) -> dict[str, Any]:
     """Shared by `record_assurance_entry`/`record_execution_outcome_entry`:
     locate (creating if this is the next unwritten slot) the mutable
@@ -1398,6 +1446,7 @@ __all__ = [
     "deep_merge_config",
     "load_config",
     "load_config_overlay",
+    "load_persisted_config_tolerant",
     "load_repo_profile",
     "record_assurance_entry",
     "record_execution_outcome_entry",
