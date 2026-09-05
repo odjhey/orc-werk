@@ -38,6 +38,10 @@ Core reducer/state-machine tests prove that changing an extension payload while 
 
 A component transporting `assurance-context/v1` preserves the verifier-attested base canonically unchanged through `FACT-ASSURE-SETTLED.extensions` and journal round-trip. The base never changes canonical projection, verdict binding, transitions, or Decisions when present, absent, or changed. See `SCN-012`.
 
+## CONF-EXT-008 — Assurance depth opacity *(draft)*
+
+Proposed with `EXT-ASSURANCE-DEPTH-V1`; binding when that extension is registered as current. A component transporting `assurance-depth/v1` preserves the verifier-attested depth canonically unchanged through `FACT-ASSURE-SETTLED.extensions` and journal round-trip. The depth never changes canonical projection, verdict binding, transitions, or Decisions when present, absent, or changed; in particular no `depth` value promotes, demotes, or qualifies the canonical verdict. See `SCN-020`.
+
 ## Producer conformance is dev-gate-enforced, not a runtime requirement
 
 Issue #227 asked whether a producer emitting a payload that conforms to its own extension's registered schema belongs here as a `CONF-EXT-*` runtime requirement. The operator ruling (2026-09-03, issue #227) is dev-gate only: `tests/conformance/test_extension_producer_conformance.py` validates payloads emitted by orc's own code paths (`orc record`, the Git candidate adapter) against their registered `docs/extensions/*/schema.md` shapes, in the test suite only. This is dev tooling in the same spirit as `tests/README.md`'s "Post-MVP test hardening" section, not a new numbered `CONF-EXT` id: nothing above changes, `CONF-EXT-006` core ignorance is untouched, and adopter/third-party extension payloads remain unpoliced — extensions stay opaque to the kernel exactly as `CONF-EXT-002` requires.

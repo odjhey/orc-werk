@@ -20,6 +20,12 @@ All extensions MUST satisfy `CONTRACT-EXTENSIONS`.
 - `EXT-GIT-CANDIDATE-IDENTIFICATION-V1` — Git adapter-local candidate identification provenance under `git-candidate-identification/v1`
 - `EXT-EXECUTOR-IDENTITY-V1` — ship- and verify-seat executor provenance under `executor-identity/v1`
 
+## Proposed extensions (draft)
+
+Not yet binding and not yet emitted by any orc code path; listed so the identifier is reserved and reviewable.
+
+- `EXT-ASSURANCE-DEPTH-V1` — verifier-attested evaluation depth (`live | test | static`) under `assurance-depth/v1`. Provenance: `docs/reports/2026-09-05-pstack-graded-verdicts.md`.
+
 ## Superseded extensions
 
 Retained history only — do not build against these; see each for its replacement.

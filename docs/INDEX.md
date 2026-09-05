@@ -40,6 +40,7 @@ description: Flat documentation index.
 - [`assurance-context/v1`](extensions/assurance-context/README.md)
 - [`git-candidate-identification/v1`](extensions/git-candidate-identification/README.md)
 - [`executor-identity/v1`](extensions/executor-identity/v1/README.md)
+- [`assurance-depth/v1`](extensions/assurance-depth/v1/README.md) (draft — proposed, not yet registered)
 - [`crew-report/v1`](extensions/crew-report/README.md) (superseded — removed, historical reference only)
 - [`acp-settlement/v1`](extensions/acp-settlement/README.md) (superseded — removed, historical reference only, ADR-0005)
 
@@ -71,6 +72,7 @@ description: Flat documentation index.
 
 ## Research and lineage
 - [Research lineage](research/README.md)
+- [Reports index](reports/README.md)
 
 ## Delivery
 - [M0 pure core](delivery/M0-pure-core.md)
