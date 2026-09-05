@@ -99,6 +99,14 @@ Key lessons: stable logical work identity must outlive runtime/session churn; a 
 
 Key lessons: do not rebuild harness-native subagents; task/session transport and active runtime control are different from planning/routing; exact candidate provenance matters; stale assurance must not be relabeled as current; planner, reviewer/tester, gate runner, merger, and watchtower responsibilities benefit from explicit authority boundaries; bounded attempts and replanning prevent endless repair loops.
 
+### pstack (Cursor plugin)
+
+- pstack — <https://github.com/cursor/plugins/tree/main/pstack> (`skills/poteto-mode/playbooks/orchestrate.md`, "Verification")
+
+Key lessons: a verdict should record *how deeply* the candidate was evaluated, not only whether it passed — pstack grades ledger rows `live-ui-verified | unit-test-verified | type-check-only` with a per-work floor ("behavioral work needs better than type-check-only"; "CI green is an input to a verdict, not a verdict"). A blocked verifier is not a pass and warrants re-verifying the same candidate once the environment heals, whereas a failed verification warrants new work, never a re-verify. Verdicts keyed on the exact head SHA are voided by any restack.
+
+What Orc Werk took: the depth dimension, generalized and separated from outcome, as the proposed `EXT-ASSURANCE-DEPTH-V1` (`live | test | static`); the blocked-versus-failed distinction as an open question about `inconclusive` being terminal. What it did not take: pstack's outcome values inside the grade enumeration, its worker-self-report-with-override model (Orc's one-seat-per-candidate rule is stricter), or its code-and-UI-specific vocabulary. Assessment: `docs/reports/2026-09-05-pstack-graded-verdicts.md`.
+
 ### no-mistakes
 
 - no-mistakes — <https://github.com/kunchenguid/no-mistakes>
