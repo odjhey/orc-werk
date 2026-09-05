@@ -10,8 +10,8 @@ Decision/Effect(s) named by the transition table -- v0 defines no
 alternative strategies to choose between (M-000 explicitly excludes an LLM
 planner/watchtower policy), so this mapping is not a "choice" in the
 INV-011 sense beyond selecting the single row the table already specifies.
-All budget arithmetic (INV-018/INV-019) already happened in the reducer;
-policy only reads `projection.state`.
+All budget arithmetic (INV-018/INV-019, and INV-021's assurance budget)
+already happened in the reducer; policy only reads `projection.state`.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from orc_werk.core.effects import (
     make_effect,
 )
 from orc_werk.core.idempotency import idempotency_key
-from orc_werk.core.reducer import DEFAULT_MAX_ATTEMPTS
+from orc_werk.core.reducer import DEFAULT_MAX_ASSURANCE_ATTEMPTS, DEFAULT_MAX_ATTEMPTS
 from orc_werk.core.state import STATE_ACCEPTED, STATE_ASSURING, STATE_BLOCKED, STATE_READY, WorkProjection
 
 
@@ -47,6 +47,11 @@ class PolicyOutcome:
 
 
 def _block_reason(projection: WorkProjection, *, max_attempts: int) -> str:
+    """The v0 `FACT-WORK-BLOCKED` reason vocabulary (STATE-DELIVERY's
+    informative note): `assurance-inconclusive` when the assurance budget
+    (INV-021) was exhausted by `inconclusive` verdicts -- unchanged in
+    shape by ADR-0006, because the reducer only reaches BLOCKED on an
+    `inconclusive` settlement once that budget IS exhausted."""
     trigger = projection.trigger_facts[-1] if projection.trigger_facts else {}
     fact_id = trigger.get("id")
     if fact_id == "FACT-ASSURE-SETTLED" and trigger.get("data", {}).get("verdict") == "inconclusive":
@@ -62,10 +67,21 @@ def decide(
     projection: WorkProjection,
     *,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    max_assurance_attempts: int = DEFAULT_MAX_ASSURANCE_ATTEMPTS,
 ) -> PolicyOutcome | None:
     delivery_run_id = projection.delivery_run_id
     work_id = projection.work_id
-    state_basis = {"attempt_number": projection.attempt_number, "max_attempts": max_attempts}
+    state_basis = {
+        "attempt_number": projection.attempt_number,
+        "max_attempts": max_attempts,
+        # INV-021: the assurance budget travels in DEC-BLOCK's data
+        # alongside the retry budget so a reader of the journal alone can
+        # tell an `assurance-inconclusive` block's arithmetic (this many
+        # assurances of this candidate, out of this budget) from a
+        # retry-budget exhaustion's.
+        "assurance_number": projection.assurance_number(),
+        "max_assurance_attempts": max_assurance_attempts,
+    }
 
     if projection.state == STATE_READY and projection.ready_confirmed:
         upcoming_attempt = projection.attempt_number + 1
@@ -93,12 +109,25 @@ def decide(
 
     if projection.state == STATE_ASSURING and not projection.assurance_started_for_current:
         fingerprint = projection.current_candidate_fingerprint()
+        # INV-021/STATE-DELIVERY item 11 (ADR-0006): this one branch serves
+        # BOTH the first assurance of a freshly observed candidate AND a
+        # bounded re-request after an `inconclusive` settlement -- the
+        # reducer already decided which by leaving the Work at ASSURING
+        # with no assurance in flight. The only difference visible from
+        # here is the assurance index: the upcoming assurance is one past
+        # however many this Execution has already started, and INV-020's
+        # key gains that component for every assurance after the first.
+        upcoming_assurance_number = projection.assurance_number() + 1
         decision = make_decision(
             DEC_REQUEST_ASSURANCE,
             delivery_run_id=delivery_run_id,
             work_id=work_id,
             basis=projection.trigger_facts,
-            data={"candidate_id": projection.current_candidate_id},
+            data={
+                "candidate_id": projection.current_candidate_id,
+                "assurance_number": upcoming_assurance_number,
+                "max_assurance_attempts": max_assurance_attempts,
+            },
         )
         effect = make_effect(
             FX_START_ASSURANCE,
@@ -110,8 +139,13 @@ def decide(
                 work_id=work_id,
                 attempt_number=projection.attempt_number,
                 candidate_fingerprint=fingerprint,
+                assurance_number=upcoming_assurance_number,
             ),
-            data={"candidate_id": projection.current_candidate_id, "candidate_fingerprint": fingerprint},
+            data={
+                "candidate_id": projection.current_candidate_id,
+                "candidate_fingerprint": fingerprint,
+                "assurance_number": upcoming_assurance_number,
+            },
         )
         return PolicyOutcome(decision=decision, effects=(effect,))
 

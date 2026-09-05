@@ -97,11 +97,25 @@ class RootCauseSurfacingTest(unittest.TestCase):
         # scope) -- an assurance-inconclusive block must never grow one.
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
+            # Restated for ADR-0006 (issue #264): reaching an
+            # `assurance-inconclusive` BLOCK now takes the assurance budget
+            # (INV-021), which defaults to 2 -- so this exhausts it with two
+            # inconclusive settlements of the same candidate within the one
+            # attempt (`assurances`, consumed in order by assurance_number).
+            # The assertion itself is unchanged: no root_cause suffix for a
+            # block whose reason is not retry-budget-exhausted.
             config = {
                 "run_id": "inconclusive-run",
                 "attempts": {
                     "work-1": [
-                        {"outcome": "completed", "candidate": {"label": "A"}, "assurance": {"verdict": "inconclusive"}}
+                        {
+                            "outcome": "completed",
+                            "candidate": {"label": "A"},
+                            "assurances": [
+                                {"verdict": "inconclusive"},
+                                {"verdict": "inconclusive"},
+                            ],
+                        }
                     ]
                 },
             }

@@ -210,7 +210,11 @@ class AssuranceEvidenceRefsTransportTest(unittest.TestCase):
 
             self.assertEqual(settled["data"]["evidence_refs"], evidence_refs)
             assurance_id = re.escape(settled["data"]["assurance_id"])
-            row = re.search(rf"<tr><td><code>{assurance_id}</code></td>.*?</tr>", rendered)
+            # ADR-0006/INV-021: the verdicts table gained a leading
+            # per-attempt assurance-number cell, so the row now opens with
+            # `<td>N</td>` before the assurance id. Same row, same content
+            # assertions below.
+            row = re.search(rf"<tr><td>\d+</td><td><code>{assurance_id}</code></td>.*?</tr>", rendered)
             self.assertIsNotNone(row)
             self.assertIn("artifact://report-1", row.group(0))
             self.assertNotIn("<td>-</td>", row.group(0))
@@ -223,7 +227,11 @@ class AssuranceEvidenceRefsTransportTest(unittest.TestCase):
 
             self.assertNotIn("evidence_refs", settled["data"])
             assurance_id = re.escape(settled["data"]["assurance_id"])
-            row = re.search(rf"<tr><td><code>{assurance_id}</code></td>.*?</tr>", rendered)
+            # ADR-0006/INV-021: the verdicts table gained a leading
+            # per-attempt assurance-number cell, so the row now opens with
+            # `<td>N</td>` before the assurance id. Same row, same content
+            # assertions below.
+            row = re.search(rf"<tr><td>\d+</td><td><code>{assurance_id}</code></td>.*?</tr>", rendered)
             self.assertIsNotNone(row)
             self.assertIn("<td>-</td>", row.group(0))
 

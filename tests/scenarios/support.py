@@ -21,6 +21,7 @@ from orc_werk.adapters.scripted.execution import ScriptedExecution
 from orc_werk.app import Orchestrator, RunConfig, default_single_work_plan
 from orc_werk.core.effects import FX_START_EXECUTION
 from orc_werk.core.idempotency import idempotency_key
+from orc_werk.core.reducer import DEFAULT_MAX_ASSURANCE_ATTEMPTS
 from orc_werk.ports.journal import JournalPort
 from orc_werk.ports.work_graph import WorkGraphPort
 
@@ -43,6 +44,7 @@ def build_run(
     attempts_by_work: Mapping[str, Sequence[Mapping[str, Any]]],
     plan: Optional[Mapping[str, Any]] = None,
     max_attempts: int = 3,
+    max_assurance_attempts: int = DEFAULT_MAX_ASSURANCE_ATTEMPTS,
     resume_capability: Optional[str] = None,
     execution_capabilities: Sequence[str] = (),
     journal: Optional[JournalPort] = None,
@@ -60,10 +62,17 @@ def build_run(
       meaningful when `outcome == "completed"`).
     - `verdict`: `"accepted"` | `"rejected"` | `"inconclusive"`, only
       meaningful when `candidate` is present.
+    - `verdicts`: `INV-021`/`ADR-0006` -- an ORDERED list of verdicts for
+      the attempt's candidate, consumed by `assurance_number` (element 0 is
+      assurance 1). Mutually exclusive with `verdict`, which is exactly
+      `verdicts` of length one.
+
+    `max_assurance_attempts` is the run's assurance budget (`INV-021`),
+    journaled at creation exactly like `max_attempts`.
     """
     execution_script: dict[str, list[dict[str, Any]]] = {}
     candidate_subjects: dict[str, dict[str, Any]] = {}
-    assurance_script: dict[str, dict[str, Any]] = {}
+    assurance_script: dict[str, list[dict[str, Any]]] = {}
 
     for work_id, attempts in attempts_by_work.items():
         execution_script[work_id] = []
@@ -80,9 +89,13 @@ def build_run(
                 delivery_run_id=delivery_run_id, work_id=work_id, attempt_number=attempt_index + 1
             )
             candidate_subjects[execution_id] = {"work_id": work_id, "subject_identity": candidate_content}
-            verdict = attempt.get("verdict")
-            if verdict is not None:
-                assurance_script[fingerprint_of(candidate_content)] = {"verdict": verdict}
+            verdicts = attempt.get("verdicts")
+            if verdicts is None and attempt.get("verdict") is not None:
+                verdicts = [attempt["verdict"]]
+            if verdicts:
+                assurance_script[fingerprint_of(candidate_content)] = [
+                    {"verdict": verdict} for verdict in verdicts
+                ]
 
     journal = journal if journal is not None else MemoryJournal()
     work_graph = work_graph if work_graph is not None else MemoryWorkGraph()
@@ -97,7 +110,11 @@ def build_run(
         execution=execution,
         candidate=candidate,
         assurance=assurance,
-        config=RunConfig(max_attempts=max_attempts, resume_capability=resume_capability),
+        config=RunConfig(
+            max_attempts=max_attempts,
+            max_assurance_attempts=max_assurance_attempts,
+            resume_capability=resume_capability,
+        ),
     )
     resolved_plan = plan or default_single_work_plan(next(iter(attempts_by_work)))
     orchestrator.bootstrap(intent_id=delivery_run_id, text=f"scenario {delivery_run_id}", plan=resolved_plan)

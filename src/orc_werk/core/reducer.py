@@ -8,7 +8,12 @@ action (that is `orc_werk.core.policy`'s job). Where the transition table's
 "Next" column depends on the retry budget (INV-018/INV-019), the reducer
 compares `attempt_number` against the supplied `max_attempts` -- this is
 arithmetic derivation, not policy judgment; v0 has exactly one deterministic
-budget rule, so there is nothing to choose between.
+budget rule, so there is nothing to choose between. The two `inconclusive`
+rows (INV-021/ADR-0006, STATE-DELIVERY item 11) are the identical shape of
+arithmetic against the second budget, `max_assurance_attempts`: within
+budget the Work rests at ASSURING with no assurance in flight so the
+ordinary DEC-REQUEST-ASSURANCE row fires again for the same Candidate;
+exhausted, it resolves to BLOCKED.
 
 State-derivation convention (design note, not a normative source): each row
 of the transition table's "Next" column is entered eagerly, as soon as the
@@ -59,6 +64,28 @@ from orc_werk.core.state import (
 
 DEFAULT_MAX_ATTEMPTS = 3
 
+# INV-021/ADR-0006: the v0 schema default assurance budget -- one
+# re-request of the same Candidate before an `inconclusive` outcome blocks
+# the Work. Distinct from `LEGACY_MAX_ASSURANCE_ATTEMPTS` below, which is
+# the *read-fallback* for a journal written before the budget existed.
+DEFAULT_MAX_ASSURANCE_ATTEMPTS = 2
+
+# INV-021's read-fallback: a journal whose `FX-CREATE-WORK` record carries
+# no `data.max_assurance_attempts` folds under a budget of `1`, which
+# reproduces the pre-`ADR-0006` single-row behavior (`inconclusive` ->
+# `BLOCKED`) exactly -- so no existing journal changes meaning on replay
+# (`CONF-JOURNAL-003`, `SCN-021` item 11). Deliberately NOT the schema
+# default `2`: defaulting a legacy journal to the new budget would derive
+# `ASSURING` where the run itself recorded `BLOCKED`/`FACT-WORK-BLOCKED`,
+# turning every such replay into `ERR-CONFLICT`.
+LEGACY_MAX_ASSURANCE_ATTEMPTS = 1
+
+# STATE-DELIVERY item 8 as amended by item 11 (`ADR-0006`): "a prior
+# FACT-ASSURE-SETTLED exists" means a prior *accepted* or *rejected*
+# settlement. An `inconclusive` settlement decides nothing about the
+# Candidate and is therefore never inherited.
+INHERITABLE_VERDICTS = frozenset({"accepted", "rejected"})
+
 
 def journaled_max_attempts(history: Sequence[Mapping[str, Any]]) -> int:
     """The single-authority retry budget for a run that already has a
@@ -92,6 +119,59 @@ def journaled_max_attempts(history: Sequence[Mapping[str, Any]]) -> int:
             return recorded
         return DEFAULT_MAX_ATTEMPTS
     return DEFAULT_MAX_ATTEMPTS
+
+
+def journaled_max_assurance_attempts(history: Sequence[Mapping[str, Any]]) -> int:
+    """`INV-021`'s sibling of `journaled_max_attempts`: the single-authority
+    assurance budget for a run that already has a journal -- the run's own
+    recorded `data.max_assurance_attempts` from its `FX-CREATE-WORK` effect
+    record, never a caller's `RunConfig`, CLI flag, or the reading
+    process's own effective config. Every verb (read-side
+    `load_projection`, and every app-layer write-side fold) MUST derive the
+    assurance budget from this one function so a single journal
+    reconstructs one identical projection regardless of which verb or
+    process replays it (`CONF-JOURNAL-003`, `SCN-008`'s budget-authority
+    clause applied to `INV-021`).
+
+    A journal written before this field existed (or with no
+    `FX-CREATE-WORK` record at all) falls back to
+    `LEGACY_MAX_ASSURANCE_ATTEMPTS` (`1`) -- NOT the schema default
+    `DEFAULT_MAX_ASSURANCE_ATTEMPTS` (`2`). See that constant's own note:
+    `1` is exactly pre-`ADR-0006` behavior, so a legacy journal's recorded
+    `DEC-BLOCK`/`FACT-WORK-BLOCKED` after a single `inconclusive`
+    settlement still replays as a legal continuation (`SCN-021` item 11)."""
+    for record in history:
+        if record.get("kind") != KIND_EFFECT:
+            continue
+        if record.get("id") != FX_CREATE_WORK:
+            continue
+        data = record.get("data") or {}
+        recorded = data.get("max_assurance_attempts")
+        if isinstance(recorded, int) and not isinstance(recorded, bool) and recorded > 0:
+            return recorded
+        return LEGACY_MAX_ASSURANCE_ATTEMPTS
+    return LEGACY_MAX_ASSURANCE_ATTEMPTS
+
+
+def assurance_number_for_execution(
+    assurances: Sequence[Mapping[str, Any]], execution_id: Optional[str]
+) -> int:
+    """`INV-021`'s per-execution-attempt assurance index, reconstructed
+    from journal order: the count of `FACT-ASSURE-STARTED` records
+    journaled for `execution_id`. The reducer tags every assurance entry
+    with the Execution current at the moment it was appended (see the
+    `FACT-ASSURE-STARTED` branch of `apply_fact`), which is exactly
+    equivalent to counting the `FACT-ASSURE-STARTED` records that follow
+    the current `FACT-EXEC-STARTED` in journal order.
+
+    Deliberately NOT candidate-scoped: a Candidate re-observed by a later
+    Execution (`STATE-DELIVERY` item 11's amendment to items 8/9) enters
+    `ASSURING` with a NEW attempt's full assurance budget, so a
+    candidate-scoped count would carry the previous attempt's assurances
+    forward and block immediately."""
+    if execution_id is None:
+        return 0
+    return sum(1 for entry in assurances if entry.get("execution_id") == execution_id)
 
 
 class AbandonLegality(NamedTuple):
@@ -149,14 +229,43 @@ def _require_state(fact: Fact, projection: WorkProjection, *expected: str) -> No
 def _settled_assurance_for_candidate(
     projection: WorkProjection, candidate_id: str
 ) -> Optional[dict]:
-    """The most recent settled assurance entry for `candidate_id` in this
-    Work's lineage (verdict inheritance, STATE-DELIVERY item 8), or `None`
-    if this candidate has no settled assurance to inherit from yet."""
+    """The most recent INHERITABLE settled assurance entry for
+    `candidate_id` in this Work's lineage (verdict inheritance,
+    STATE-DELIVERY item 8), or `None` if this candidate has no inheritable
+    settlement yet.
+
+    `ADR-0006`/item 11 amends item 8: only `accepted` and `rejected` are
+    inheritable (`INHERITABLE_VERDICTS`). An `inconclusive` settlement
+    decides nothing about the Candidate, so it is never inherited -- and
+    neither is the synthetic `"abandoned"` marker item 9's
+    `FACT-ATTEMPT-ABANDONED` writes (which was never a verdict at all)."""
     match = None
     for entry in projection.assurances:
-        if entry["candidate_id"] == candidate_id and entry.get("verdict") not in (None, "abandoned"):
+        if entry["candidate_id"] == candidate_id and entry.get("verdict") in INHERITABLE_VERDICTS:
             match = entry
     return match
+
+
+def _inconclusive_only_settlements(projection: WorkProjection, candidate_id: str) -> bool:
+    """True when `candidate_id` has at least one settled assurance and
+    every one of them is `inconclusive` (STATE-DELIVERY item 11's
+    amendment to items 8/9). Such a re-observation is neither an
+    inheritance (nothing decided) nor an item 9 conflict (the candidate
+    *does* have settled assurance history, it simply decided nothing): the
+    Work enters `ASSURING` afresh with the new attempt's full assurance
+    budget. The `"abandoned"` marker and unsettled (`None`) entries are
+    not settlements and are ignored here, exactly as
+    `_settled_assurance_for_candidate` ignores them."""
+    seen_inconclusive = False
+    for entry in projection.assurances:
+        if entry["candidate_id"] != candidate_id:
+            continue
+        verdict = entry.get("verdict")
+        if verdict == "inconclusive":
+            seen_inconclusive = True
+        elif verdict in INHERITABLE_VERDICTS:
+            return False
+    return seen_inconclusive
 
 
 def _inherit_verdict(
@@ -176,9 +285,11 @@ def _inherit_verdict(
         next_state = STATE_ACCEPTED
     elif verdict == "rejected":
         next_state = STATE_READY if projection.attempt_number < max_attempts else STATE_BLOCKED
-    elif verdict == "inconclusive":
-        next_state = STATE_BLOCKED
     else:
+        # `inconclusive` never reaches here: item 11's amendment to item 8
+        # removes it from `INHERITABLE_VERDICTS`, so
+        # `_settled_assurance_for_candidate` never selects it and the
+        # re-observation takes the fresh-`ASSURING` path instead.
         raise validation_error(f"unknown inherited assurance verdict: {verdict!r}")
     return replace_projection(
         projection,
@@ -193,6 +304,7 @@ def apply_fact(
     fact: Fact,
     *,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    max_assurance_attempts: int = DEFAULT_MAX_ASSURANCE_ATTEMPTS,
 ) -> WorkProjection:
     """Fold one Fact into the prior per-Work projection (or create it, for
     `FACT-WORK-CREATED`). Raises `CoreError` for illegal transitions."""
@@ -362,6 +474,26 @@ def apply_fact(
                 return _inherit_verdict(
                     projection, candidate_id, inherited, max_attempts=max_attempts
                 )
+            if incoming_fp == prior_fp and _inconclusive_only_settlements(projection, candidate_id):
+                # STATE-DELIVERY item 11's amendment to items 8/9
+                # (ADR-0006): an exact re-observation whose only settled
+                # assurances are `inconclusive` is neither an inheritance
+                # (an inconclusive settlement decided nothing) nor an item
+                # 9 conflict (the candidate is not unassured -- it was
+                # assured, inconclusively). It enters ASSURING afresh with
+                # this new Execution's full assurance budget, and the
+                # ordinary DEC-REQUEST-ASSURANCE row follows. The reachable
+                # path is SCN-021's abandon route: assurance 1 inconclusive
+                # -> re-request -> assurance 2 never settles -> operator
+                # `--abandon-work` -> READY -> this Execution re-produces
+                # the identical candidate.
+                return replace_projection(
+                    projection,
+                    state=STATE_ASSURING,
+                    current_candidate_id=candidate_id,
+                    assurance_started_for_current=False,
+                    trigger_facts=(current_entry["settled_fact"], fact.to_dict()),
+                )
             # item 9: neither an exact re-observation with something to
             # inherit, nor a legal fresh observation -- an unresolved
             # candidate-observation conflict (identity collision, INV-006/
@@ -416,8 +548,20 @@ def apply_fact(
                 work_id=projection.work_id,
             )
         assurance_id = fact.field("assurance_id")
+        # INV-021: tag the entry with the Execution current at the moment
+        # this FACT-ASSURE-STARTED was journaled, so `assurance_number`
+        # (the per-execution-attempt assurance index) is reconstructable
+        # from the projection alone -- exactly equivalent to counting the
+        # FACT-ASSURE-STARTED records that follow the current
+        # FACT-EXEC-STARTED in journal order. Portable JSON scalar, like
+        # every other projection field (CLAUDE.md #10).
         assurances = projection.assurances + (
-            {"assurance_id": assurance_id, "candidate_id": candidate_id, "verdict": None},
+            {
+                "assurance_id": assurance_id,
+                "candidate_id": candidate_id,
+                "execution_id": projection.current_execution_id,
+                "verdict": None,
+            },
         )
         return replace_projection(
             projection,
@@ -462,7 +606,26 @@ def apply_fact(
             else:
                 next_state = STATE_BLOCKED
         elif verdict == "inconclusive":
-            # INV-009: inconclusive MUST NOT satisfy acceptance.
+            # INV-009: inconclusive MUST NOT satisfy acceptance. INV-021/
+            # STATE-DELIVERY item 11 (ADR-0006): the *budget*, not the
+            # word, decides whether the Work continues. Within budget the
+            # Work stays at ASSURING with no assurance in flight, so
+            # policy's ordinary ASSURING row fires DEC-REQUEST-ASSURANCE
+            # again for the SAME candidate, citing this settlement as
+            # basis (INV-012); the re-request journals no
+            # FACT-EXEC-STARTED, so `attempt_number` and the execution
+            # retry budget (INV-018/INV-019) are untouched.
+            assurance_number = assurance_number_for_execution(
+                assurances, projection.current_execution_id
+            )
+            if assurance_number < max_assurance_attempts:
+                return replace_projection(
+                    projection,
+                    state=STATE_ASSURING,
+                    assurances=assurances,
+                    assurance_started_for_current=False,
+                    trigger_facts=(fact.to_dict(),),
+                )
             next_state = STATE_BLOCKED
         else:
             raise validation_error(f"unknown assurance verdict: {verdict!r}")
@@ -562,6 +725,7 @@ def reduce(
     *,
     delivery_run_id: str,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    max_assurance_attempts: int = DEFAULT_MAX_ASSURANCE_ATTEMPTS,
 ) -> DeliveryProjection:
     """Fold an ordered Fact sequence for one DeliveryRun into a projection."""
 
@@ -581,6 +745,11 @@ def reduce(
 
         work_id = fact.field("work_id")
         prior = works.get(work_id)
-        works[work_id] = apply_fact(prior, fact, max_attempts=max_attempts)
+        works[work_id] = apply_fact(
+            prior,
+            fact,
+            max_attempts=max_attempts,
+            max_assurance_attempts=max_assurance_attempts,
+        )
 
     return DeliveryProjection(delivery_run_id=delivery_run_id, intent_id=intent_id, works=works)

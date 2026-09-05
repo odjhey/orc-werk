@@ -179,7 +179,9 @@ but never writes run state or creates the journal directory.
 
 ```text
 usage: orc dispatch [-h] [--config CONFIG] [--journal JOURNAL]
-                     [--max-attempts MAX_ATTEMPTS] [--run-id RUN_ID]
+                     [--max-attempts MAX_ATTEMPTS]
+                     [--max-assurance-attempts MAX_ASSURANCE_ATTEMPTS]
+                     [--run-id RUN_ID]
                      [--abandon-work WORK_ID] [--abandon-reason TEXT]
                      [--abandon-by WHO] [--wait] [--timeout SECONDS]
                      [--poll-interval SECONDS]
@@ -195,6 +197,7 @@ Dispatch an intent and run the delivery state machine to a resting point
 | `--config` | repo profile/persisted config, then empty scripted config | path to a portable JSON dispatch-config overlay; see "Config schema" below. Deep-merges over lower-precedence config |
 | `--journal` | `$ORC_JOURNAL_DIR` or `./.orc` | journal directory |
 | `--max-attempts` | policy default `3` | overrides the run's retry budget |
+| `--max-assurance-attempts` | policy default `2` | overrides the run's assurance budget (`INV-021`/`ADR-0006`): how many assurances one candidate may receive within one execution attempt before an `inconclusive` verdict blocks the Work. Fixed at run creation exactly like `--max-attempts`; a differing value on resume is refused with `ERR-VALIDATION` |
 | `--run-id` | derived deterministically from the intent text | explicit `delivery_run_id` |
 | `--wait` | off | block, re-dispatching internally, until the run's resting point moves or goes terminal (`SCN-017`, issue #210); see "`orc dispatch --wait`" below |
 | `--timeout` | none (wait indefinitely) | with `--wait`: give up after this many seconds of an unchanged pending fingerprint and exit `4`; requires `--wait` |
@@ -203,6 +206,7 @@ Dispatch an intent and run the delivery state machine to a resting point
 ```bash
 orc dispatch "ship the widget" --config cfg.json
 orc dispatch "ship the widget" --config cfg.json --journal ./.orc --max-attempts 3
+orc dispatch "ship the widget" --config cfg.json --max-assurance-attempts 1
 ```
 
 **Pending/incremental mode is the default.** A config with no recorded
@@ -537,7 +541,8 @@ orc --state active
 ### `orc record`
 
 ```text
-usage: orc record [-h] --work WORK_ID [--verdict {accepted,rejected}]
+usage: orc record [-h] --work WORK_ID
+                  [--verdict {accepted,rejected,inconclusive}]
                   [--outcome {completed,failed}] [--evidence-ref REF]
                   [--finding TEXT] [--derived-identity JSON] [--model M]
                   [--session-ref S] [--seat-ref S] [--journal DIR]
@@ -549,8 +554,17 @@ run's persisted `config.json`; it never dispatches or advances the run.
 Exactly one of `--verdict`/`--outcome` is required per invocation
 (`ERR-VALIDATION` otherwise — one seat, one recording):
 
-- **`--verdict accepted|rejected`** (issue #192, the verify seat) records the
-  current requested assurance verdict. Repeated evidence and finding flags
+- **`--verdict accepted|rejected|inconclusive`** (issue #192, the verify seat;
+  `inconclusive` added by `ADR-0006`) records the current requested assurance
+  verdict. `inconclusive` is the honest verdict when you evaluated the
+  candidate and genuinely cannot decide, or could not evaluate it at all: it
+  spends the run's assurance budget (`max_assurance_attempts`, `INV-021`) and
+  never the ship seat's retry budget. Within budget, the next dispatch
+  re-requests assurance of the *same* candidate under a new assurance
+  identity; exhausted, the Work blocks with `reason: assurance-inconclusive`.
+  The verdict is written into the slot for the run's CURRENT assurance number
+  (`assurance` for number 1, the attempt entry's `assurances[n-1]` beyond
+  that), and the recording line names which slot it filled. Repeated evidence and finding flags
   become `evidence_refs` and `review-findings/v1`; model/session/seat flags
   become an `executor-identity/v1` payload with `role: verify`;
   `--derived-identity` must parse as a JSON object and is checked by the
@@ -575,7 +589,8 @@ Exactly one of `--verdict`/`--outcome` is required per invocation
 Either mode refuses an unknown run/Work (`ERR-NOT-FOUND`), a Work not
 currently awaiting that seat's input (`assurance-verdict` for `--verdict`,
 `execution-outcome` for `--outcome`), or an attempt that already carries the
-recording (`ERR-CONFLICT`), and prints proof of the recording plus the exact
+recording for that slot (`ERR-CONFLICT` — per assurance number for
+`--verdict`), and prints proof of the recording plus the exact
 `orc dispatch --run-id ... --journal ...` command as its `next:` affordance.
 Hand editing remains a legal equivalent recording path under
 `PLAYBOOK-AGENT-CLI`; this command adds validation, not new journal semantics.

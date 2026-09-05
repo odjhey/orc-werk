@@ -12,6 +12,46 @@ carrying the entry as its notes — so consumers pinning by tag or watching
 releases see what changed without reading the git log. `orc version` reports
 the running version; finding reports should include it.
 
+## [Unreleased]
+
+No breaking changes. No migration: every journal written before this release
+folds under an assurance budget of `1`, which reproduces its previous
+behavior exactly, and assurance 1's `FX-START-ASSURANCE` idempotency key is
+unchanged.
+
+### Added
+- **Bounded assurance re-request on `inconclusive`** (`ADR-0006`, #264):
+  an `inconclusive` assurance settlement no longer ends the Work outright.
+  It now spends a second, separate budget — `max_assurance_attempts`
+  (`INV-021`, default `2`, journaled at run creation and single-authority
+  thereafter like `max_attempts`). Within budget the kernel re-requests
+  assurance of the *same* candidate under a new assurance identity; only
+  exhausting the budget resolves to `BLOCKED` with the unchanged reason
+  `assurance-inconclusive`. An assurance re-request never consumes the ship
+  seat's retry budget (`INV-018`): a verifier that cannot decide costs
+  assurance budget, never execution attempts.
+- **`orc record --verdict inconclusive`** — the verify seat's honest verdict
+  when it evaluated the candidate and cannot decide, or could not evaluate
+  it at all. The verdict fills the slot for the run's current assurance
+  number.
+- **`--max-assurance-attempts` flag and `max_assurance_attempts` config key**
+  — layered exactly like `--max-attempts`/`max_attempts`, persisted at
+  creation, and match-or-refuse on resume (`ERR-VALIDATION` naming both the
+  journaled and the requested value).
+- **Attempt-entry `assurances` array** — the ordered sibling of `assurance`,
+  consumed in order by `assurance_number` (element `0` *is* `assurance`;
+  supplying both is `ERR-VALIDATION`). `orc record` writes and, when needed,
+  migrates into it, so an incremental run never hand-authors it.
+- `orc status`, `show`, `report`, `verdict`, and the `next:` affordances now
+  name the assurance index and render every assurance of an attempt, so a
+  re-request reads as a re-request rather than as a lost verdict.
+
+### Changed
+- `FX-START-ASSURANCE`'s `INV-020` key gains an `assurance_number` component
+  for the second and later assurances of a candidate (`…|<fingerprint>|2`).
+  The first assurance keeps the pre-decision key form verbatim.
+- `orc validate`'s per-attempt assurance echo now names the assurance number.
+
 ## [0.9.0] — 2026-09-04
 
 No breaking changes. No migration.

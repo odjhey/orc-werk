@@ -584,7 +584,17 @@ def _render_verdicts_table(history: Sequence[Mapping[str, Any]], work_id: str, w
     if not wp.assurances:
         return ""
     rows = []
+    # INV-021/ADR-0006: an attempt may carry several assurances of one
+    # candidate (bounded re-request on `inconclusive`). Number them per
+    # Execution, from the `execution_id` the reducer tags each entry with,
+    # so a re-request reads as a re-request rather than as two unrelated
+    # rows. Entries from a projection folded before that tagging existed
+    # simply carry no `execution_id` and are numbered within that group.
+    numbers: dict[str, int] = {}
     for assurance in wp.assurances:
+        execution_id = str(assurance.get("execution_id"))
+        numbers[execution_id] = numbers.get(execution_id, 0) + 1
+        assurance_number = numbers[execution_id]
         verdict = assurance.get("verdict")
         evidence_refs = _verdict_evidence_refs(history, work_id, assurance.get("assurance_id"))
         evidence_text = _esc_json(evidence_refs) if evidence_refs else "-"
@@ -594,6 +604,7 @@ def _render_verdicts_table(history: Sequence[Mapping[str, Any]], work_id: str, w
             verdict_cell = '<span class="muted">pending</span>'
         rows.append(
             "<tr>"
+            f"<td>{assurance_number}</td>"
             f'<td><code>{html.escape(str(assurance.get("assurance_id", "")))}</code></td>'
             f'<td><code>{html.escape(str(assurance.get("candidate_id", "")))}</code></td>'
             f"<td>{verdict_cell}</td>"
@@ -603,7 +614,7 @@ def _render_verdicts_table(history: Sequence[Mapping[str, Any]], work_id: str, w
     return (
         "<h3>Assurance verdicts</h3>"
         '<div class="scroll"><table class="data-table"><thead><tr>'
-        "<th>assurance_id</th><th>candidate_id</th><th>verdict</th><th>evidence_refs</th>"
+        "<th>#</th><th>assurance_id</th><th>candidate_id</th><th>verdict</th><th>evidence_refs</th>"
         "</tr></thead><tbody>" + "\n".join(rows) + "</tbody></table></div>"
     )
 

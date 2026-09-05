@@ -173,7 +173,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from orc_werk.adapters.journal_support import build_effect_envelope, effective_max_attempts
+from orc_werk.adapters.journal_support import (
+    build_effect_envelope,
+    effective_max_assurance_attempts,
+    effective_max_attempts,
+)
 from orc_werk.adapters.jsonl import layout, tailsafe
 from orc_werk.adapters.locking import DEFAULT_TIMEOUT_S, RunLock
 from orc_werk.core.decisions import Decision
@@ -342,7 +346,15 @@ class JSONLJournal(JournalPort):
         # (PORT-JOURNAL-005, CONF-JOURNAL-003) -- see
         # orc_werk.adapters.journal_support.effective_max_attempts.
         max_attempts = effective_max_attempts(history)
-        return reduce(facts, delivery_run_id=delivery_run_id, max_attempts=max_attempts)
+        # INV-021/ADR-0006: the same single-authority fold for the
+        # assurance budget -- absent from a legacy journal means `1`.
+        max_assurance_attempts = effective_max_assurance_attempts(history)
+        return reduce(
+            facts,
+            delivery_run_id=delivery_run_id,
+            max_attempts=max_attempts,
+            max_assurance_attempts=max_assurance_attempts,
+        )
 
 
 __all__ = ["JSONLJournal"]

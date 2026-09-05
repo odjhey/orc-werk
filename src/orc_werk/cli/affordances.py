@@ -48,8 +48,12 @@ from typing import Any, Mapping, Optional, Sequence
 
 from orc_werk.adapters.jsonl import layout
 from orc_werk.app.orchestrator import has_candidate_conflict, is_pending
-from orc_werk.cli.journal_reading import BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED, _awaiting_label
-from orc_werk.core.decisions import DEC_BLOCK
+from orc_werk.cli.journal_reading import (
+    BLOCKED_REASON_ASSURANCE_INCONCLUSIVE,
+    BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED,
+    _awaiting_label,
+)
+from orc_werk.core.decisions import DEC_BLOCK, DEC_REQUEST_ASSURANCE
 from orc_werk.core.reducer import abandon_legality
 from orc_werk.core.state import (
     STATE_ACCEPTED,
@@ -136,6 +140,58 @@ def _block_budget(history: Sequence[Mapping[str, Any]], work_id: str) -> Optiona
             continue
         result = (data.get("attempt_number"), data.get("max_attempts"))
     return result
+
+
+def _block_assurance_budget(
+    history: Sequence[Mapping[str, Any]], work_id: str
+) -> Optional[tuple[Any, Any]]:
+    """`(assurance_number, max_assurance_attempts)` from this Work's most
+    recent `DEC-BLOCK` (`INV-021`, `core/policy.py`'s `state_basis`), or
+    `None` for a Work that never blocked or whose block predates
+    `ADR-0006` (the fields are simply absent there -- read defensively,
+    never invented)."""
+    result: Optional[tuple[Any, Any]] = None
+    for record in history:
+        if record.get("kind") != "decision" or record.get("id") != DEC_BLOCK:
+            continue
+        data = record.get("data", {})
+        if data.get("work_id") != work_id:
+            continue
+        if "max_assurance_attempts" not in data:
+            result = None
+            continue
+        result = (data.get("assurance_number"), data.get("max_assurance_attempts"))
+    return result
+
+
+def _assurance_index_suffix(wp: WorkProjection, history: Sequence[Mapping[str, Any]]) -> str:
+    """`SCN-021` item 7: name which assurance of the current attempt the
+    verify seat is being asked for, so a re-request (`INV-021`) is visible
+    as a re-request rather than looking like the first ask. Empty string
+    when no assurance has started for the current Execution."""
+    number = wp.assurance_number()
+    if number < 1:
+        return ""
+    budget = _requested_assurance_budget(history, wp.work_id)
+    if isinstance(budget, int):
+        return f" (assurance {number} of {budget})"
+    return f" (assurance {number})"
+
+
+def _requested_assurance_budget(history: Sequence[Mapping[str, Any]], work_id: str) -> Optional[Any]:
+    """The `max_assurance_attempts` this Work's most recent
+    `DEC-REQUEST-ASSURANCE` recorded (`INV-021`). `None` for a run whose
+    decisions predate `ADR-0006` -- the field is absent there, and an
+    absent budget is rendered as an absent budget, never a guessed one."""
+    budget: Optional[Any] = None
+    for record in history:
+        if record.get("kind") != "decision" or record.get("id") != DEC_REQUEST_ASSURANCE:
+            continue
+        data = record.get("data", {})
+        if data.get("work_id") != work_id:
+            continue
+        budget = data.get("max_assurance_attempts")
+    return budget
 
 
 def _identified_candidate_subject_identity(
@@ -303,8 +359,12 @@ def render_next_block(
             lines.append(f"  - record the execution outcome for work(s): {ids_text}")
             needs_redispatch = True
         elif key == "pending-assurance":
+            index_text = ", ".join(
+                f"{work_id}{_assurance_index_suffix(projection.works[work_id], history)}".strip()
+                for work_id in work_ids
+            )
             lines.append(
-                f"  - record the assurance verdict for work(s): {ids_text} -- needs a "
+                f"  - record the assurance verdict for work(s): {index_text} -- needs a "
                 "different agent than the one that recorded the settlement "
                 "(canonical playbook discipline: PLAYBOOK-AGENT-CLI)"
             )
@@ -346,11 +406,24 @@ def render_next_block(
                     budget_note = " (retry budget exhausted -- no attempts remain)"
                 elif budget is not None and isinstance(budget[0], int) and isinstance(budget[1], int):
                     remaining = max(0, budget[1] - budget[0])
-                    budget_note = (
-                        f" ({remaining} of {budget[1]} attempts technically unused, but "
-                        "STATE-DELIVERY routes an inconclusive verdict straight to BLOCKED -- "
-                        "no automatic retry)"
-                    )
+                    assurance_budget = _block_assurance_budget(history, work_id)
+                    if (
+                        reason == BLOCKED_REASON_ASSURANCE_INCONCLUSIVE
+                        and assurance_budget is not None
+                        and isinstance(assurance_budget[1], int)
+                    ):
+                        budget_note = (
+                            f" (assurance budget exhausted: {assurance_budget[1]} of "
+                            f"{assurance_budget[1]} assurances of this candidate settled "
+                            "inconclusive -- INV-021; the execution retry budget was never "
+                            f"consumed, {remaining} of {budget[1]} attempts remain unused)"
+                        )
+                    else:
+                        budget_note = (
+                            f" ({remaining} of {budget[1]} attempts technically unused -- an "
+                            "inconclusive verdict spends the assurance budget (INV-021), never "
+                            "the execution retry budget, so no automatic retry follows)"
+                        )
                 lines.append(
                     f"  - work {work_id} is BLOCKED (blocked_reason={reason}){budget_note}: "
                     f"see orc history {run_id} for the root cause"
@@ -456,10 +529,14 @@ def next_entries(
             entries.append(NextEntry(description=f"record the execution outcome for work(s): {ids_text}"))
             needs_redispatch = True
         elif key == "pending-assurance":
+            index_text = ", ".join(
+                f"{work_id}{_assurance_index_suffix(projection.works[work_id], history)}".strip()
+                for work_id in work_ids
+            )
             entries.append(
                 NextEntry(
                     description=(
-                        f"record the assurance verdict for work(s): {ids_text} -- needs a "
+                        f"record the assurance verdict for work(s): {index_text} -- needs a "
                         "different agent than the one that recorded the settlement "
                         "(canonical playbook discipline: PLAYBOOK-AGENT-CLI)"
                     )
@@ -495,11 +572,24 @@ def next_entries(
                     budget_note = " (retry budget exhausted -- no attempts remain)"
                 elif budget is not None and isinstance(budget[0], int) and isinstance(budget[1], int):
                     remaining = max(0, budget[1] - budget[0])
-                    budget_note = (
-                        f" ({remaining} of {budget[1]} attempts technically unused, but "
-                        "STATE-DELIVERY routes an inconclusive verdict straight to BLOCKED -- "
-                        "no automatic retry)"
-                    )
+                    assurance_budget = _block_assurance_budget(history, work_id)
+                    if (
+                        reason == BLOCKED_REASON_ASSURANCE_INCONCLUSIVE
+                        and assurance_budget is not None
+                        and isinstance(assurance_budget[1], int)
+                    ):
+                        budget_note = (
+                            f" (assurance budget exhausted: {assurance_budget[1]} of "
+                            f"{assurance_budget[1]} assurances of this candidate settled "
+                            "inconclusive -- INV-021; the execution retry budget was never "
+                            f"consumed, {remaining} of {budget[1]} attempts remain unused)"
+                        )
+                    else:
+                        budget_note = (
+                            f" ({remaining} of {budget[1]} attempts technically unused -- an "
+                            "inconclusive verdict spends the assurance budget (INV-021), never "
+                            "the execution retry budget, so no automatic retry follows)"
+                        )
                 entries.append(
                     NextEntry(
                         description=f"work {work_id} is BLOCKED (blocked_reason={reason}){budget_note}",

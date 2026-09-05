@@ -133,6 +133,19 @@ def _first(records: Sequence[Mapping[str, Any]], kind: str, record_id: str) -> O
     return None
 
 
+def _all(records: Sequence[Mapping[str, Any]], kind: str, record_id: str) -> list[Mapping[str, Any]]:
+    """Every matching record in this attempt slice, in journal order.
+
+    `INV-021`/`ADR-0006`: one execution attempt may now carry several
+    assurance lifecycles (a bounded re-request after an `inconclusive`
+    settlement), so the JUDGED section reads ALL of them rather than
+    `_first` -- otherwise a re-requested attempt would render its earliest,
+    superseded verdict as if it were the outcome."""
+    return [
+        record for record in records if record.get("kind") == kind and record.get("id") == record_id
+    ]
+
+
 def _work_ids_in_order(history: Sequence[Mapping[str, Any]]) -> list[str]:
     """Every `work_id` this run ever created, in the order `FACT-WORK-
     CREATED` journaled them (plan-declaration order, `FX-CREATE-WORK`)."""
@@ -370,18 +383,38 @@ def _render_judged(
             "-- STATE-DELIVERY item 9 (DEC-ABANDON-ATTEMPT/FACT-ATTEMPT-ABANDONED)"
         ]
 
-    settled = _first(records, "fact", FACT_ASSURE_SETTLED)
-    if settled is not None:
-        data = settled.get("data", {})
-        lines = [f"  JUDGED: assurance={data.get('assurance_id', '-')} verdict={data.get('verdict', '-')}"]
-        evidence_refs = data.get("evidence_refs")
-        if evidence_refs:
-            lines.append(f"    evidence_refs: {evidence_refs}")
-        findings_payload = (settled.get("extensions") or {}).get("review-findings/v1")
-        if isinstance(findings_payload, Mapping):
-            findings = findings_payload.get("findings")
-            if isinstance(findings, list) and findings:
-                lines.extend(_render_findings(findings, run_id=run_id))
+    settlements = _all(records, "fact", FACT_ASSURE_SETTLED)
+    if settlements:
+        # INV-021: render every assurance of this attempt, oldest first,
+        # each labelled with its per-attempt assurance number -- an earlier
+        # `inconclusive` and the settlement that superseded it are both
+        # history for this candidate and are never overwritten or
+        # relabelled (P-008, STATE-DELIVERY item 11).
+        lines: list[str] = []
+        total = len(settlements)
+        started = _all(records, "fact", FACT_ASSURE_STARTED)
+        pending_tail = len(started) > total
+        for number, settled in enumerate(settlements, start=1):
+            data = settled.get("data", {})
+            index_text = f" [assurance {number} of {total}]" if total > 1 else ""
+            lines.append(
+                f"  JUDGED: assurance={data.get('assurance_id', '-')} "
+                f"verdict={data.get('verdict', '-')}{index_text}"
+            )
+            evidence_refs = data.get("evidence_refs")
+            if evidence_refs:
+                lines.append(f"    evidence_refs: {evidence_refs}")
+            findings_payload = (settled.get("extensions") or {}).get("review-findings/v1")
+            if isinstance(findings_payload, Mapping):
+                findings = findings_payload.get("findings")
+                if isinstance(findings, list) and findings:
+                    lines.extend(_render_findings(findings, run_id=run_id))
+        if pending_tail:
+            in_flight = started[-1].get("data", {}).get("assurance_id", "-")
+            lines.append(
+                f"  JUDGED: (assurance {len(started)} re-requested -- {in_flight} in flight, "
+                "verdict not yet recorded; INV-021 bounded re-request on inconclusive)"
+            )
         return lines
 
     if inherited_from is not None:
@@ -426,8 +459,11 @@ def _render_next_deeper(records: Sequence[Mapping[str, Any]]) -> list[str]:
     settled_slice = [settled] if settled is not None else []
     rows.extend(_execution_session_rows(settled_slice))
     rows.extend(_artifact_ref_rows(settled_slice))
-    assure_settled = _first(records, "fact", FACT_ASSURE_SETTLED)
-    assure_settled_slice = [assure_settled] if assure_settled is not None else []
+    # INV-021: every assurance of this attempt contributes its own evidence
+    # rows -- an earlier `inconclusive` settlement's evidence (the verifier
+    # log naming why it could not decide) is exactly the evidence a reader
+    # is looking for, and dropping it would lose the point of ADR-0006.
+    assure_settled_slice = _all(records, "fact", FACT_ASSURE_SETTLED)
     rows.extend(_evidence_ref_rows(assure_settled_slice))
     identify_effect = _first(records, "effect", FX_IDENTIFY_CANDIDATE)
     rows.extend(_candidate_rows([identify_effect] if identify_effect is not None else []))

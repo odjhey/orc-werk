@@ -48,9 +48,9 @@ Executable specification for `ADR-0006`: `STATE-DELIVERY`'s two `inconclusive` r
 11. `load_projection` folds that run under an assurance budget of `1` (the read-fallback `INV-021` names), so the recorded `FACT-WORK-BLOCKED` replays as a legal continuation of `BLOCKED` — not `ERR-CONFLICT` from a wrongly derived `ASSURING` (`CONF-JOURNAL-003`, `SCN-008`'s legacy-fallback shape).
 12. A journal written *after* `ADR-0006` records `data.max_assurance_attempts` at creation; an explicit config/flag value on a later dispatch that disagrees with it is refused with `ERR-VALIDATION` exactly as `SCN-008`'s issue #240 R2 refuses a disagreeing `max_attempts`.
 
-## Given (re-observed candidate with inconclusive-only history — defensive)
+## Given (re-observed candidate with inconclusive-only history)
 
-- Work B's lineage contains Candidate C2 whose only settled assurances are `inconclusive`, and a later Execution re-observes C2 exactly (same `candidate_id` and fingerprint). Under v0 policy this shape is reachable only by a hand-constructed or corrective journal, since budget exhaustion is terminal.
+- Work B's lineage contains Candidate C2 whose only settled assurances are `inconclusive`, and a later Execution re-observes C2 exactly (same `candidate_id` and fingerprint). The ordinary v0 path that reaches this shape is the abandon route: assurance 1 of C2 settles `inconclusive`, the budget re-requests assurance 2, that assurance never settles, the operator records `DEC-ABANDON-ATTEMPT` (`STATE-DELIVERY` item 9 — legal at `ASSURING` with the current assurance unsettled), the Work returns to `READY`, and the next Execution re-produces C2 unchanged. The abandoned assurance is not a settlement, so C2's only settled assurance is the `inconclusive` one.
 
 ## Then (re-observed candidate with inconclusive-only history)
 

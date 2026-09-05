@@ -13,7 +13,13 @@ import unittest
 from orc_werk.core.decisions import DEC_ACCEPT, DEC_BLOCK, DEC_DISPATCH, DEC_REQUEST_ASSURANCE, DEC_RETRY
 from orc_werk.core.effects import FX_BLOCK_WORK, FX_COMPLETE_WORK, FX_START_ASSURANCE, FX_START_EXECUTION
 from orc_werk.core.errors import CoreError
-from orc_werk.core.facts import FACT_EXEC_STARTED, FACT_WORK_CANCELLED, FACT_WORK_CLAIMED, make_fact
+from orc_werk.core.facts import (
+    FACT_ASSURE_STARTED,
+    FACT_EXEC_STARTED,
+    FACT_WORK_CANCELLED,
+    FACT_WORK_CLAIMED,
+    make_fact,
+)
 from orc_werk.core.policy import decide
 from orc_werk.core.reducer import apply_fact, reduce
 from orc_werk.core.state import (
@@ -189,9 +195,19 @@ class AssuringRejectedTest(unittest.TestCase):
 
 
 class AssuringInconclusiveTest(unittest.TestCase):
-    """ASSURING | settled(inconclusive) | DEC-BLOCK | BLOCKED | FX-BLOCK-WORK (no budget check)."""
+    """ASSURING | settled(inconclusive), assurance budget exhausted |
+    DEC-BLOCK | BLOCKED | FX-BLOCK-WORK -- and the RETRY budget is never
+    what decides it (STATE-DELIVERY's two `inconclusive` rows, INV-021).
 
-    def test_block_regardless_of_budget(self) -> None:
+    Restated for `ADR-0006` (issue #264): this test previously asserted
+    that an `inconclusive` settlement blocks unconditionally. It still
+    blocks under the same retry-budget-irrelevance the original test
+    named -- what changed is that the ASSURANCE budget now decides when.
+    Both budget positions are covered: `max_assurance_attempts=1` (the
+    pre-ADR-0006 budget, and the read-fallback every legacy journal folds
+    under) and the default `2` after a second inconclusive settlement."""
+
+    def _inconclusive_facts(self, *, second: bool = False) -> list:
         facts = fixtures.assuring(
             delivery_run_id=DRID,
             work_id="w1",
@@ -205,16 +221,56 @@ class AssuringInconclusiveTest(unittest.TestCase):
                 delivery_run_id=DRID, work_id="w1", assurance_id="a1", fingerprint="fp1", verdict="inconclusive"
             )
         )
-        # plenty of budget left -- inconclusive still blocks per STATE-DELIVERY.
-        proj = reduce(facts, delivery_run_id=DRID, max_attempts=10)
-        wp = proj.works["w1"]
-        self.assertEqual(wp.state, STATE_BLOCKED)
+        if second:
+            facts.append(
+                make_fact(
+                    FACT_ASSURE_STARTED,
+                    delivery_run_id=DRID,
+                    work_id="w1",
+                    assurance_id="a2",
+                    candidate_id="c1",
+                )
+            )
+            facts.append(
+                fixtures.assure_settled(
+                    delivery_run_id=DRID,
+                    work_id="w1",
+                    assurance_id="a2",
+                    fingerprint="fp1",
+                    verdict="inconclusive",
+                )
+            )
+        return facts
 
+    def _assert_blocks(self, wp) -> None:
+        self.assertEqual(wp.state, STATE_BLOCKED)
         outcome = decide(wp, max_attempts=10)
         assert outcome is not None
         self.assertEqual(outcome.decision.id, DEC_BLOCK)
         self.assertEqual([e.id for e in outcome.effects], [FX_BLOCK_WORK])
         self.assertEqual(outcome.decision.data["reason"], "assurance-inconclusive")
+
+    def test_block_regardless_of_retry_budget_under_assurance_budget_1(self) -> None:
+        # plenty of RETRY budget left -- an inconclusive verdict never
+        # consumes it, and with the assurance budget at 1 (pre-ADR-0006
+        # behavior, and every legacy journal's read-fallback) the very
+        # first inconclusive settlement blocks.
+        proj = reduce(
+            self._inconclusive_facts(),
+            delivery_run_id=DRID,
+            max_attempts=10,
+            max_assurance_attempts=1,
+        )
+        self._assert_blocks(proj.works["w1"])
+
+    def test_block_regardless_of_retry_budget_after_second_inconclusive(self) -> None:
+        # Same row, reached under the default assurance budget of 2 after
+        # the bounded re-request also settled inconclusive. attempt_number
+        # is still 1: no FACT-EXEC-STARTED was journaled (INV-018/INV-021).
+        proj = reduce(self._inconclusive_facts(second=True), delivery_run_id=DRID, max_attempts=10)
+        wp = proj.works["w1"]
+        self.assertEqual(wp.attempt_number, 1)
+        self._assert_blocks(wp)
 
 
 class ReservedUnreachableTest(unittest.TestCase):
