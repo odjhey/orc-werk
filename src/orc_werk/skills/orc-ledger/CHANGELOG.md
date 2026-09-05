@@ -1,5 +1,11 @@
 # orc-ledger skill changelog
 
+## v5 -- 2026-09-05
+
+- Teach `orc record --verdict inconclusive` (`ADR-0006`, #264): the honest verify-seat verdict when you cannot decide or could not evaluate. It spends the run's assurance budget (`max_assurance_attempts`, `INV-021`), never the ship seat's retry budget -- within budget the kernel re-requests assurance of the same candidate, exhausted the Work blocks with `reason: assurance-inconclusive`.
+
+content-sha256: 68509c3d11a09cfb6e40214820e55b354aa5ec06958a1538ea2852726c8a473c
+
 ## v4 -- 2026-09-02
 
 - Teach `orc record --outcome completed|failed` (#223) as the ship-seat recording sugar, parallel to the existing `--verdict` verify-seat sentence: validates, appends the attempt entry atomically (merge-only), auto-emits `executor-identity/v1` with the seat's role, prints the resume command without running it.

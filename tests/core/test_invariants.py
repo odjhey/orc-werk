@@ -9,7 +9,7 @@ from orc_werk.core.facts import FACT_EXEC_SETTLED, FACT_EXEC_STARTED, make_fact
 from orc_werk.core.idempotency import idempotency_key
 from orc_werk.core.policy import decide
 from orc_werk.core.reducer import reduce
-from orc_werk.core.state import STATE_ACCEPTED, STATE_ASSURING, STATE_EXECUTING
+from orc_werk.core.state import STATE_ACCEPTED, STATE_ASSURING, STATE_BLOCKED, STATE_EXECUTING
 
 from tests.core import fixtures
 
@@ -67,7 +67,7 @@ class Inv004RetryCreatesNewExecutionIdentityTest(unittest.TestCase):
 class Inv009RejectedInconclusiveNotAcceptanceTest(unittest.TestCase):
     """INV-009: rejected and inconclusive MUST NOT satisfy acceptance."""
 
-    def _settle(self, verdict: str, *, max_attempts: int = 10):
+    def _settle(self, verdict: str, *, max_attempts: int = 10, max_assurance_attempts: int = 1):
         facts = fixtures.assuring(
             delivery_run_id=DRID,
             work_id="w1",
@@ -81,15 +81,28 @@ class Inv009RejectedInconclusiveNotAcceptanceTest(unittest.TestCase):
                 delivery_run_id=DRID, work_id="w1", assurance_id="a1", fingerprint="fp1", verdict=verdict
             )
         )
-        return reduce(facts, delivery_run_id=DRID, max_attempts=max_attempts).works["w1"]
+        return reduce(
+            facts,
+            delivery_run_id=DRID,
+            max_attempts=max_attempts,
+            max_assurance_attempts=max_assurance_attempts,
+        ).works["w1"]
 
     def test_rejected_does_not_accept(self) -> None:
         wp = self._settle("rejected")
         self.assertNotEqual(wp.state, STATE_ACCEPTED)
 
     def test_inconclusive_does_not_accept(self) -> None:
-        wp = self._settle("inconclusive")
-        self.assertNotEqual(wp.state, STATE_ACCEPTED)
+        # INV-009 holds at BOTH assurance-budget positions (ADR-0006):
+        # exhausted, the Work blocks; within budget, it rests at ASSURING
+        # for a bounded re-request. Neither is ACCEPTED -- an inconclusive
+        # settlement can never satisfy acceptance.
+        exhausted = self._settle("inconclusive", max_assurance_attempts=1)
+        self.assertNotEqual(exhausted.state, STATE_ACCEPTED)
+        self.assertEqual(exhausted.state, STATE_BLOCKED)
+        within_budget = self._settle("inconclusive", max_assurance_attempts=2)
+        self.assertNotEqual(within_budget.state, STATE_ACCEPTED)
+        self.assertEqual(within_budget.state, STATE_ASSURING)
 
 
 class Inv011Inv012AttributableDecisionsCiteBasisTest(unittest.TestCase):

@@ -8,7 +8,9 @@ must nonetheless be identical across every `JournalPort` implementation for
 `CONF-JOURNAL-*` to hold: how a settled effect's dispatch result gets
 merged into the persisted envelope (`build_effect_envelope`), and how
 `load_projection` recovers the run's own effective retry budget from
-history before folding it (`effective_max_attempts`, issue #52).
+history before folding it (`effective_max_attempts`, issue #52) and its
+own effective assurance budget (`effective_max_assurance_attempts`,
+`INV-021`/`ADR-0006`).
 
 Issue #240 (single-authority ruling): `effective_max_attempts` is now a
 thin re-export of `orc_werk.core.reducer.journaled_max_attempts` -- the
@@ -39,7 +41,7 @@ from typing import Any, Mapping
 from orc_werk.core.effects import Effect
 from orc_werk.core.errors import validation_error
 from orc_werk.core.portable import to_portable
-from orc_werk.core.reducer import journaled_max_attempts
+from orc_werk.core.reducer import journaled_max_assurance_attempts, journaled_max_attempts
 from orc_werk.core.serialization import effect_to_envelope
 
 DISPATCH_RESULT_KEY = "dispatch_result"
@@ -77,6 +79,14 @@ def build_effect_envelope(
 # there is exactly one place this arithmetic can drift.
 effective_max_attempts = journaled_max_attempts
 
+# `INV-021`/`ADR-0006` sibling of `effective_max_attempts`, on the identical
+# single-authority terms: `load_projection` folds a run under the assurance
+# budget the run itself recorded (`FX-CREATE-WORK.data.max_assurance_
+# attempts`), falling back to `1` -- pre-`ADR-0006` behavior -- for a
+# journal that predates the field, so no existing journal changes meaning
+# on replay (`CONF-JOURNAL-003`, `SCN-021` item 11).
+effective_max_assurance_attempts = journaled_max_assurance_attempts
+
 
 def deep_copy_portable(value: Any) -> Any:
     """Defensive copy so a record returned from `append_*`/`history()`
@@ -92,5 +102,6 @@ __all__ = [
     "DISPATCH_RESULT_KEY",
     "build_effect_envelope",
     "deep_copy_portable",
+    "effective_max_assurance_attempts",
     "effective_max_attempts",
 ]

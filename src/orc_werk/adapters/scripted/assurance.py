@@ -17,7 +17,7 @@ caller tries to.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence, Union
 
 from orc_werk.core.errors import not_found_error, validation_error
 from orc_werk.core.facts import ASSURANCE_VERDICTS
@@ -32,6 +32,32 @@ from orc_werk.ports.capabilities import (
 )
 
 _DEFAULT_CAPABILITIES = frozenset({CAP_ASSURE_CANDIDATE_BOUND})
+
+
+def _entry_list(value: Any) -> list[dict[str, Any]]:
+    """Normalize one fingerprint's script value to a list of entries.
+
+    A bare mapping (the pre-`ADR-0006` shape every existing caller writes)
+    becomes a one-element list, so a script with exactly one assurance per
+    candidate behaves byte-identically to before. A list/tuple is copied
+    entry-by-entry. Anything else is a caller bug, rejected here rather
+    than misread later."""
+    if isinstance(value, Mapping):
+        return [dict(value)]
+    if isinstance(value, (list, tuple)):
+        entries = []
+        for item in value:
+            if not isinstance(item, Mapping):
+                raise ValueError(
+                    "ScriptedAssurance script entries must be JSON objects "
+                    f"(got {type(item).__name__} inside a per-fingerprint list)"
+                )
+            entries.append(dict(item))
+        return entries
+    raise ValueError(
+        "ScriptedAssurance script values must be a JSON object or a list of them "
+        f"(got {type(value).__name__})"
+    )
 
 
 def _digest(*parts: str) -> str:
@@ -50,12 +76,28 @@ class ScriptedAssurance(AssurancePort):
         "evidence_refs": [...],             # optional, portable
         "extensions": {...},                # optional, portable
       },
+      # INV-021/ADR-0006: a fingerprint may instead map to a LIST of such
+      # entries, consumed in request order -- element 0 is the candidate's
+      # first assurance within an execution attempt, element 1 the bounded
+      # re-request after an `inconclusive` settlement, and so on. A single
+      # mapping is exactly equivalent to a one-element list.
+      "<other_fingerprint>": [{"verdict": "inconclusive"}, {"verdict": "accepted"}],
     }
     ```
 
     A `request()` for a candidate whose fingerprint is absent from the
     script raises the canonical `ERR-NOT-FOUND` -- there is nothing scripted
-    for this deterministic double to evaluate.
+    for this deterministic double to evaluate. So does a request past the
+    end of a fingerprint's entry list (`pending=False`); under
+    `pending=True` both are the ordinary `SCN-007` pending wait instead.
+
+    Which entry a run binds to is decided at `request()` time from the
+    number of DISTINCT idempotency keys already requested for that
+    fingerprint -- and `request()` is idempotent on the key, so a fresh
+    process replaying the journal's `FX-START-ASSURANCE` records in `seq`
+    order re-derives exactly the same binding (`INV-020`: never
+    process-local memory as the authority, always a deterministic function
+    of durable replay order).
 
     `pending` (`TASK-M1-002`, `SCN-007`): when `False` (the default --
     unchanged M0 "strict" behavior relied on by `tests/conformance` and the
@@ -73,11 +115,12 @@ class ScriptedAssurance(AssurancePort):
     def __init__(
         self,
         *,
-        script: Mapping[str, Mapping[str, Any]],
+        script: Mapping[str, Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]],
         capabilities: Iterable[str] = _DEFAULT_CAPABILITIES,
         pending: bool = False,
     ) -> None:
-        if not is_portable({key: dict(val) for key, val in script.items()}):
+        normalized = {key: _entry_list(val) for key, val in script.items()}
+        if not is_portable(normalized):
             raise ValueError("ScriptedAssurance script must be portable/JSON-compatible")
         caps = validate_capabilities(capabilities)
         if CAP_ASSURE_MAY_MUTATE_CANDIDATE in caps:
@@ -87,10 +130,20 @@ class ScriptedAssurance(AssurancePort):
             )
         self._capabilities = caps
         self._pending = pending
-        self._script: dict[str, dict[str, Any]] = {key: dict(val) for key, val in script.items()}
+        # Every fingerprint holds a LIST of entries (a bare mapping is
+        # normalized to a one-element list), consumed in request order --
+        # INV-021's bounded re-request needs more than one settlement per
+        # candidate within one execution attempt.
+        self._script: dict[str, list[dict[str, Any]]] = normalized
 
         self._by_idempotency_key: dict[str, AssuranceRun] = {}
         self._fingerprint_by_run: dict[str, str] = {}
+        # (fingerprint, index) each run is bound to; the entry itself stays
+        # resolved lazily at inspect() time, exactly as before, so
+        # CONF-ASSURE-002's snapshot-on-settle immutability rule is the one
+        # and only place a verdict is frozen.
+        self._slot_by_run: dict[str, int] = {}
+        self._requests_by_fingerprint: dict[str, int] = {}
         self._pending_runs: set[str] = set()
         self._inspect_calls: dict[str, int] = {}
         self._settled_snapshot: dict[str, AssuranceObservation] = {}
@@ -109,11 +162,20 @@ class ScriptedAssurance(AssurancePort):
             # PORT-ASSURE-001: request is idempotent on idempotency_key.
             return self._by_idempotency_key[idempotency_key]
 
-        if candidate.fingerprint not in self._script:
+        # INV-021: the slot this new run binds to is the count of distinct
+        # keys already requested for this fingerprint (0-based), i.e. its
+        # `assurance_number - 1`. Counted here, on the request path only,
+        # so replaying the journal's FX-START-ASSURANCE records rebuilds
+        # the identical binding.
+        slot = self._requests_by_fingerprint.get(candidate.fingerprint, 0)
+        entries = self._script.get(candidate.fingerprint)
+
+        if entries is None or slot >= len(entries):
             if not self._pending:
                 raise not_found_error(
                     "ScriptedAssurance has no scripted verdict for this candidate fingerprint",
                     candidate_fingerprint=candidate.fingerprint,
+                    assurance_number=slot + 1,
                 )
             # TASK-M1-002/SCN-007 pending-capable mode: a requested
             # assurance run with no recorded verdict yet is PENDING, not a
@@ -124,6 +186,8 @@ class ScriptedAssurance(AssurancePort):
             run = AssuranceRun(id=assurance_id, candidate_id=candidate.id)
             self._by_idempotency_key[idempotency_key] = run
             self._fingerprint_by_run[assurance_id] = candidate.fingerprint
+            self._slot_by_run[assurance_id] = slot
+            self._requests_by_fingerprint[candidate.fingerprint] = slot + 1
             self._pending_runs.add(assurance_id)
             self._inspect_calls[assurance_id] = 0
             return run
@@ -132,6 +196,8 @@ class ScriptedAssurance(AssurancePort):
         run = AssuranceRun(id=assurance_id, candidate_id=candidate.id)
 
         self._by_idempotency_key[idempotency_key] = run
+        self._slot_by_run[assurance_id] = slot
+        self._requests_by_fingerprint[candidate.fingerprint] = slot + 1
         # Candidate-bound: fixed at request time to the exact candidate this
         # run evaluates (INV-007) -- never re-derived from whatever is
         # "current" later (that is exactly the evidence-transfer INV-008
@@ -155,7 +221,7 @@ class ScriptedAssurance(AssurancePort):
         if fingerprint is None:
             raise not_found_error("unknown assurance_id", assurance_id=assurance_id)
 
-        entry = self._script[fingerprint]
+        entry = self._script[fingerprint][self._slot_by_run[assurance_id]]
         states = list(entry.get("states", [LIFECYCLE_STATE_SETTLED]))
         call_index = self._inspect_calls[assurance_id]
         self._inspect_calls[assurance_id] = call_index + 1

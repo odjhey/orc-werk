@@ -81,6 +81,26 @@ class WorkProjection:
             return None
         return self.candidates[self.current_candidate_id]["fingerprint"]
 
+    def assurance_number(self) -> int:
+        """`INV-021`'s per-execution-attempt assurance index of the most
+        recently started Assurance (`0` when none has started for the
+        current Execution): the count of assurance entries tagged with the
+        current `execution_id`, which the reducer maintains as the count of
+        `FACT-ASSURE-STARTED` records journaled after the current
+        `FACT-EXEC-STARTED`. The *next* assurance a `DEC-REQUEST-ASSURANCE`
+        would start is therefore `assurance_number() + 1`.
+
+        Kept here rather than only in `orc_werk.core.reducer` so every
+        consumer (policy's `INV-020` key component, the CLI's recording and
+        rendering surfaces) reads one derivation."""
+        if self.current_execution_id is None:
+            return 0
+        return sum(
+            1
+            for entry in self.assurances
+            if entry.get("execution_id") == self.current_execution_id
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "work_id": self.work_id,
@@ -95,6 +115,7 @@ class WorkProjection:
             "assurances": [dict(item) for item in self.assurances],
             "current_assurance_id": self.current_assurance_id,
             "assurance_started_for_current": self.assurance_started_for_current,
+            "assurance_number": self.assurance_number(),
             "claim_ref": self.claim_ref,
             "blocked_reason": self.blocked_reason,
             "blocked_confirmed": self.blocked_confirmed,

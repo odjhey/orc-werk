@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Mapping, Sequence
 from orc_werk.adapters.journal_support import (
     build_effect_envelope,
     deep_copy_portable,
+    effective_max_assurance_attempts,
     effective_max_attempts,
 )
 from orc_werk.core.decisions import Decision
@@ -94,7 +95,15 @@ class MemoryJournal(JournalPort):
         # issue #52: same effective-retry-budget fold as JSONLJournal --
         # both adapters must agree for CONF-JOURNAL-003.
         max_attempts = effective_max_attempts(history)
-        return reduce(facts, delivery_run_id=delivery_run_id, max_attempts=max_attempts)
+        # INV-021/ADR-0006: the same single-authority fold for the
+        # assurance budget -- absent from a legacy journal means `1`.
+        max_assurance_attempts = effective_max_assurance_attempts(history)
+        return reduce(
+            facts,
+            delivery_run_id=delivery_run_id,
+            max_attempts=max_attempts,
+            max_assurance_attempts=max_assurance_attempts,
+        )
 
 
 __all__ = ["MemoryJournal"]

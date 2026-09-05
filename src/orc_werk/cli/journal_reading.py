@@ -32,6 +32,10 @@ from orc_werk.core.state import STATE_ASSURING, STATE_EXECUTING, WorkProjection
 # the #16 root-cause suffix off the same block reason `status`/`dispatch`
 # already print verbatim.
 BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED = "retry-budget-exhausted"
+# STATE-DELIVERY's informative reason note / INV-021: the assurance budget
+# was exhausted by `inconclusive` verdicts (ADR-0006), never the execution
+# retry budget.
+BLOCKED_REASON_ASSURANCE_INCONCLUSIVE = "assurance-inconclusive"
 
 DEFAULT_JOURNAL_DIR = ".orc"
 
@@ -380,6 +384,7 @@ def _diagnose_replay_conflict(exc: CoreError, *, run_id: str, self_is_status: bo
 
 
 __all__ = [
+    "BLOCKED_REASON_ASSURANCE_INCONCLUSIVE",
     "BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED",
     "DEFAULT_JOURNAL_DIR",
     "ORC_JOURNAL_DIR_ENV",

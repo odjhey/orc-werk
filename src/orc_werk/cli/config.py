@@ -17,8 +17,9 @@ that is ``<repo>/.orc/profile.json``; with ``--journal`` or
 cwd/ancestor search is performed.  Effective precedence is explicit
 ``--config`` (deep-merged) over a run's persisted ``config.json`` over the
 profile over ``{}``; nested JSON objects compose, while other values replace.
-The ``--max-attempts`` flag keeps its existing precedence over the resulting
-config's ``max_attempts``. At each layer boundary, an explicit adapter change
+The ``--max-attempts``/``--max-assurance-attempts`` flags keep their existing
+precedence over the resulting config's ``max_attempts``/
+``max_assurance_attempts``. At each layer boundary, an explicit adapter change
 inside ``execution``, ``candidate``, ``assurance``, or ``mirror`` drops keys
 inherited from the previous adapter that are exclusive to it; keys supplied by
 the overlay and inherited adapter-agnostic keys remain.
@@ -36,17 +37,26 @@ flag-supplied value at creation is persisted into the run's own
 ``config.json`` so a later bare ``--run-id`` resume's merged config already
 agrees with the journal from birth.
 
+``max_assurance_attempts`` (``INV-021``/``ADR-0006``) is special-cased on
+exactly the same terms, against its own journaled
+``FX-CREATE-WORK.data.max_assurance_attempts``
+(``orc_werk.core.reducer.journaled_max_assurance_attempts``). A journal
+written before that field existed folds under a budget of ``1`` -- the
+pre-decision behavior -- never the schema default ``2``.
+
 ```json
 {
   "run_id": "optional-explicit-delivery-run-id",
   "max_attempts": 3,
+  "max_assurance_attempts": 2,
   "resume_capability": null,
   "execution_capabilities": [],
   "plan": null,
   "attempts": {
     "work-1": [
       {"outcome": "completed", "candidate": {"label": "A"}, "assurance": {"verdict": "rejected"}},
-      {"outcome": "completed", "candidate": {"label": "B"}, "assurance": {"verdict": "accepted"}}
+      {"outcome": "completed", "candidate": {"label": "B"},
+       "assurances": [{"verdict": "inconclusive"}, {"verdict": "accepted"}]}
     ]
   }
 }
@@ -65,7 +75,9 @@ agrees with the journal from birth.
   references transported verbatim into `FACT-EXEC-SETTLED.artifact_refs`
   (`PROTOCOL-FACTS`) -- `orc record --outcome --evidence-ref` writes here;
   `assurance`, when present, supplies that candidate's scripted verdict
-  (`ScriptedAssurance`); `extensions` (#105/#106), when present, is passed
+  (`ScriptedAssurance`); `assurances`, when present, supplies that
+  candidate's ORDERED scripted verdicts for the attempt (see "Several
+  assurances in one attempt" below); `extensions` (#105/#106), when present, is passed
   through verbatim into the scripted execution outcome's own `extensions`
   field (e.g. an `execution-session/v1` payload) -- the same passthrough
   envelope field every journaled fact already carries
@@ -97,8 +109,47 @@ An attempt entry's `assurance` object accepts exactly these keys:
   a fan-in run like `SCN-005` from the CLI); defaults to
   `orc_werk.app.default_single_work_plan()`.
 - `max_attempts` is the positive retry budget (default `3`);
-  `resume_capability` is the optional capability policy uses for resume;
+  `max_assurance_attempts` is the positive assurance budget (default `2`,
+  `INV-021`); `resume_capability` is the optional capability policy uses for resume;
   `execution_capabilities` is the list advertised by the execution port.
+
+### Several assurances in one attempt (`INV-021`, `ADR-0006`)
+
+`max_assurance_attempts` (top level, positive integer, default `2`) bounds
+how many assurances one Candidate may receive within one execution attempt.
+An `inconclusive` settlement within that budget re-requests assurance of
+the *same* candidate under a new assurance identity; exhausting it blocks
+the Work with `reason: assurance-inconclusive`. Assurance re-requests never
+consume `max_attempts`.
+
+So an attempt entry may need to carry more than one scripted settlement.
+The optional `assurances` key is that shape: a JSON array of the same
+assurance objects `assurance` accepts, consumed **in order** by
+`assurance_number` (element `0` is assurance 1, element `1` is assurance 2,
+and so on).
+
+```json
+{"outcome": "completed", "candidate": {"label": "A"},
+ "assurances": [{"verdict": "inconclusive", "evidence_refs": ["verifier.log"]},
+                {"verdict": "accepted"}]}
+```
+
+- `assurances[0]` is exactly equivalent to the legacy `assurance` object,
+  so an attempt that needs only one settlement keeps writing `assurance`
+  and nothing changes.
+- Supplying **both** `assurance` and `assurances` in one entry is
+  `ERR-VALIDATION` -- there would be two claims about assurance 1.
+- `assurances` must be a non-empty array of assurance objects; each element
+  is validated exactly like `assurance`.
+- An assurance position with no entry yet (the ordinary incremental case:
+  assurance 1 recorded `inconclusive`, assurance 2 not recorded yet) is the
+  ordinary `SCN-007` pending wait -- the run rests at `ASSURING` and
+  `orc record --verdict` writes the next slot.
+- `orc record --verdict` writes the slot for the run's CURRENT
+  `assurance_number`: number 1 goes to `assurance` (unless `assurances` is
+  already present, in which case it goes to `assurances[0]`); number 2 and
+  beyond require the list, so a legacy `assurance` object is migrated to
+  `assurances[0]` in the same atomic config replacement.
 
 ## Port selection (`execution`/`candidate`/`assurance`)
 
@@ -303,6 +354,7 @@ _TOP_LEVEL_KEYS = frozenset(
     {
         "run_id",
         "max_attempts",
+        "max_assurance_attempts",
         "resume_capability",
         "execution_capabilities",
         "plan",
@@ -315,7 +367,9 @@ _TOP_LEVEL_KEYS = frozenset(
         "observers",
     }
 )
-_ATTEMPT_ENTRY_KEYS = frozenset({"outcome", "candidate", "assurance", "states", "artifact_refs", "extensions"})
+_ATTEMPT_ENTRY_KEYS = frozenset(
+    {"outcome", "candidate", "assurance", "assurances", "states", "artifact_refs", "extensions"}
+)
 _ASSURANCE_ENTRY_KEYS = frozenset({"verdict", "states", "evidence_refs", "extensions", "derived_identity"})
 # `observers` (`SCN-018`, issue #193): each trigger entry accepts EXACTLY
 # `command`/`timeout_seconds` -- no `args`-appended-to-command, no inline
@@ -483,6 +537,26 @@ def _validate_assurance_entry(assurance: Any, *, path: str) -> None:
             )
 
 
+def _validate_assurances_list(assurances: Any, *, path: str) -> None:
+    """`INV-021`/`ADR-0006`: an attempt entry's ordered assurance
+    settlements, consumed by `assurance_number`. Each element is validated
+    exactly like the singular `assurance` object -- one validator, so the
+    two shapes can never drift."""
+    if not isinstance(assurances, list):
+        raise validation_error(
+            f"config value at {path} must be a JSON array of assurance entries, "
+            f"got {type(assurances).__name__}",
+            path=path,
+        )
+    if not assurances:
+        raise validation_error(
+            f"config value at {path} must be a non-empty array (omit the key instead)",
+            path=path,
+        )
+    for index, entry in enumerate(assurances):
+        _validate_assurance_entry(entry, path=f"{path}[{index}]")
+
+
 def _attempt_allowed_keys(
     *, execution_adapter: str, candidate_adapter: str, assurance_adapter: str = "scripted"
 ) -> frozenset[str]:
@@ -499,7 +573,9 @@ def _attempt_allowed_keys(
     config-declared one would be silently ignored)."""
     allowed: set[str] = set()
     if assurance_adapter == "scripted":
-        allowed.add("assurance")
+        # INV-021/ADR-0006: `assurances` is the ordered multi-settlement
+        # sibling of `assurance` and rides the identical scripted-only rule.
+        allowed |= {"assurance", "assurances"}
     if execution_adapter == "scripted":
         allowed |= {"outcome", "states", "artifact_refs", "extensions"}
     if candidate_adapter == "scripted":
@@ -569,8 +645,17 @@ def _validate_attempts(
                     path=f"{entry_path}.outcome",
                     outcome=entry["outcome"],
                 )
+            if entry.get("assurance") is not None and entry.get("assurances") is not None:
+                raise validation_error(
+                    f"config value at {entry_path} supplies both 'assurance' and 'assurances'; "
+                    "assurances[0] IS the attempt's first assurance -- supply exactly one "
+                    "(INV-021/ADR-0006)",
+                    path=entry_path,
+                )
             if entry.get("assurance") is not None:
                 _validate_assurance_entry(entry["assurance"], path=f"{entry_path}.assurance")
+            if entry.get("assurances") is not None:
+                _validate_assurances_list(entry["assurances"], path=f"{entry_path}.assurances")
 
 
 def _validate_execution_config(value: Any) -> None:
@@ -1045,12 +1130,64 @@ def _replace_config_unlocked(path: Path, updated: Mapping[str, Any]) -> Mapping[
     return updated
 
 
+def _write_assurance_slot(
+    entry: dict[str, Any], *, assurance: Mapping[str, Any], assurance_number: int
+) -> None:
+    """Place one recorded verdict in the attempt entry's slot for
+    `assurance_number` (`INV-021`/`ADR-0006`).
+
+    Assurance 1 keeps writing the legacy singular `assurance` key whenever
+    the entry has no `assurances` list yet, so an ordinary single-assurance
+    run's persisted `config.json` is byte-identical to what it always was.
+    Assurance 2 and beyond need the ordered list, so a legacy `assurance`
+    object already on the entry is migrated to `assurances[0]` and the
+    singular key removed -- the two are mutually exclusive by schema
+    (`_validate_attempts`), and `assurances[0]` IS the legacy object, so
+    nothing is lost or reinterpreted. This happens inside the same atomic
+    config replacement as the write itself."""
+    if assurance_number < 1:
+        raise validation_error(
+            f"assurance_number must be a positive integer, got {assurance_number!r}",
+            assurance_number=assurance_number,
+        )
+    if assurance_number == 1 and "assurances" not in entry:
+        entry["assurance"] = dict(assurance)
+        return
+    entries = entry.get("assurances")
+    if entries is None:
+        entries = [entry["assurance"]] if "assurance" in entry else []
+    entry.pop("assurance", None)
+    index = assurance_number - 1
+    if len(entries) < index:
+        raise validation_error(
+            f"config has no entry for assurance {index} of this attempt "
+            f"(recording assurance {assurance_number} would leave a gap)",
+            assurance_number=assurance_number,
+        )
+    if len(entries) == index:
+        entries.append(dict(assurance))
+    else:
+        entries[index] = dict(assurance)
+    entry["assurances"] = entries
+
+
+def _recorded_assurance_slot(entry: Mapping[str, Any], *, assurance_number: int) -> bool:
+    """Whether the attempt entry already carries a settlement for
+    `assurance_number` -- the ERR-CONFLICT guard `record_assurance_entry`
+    applies before writing (a verdict is never silently overwritten)."""
+    entries = entry.get("assurances")
+    if entries is None:
+        return assurance_number == 1 and "assurance" in entry
+    return assurance_number <= len(entries)
+
+
 def record_assurance_entry(
     path: Path,
     *,
     work_id: str,
     attempt_number: int,
     assurance: Mapping[str, Any],
+    assurance_number: int = 1,
     lock_timeout_s: Optional[float] = None,
 ) -> Mapping[str, Any]:
     """Merge one assurance entry into a persisted config and replace
@@ -1060,20 +1197,26 @@ def record_assurance_entry(
     -- never read-then-lock, and never a second, independent lock
     acquisition for the write half (which would self-deadlock against the
     one already held by this same process). `lock_timeout_s` overrides the
-    module default (tests exercising `SCN-019` item 6's timeout path)."""
+    module default (tests exercising `SCN-019` item 6's timeout path).
+
+    `assurance_number` (`INV-021`/`ADR-0006`, default `1`) selects which of
+    the attempt's ordered assurance slots this verdict fills -- see
+    `_write_assurance_slot`."""
     lock_path = _lock_path_for(path)
     timeout = lock_timeout_s if lock_timeout_s is not None else DEFAULT_TIMEOUT_S
     with RunLock(lock_path, timeout_s=timeout):
         current = load_config(str(path))
         updated = json.loads(json.dumps(current))
         entry = _entry_slot(updated, work_id=work_id, attempt_number=attempt_number)
-        if "assurance" in entry:
+        if _recorded_assurance_slot(entry, assurance_number=assurance_number):
             raise conflict_error(
-                f"attempt {attempt_number} of work {work_id!r} already has a recorded assurance entry",
+                f"attempt {attempt_number} of work {work_id!r} already has a recorded assurance "
+                f"entry for assurance {assurance_number}",
                 work_id=work_id,
                 attempt_number=attempt_number,
+                assurance_number=assurance_number,
             )
-        entry["assurance"] = dict(assurance)
+        _write_assurance_slot(entry, assurance=assurance, assurance_number=assurance_number)
         validate_config(updated)  # reuse all assurance/extension/adapter checks
         return _replace_config_unlocked(path, updated)
 
@@ -1217,6 +1360,21 @@ def _json_equal(left: Any, right: Any) -> bool:
     )
 
 
+def attempt_assurance_entries(attempt: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """One attempt entry's ordered scripted assurance settlements
+    (`INV-021`/`ADR-0006`), oldest first: `assurances` when present, else
+    the legacy singular `assurance` as a one-element list, else `[]`.
+    `_validate_attempts` has already rejected an entry supplying both, so
+    this never has to choose between two claims about assurance 1."""
+    entries = attempt.get("assurances")
+    if entries is not None:
+        return list(entries)
+    single = attempt.get("assurance")
+    if single is not None:
+        return [single]
+    return []
+
+
 def _bound_assurance_entry(
     assurance_entry: Mapping[str, Any], *, subject_identity: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -1269,7 +1427,7 @@ def build_scripted_adapters(
 
     execution_script: dict[str, list[dict[str, Any]]] = {}
     candidate_subjects: dict[str, dict[str, Any]] = {}
-    assurance_script: dict[str, dict[str, Any]] = {}
+    assurance_script: dict[str, list[dict[str, Any]]] = {}
 
     for work_id, attempts in attempts_by_work.items():
         execution_script[work_id] = []
@@ -1287,12 +1445,17 @@ def build_scripted_adapters(
                     "work_id": work_id,
                     "subject_identity": candidate_content,
                 }
-                assurance_entry = attempt.get("assurance")
-                if assurance_entry is not None:
+                assurance_entries = attempt_assurance_entries(attempt)
+                if assurance_entries:
                     fingerprint = fingerprint_of(candidate_content)
-                    assurance_script[fingerprint] = _bound_assurance_entry(
-                        assurance_entry, subject_identity=candidate_content
-                    )
+                    # INV-021: a list per fingerprint, consumed in request
+                    # order by `assurance_number` (`ScriptedAssurance`'s own
+                    # docstring). A single settlement stays a one-element
+                    # list -- identical behavior to the pre-ADR-0006 shape.
+                    assurance_script[fingerprint] = [
+                        _bound_assurance_entry(entry, subject_identity=candidate_content)
+                        for entry in assurance_entries
+                    ]
 
     # pending=True: the CLI-wired M1a default (SCN-007) -- a work with no
     # recorded outcome for its next attempt starts and rests unsettled
@@ -1365,7 +1528,7 @@ def _observed_candidate_bindings(
 
 def build_real_assurance_script(
     attempts_by_work: Mapping[str, Any], *, history: Iterable[Mapping[str, Any]]
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, list[dict[str, Any]]]:
     """Build a `ScriptedAssurance` script keyed by REAL, journal-observed
     candidate fingerprints instead of config-predicted ones (module
     docstring, "Attempts-merge semantics"). Each `attempts[work_id]` entry
@@ -1381,23 +1544,28 @@ def build_real_assurance_script(
     history_records = list(history)
     observed = _observed_candidate_bindings(history_records)
     observed_fingerprints = _observed_candidate_fingerprints(history_records)
-    script: dict[str, dict[str, Any]] = {}
+    script: dict[str, list[dict[str, Any]]] = {}
     for work_id, attempts in attempts_by_work.items():
         bindings = observed.get(work_id, [])
         fingerprints = observed_fingerprints.get(work_id, [])
         for attempt_index, attempt in enumerate(attempts):
-            assurance_entry = attempt.get("assurance")
-            if assurance_entry is None or attempt_index >= len(fingerprints):
+            # INV-021: an attempt binds ALL its ordered assurance
+            # settlements to that attempt's one real candidate fingerprint
+            # -- the re-request is of the same candidate, so the binding
+            # target does not change between assurance 1 and assurance N.
+            assurance_entries = attempt_assurance_entries(attempt)
+            if not assurance_entries or attempt_index >= len(fingerprints):
                 continue
-            if "derived_identity" not in assurance_entry:
-                script[fingerprints[attempt_index]] = dict(assurance_entry)
+            if not any("derived_identity" in entry for entry in assurance_entries):
+                script[fingerprints[attempt_index]] = [dict(entry) for entry in assurance_entries]
                 continue
             if attempt_index >= len(bindings):
                 continue
             fingerprint, subject_identity = bindings[attempt_index]
-            script[fingerprint] = _bound_assurance_entry(
-                assurance_entry, subject_identity=subject_identity
-            )
+            script[fingerprint] = [
+                _bound_assurance_entry(entry, subject_identity=subject_identity)
+                for entry in assurance_entries
+            ]
     return script
 
 
@@ -1514,7 +1682,27 @@ def _validate_max_attempts(value: Any, *, source: str) -> int:
     return value
 
 
-def build_run_config(config: Mapping[str, Any], *, max_attempts_override: int | None) -> RunConfig:
+def _validate_max_assurance_attempts(value: Any, *, source: str) -> int:
+    """`INV-021`'s sibling of `_validate_max_attempts`: the assurance
+    budget must be a finite, positive integer for exactly the same reason
+    (`0` would be a broken budget, not a bounded one), and `0` is falsy in
+    Python so it must be rejected explicitly rather than `or`-chained away
+    (the BUG-2 dogfood finding, identical shape)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise validation_error(
+            f"max_assurance_attempts ({source}) must be a positive integer, got {value!r}",
+            source=source,
+            max_assurance_attempts=value,
+        )
+    return value
+
+
+def build_run_config(
+    config: Mapping[str, Any],
+    *,
+    max_attempts_override: int | None,
+    max_assurance_attempts_override: int | None = None,
+) -> RunConfig:
     # BUG-2: explicit `is not None` precedence (flag > config > default) --
     # NOT `or`-chaining, which would treat an explicit 0 as absent.
     if max_attempts_override is not None:
@@ -1523,14 +1711,29 @@ def build_run_config(config: Mapping[str, Any], *, max_attempts_override: int | 
         max_attempts = _validate_max_attempts(config["max_attempts"], source="config max_attempts")
     else:
         max_attempts = RunConfig().max_attempts
+    if max_assurance_attempts_override is not None:
+        max_assurance_attempts = _validate_max_assurance_attempts(
+            max_assurance_attempts_override, source="--max-assurance-attempts flag"
+        )
+    elif config.get("max_assurance_attempts") is not None:
+        max_assurance_attempts = _validate_max_assurance_attempts(
+            config["max_assurance_attempts"], source="config max_assurance_attempts"
+        )
+    else:
+        max_assurance_attempts = RunConfig().max_assurance_attempts
     resume_capability = config.get("resume_capability")
-    return RunConfig(max_attempts=max_attempts, resume_capability=resume_capability)
+    return RunConfig(
+        max_attempts=max_attempts,
+        max_assurance_attempts=max_assurance_attempts,
+        resume_capability=resume_capability,
+    )
 
 
 __all__ = [
     "atomic_replace_config",
     "build_dispatch_ports",
     "build_mirror",
+    "attempt_assurance_entries",
     "build_real_assurance_script",
     "build_run_config",
     "build_scripted_adapters",

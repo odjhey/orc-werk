@@ -56,7 +56,8 @@ class CliValidateTest(unittest.TestCase):
             self.assertIn("adapters: execution=scripted candidate=scripted assurance=scripted", result.stdout)
             self.assertIn("attempts.w[0]: keys=[assurance, candidate, outcome]", result.stdout)
             self.assertIn(
-                "attempts.w[0].assurance: verdict=accepted, extensions=[review-findings/v1]",
+                "attempts.w[0].assurance: assurance_number=1 verdict=accepted, "
+            "extensions=[review-findings/v1]",
                 result.stdout,
             )
             self.assertFalse((root / ".orc").exists())

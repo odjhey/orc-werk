@@ -56,6 +56,7 @@ from orc_werk.cli.config import (
     load_config_overlay,
     load_persisted_config_tolerant,
     load_repo_profile,
+    attempt_assurance_entries,
     record_assurance_entry,
     record_execution_outcome_entry,
     validate_config,
@@ -79,7 +80,7 @@ from orc_werk.cli.refs import FACT_ASSURE_SETTLED, cmd_refs
 from orc_werk.cli.report import _index_state_rollup, cmd_report, ordered_run_entries
 from orc_werk.cli.show import _render_findings, cmd_show
 from orc_werk.core.errors import ERR_VALIDATION, CoreError, conflict_error, not_found_error, validation_error
-from orc_werk.core.reducer import journaled_max_attempts
+from orc_werk.core.reducer import journaled_max_assurance_attempts, journaled_max_attempts
 from orc_werk.core.state import STATE_ACCEPTED, STATE_ASSURING, STATE_BLOCKED, STATE_EXECUTING, WorkProjection
 from orc_werk.ports.capabilities import validate_capabilities
 
@@ -139,6 +140,11 @@ def _work_line(work_id: str, wp: WorkProjection, history: Sequence[Mapping[str, 
         # SCN-007: legible per-work pending presentation -- which attempt,
         # and awaiting an execution settlement or an assurance verdict.
         line += f" pending=true awaiting={_awaiting_label(wp)} attempt={wp.attempt_number}"
+        if wp.state == STATE_ASSURING:
+            # SCN-021 item 7: one attempt may now carry several assurance
+            # lifecycles (INV-021's bounded re-request), so name which one
+            # the verify seat is being asked for.
+            line += f" assurance={wp.assurance_number()}"
     return line
 
 
@@ -338,13 +344,17 @@ def cmd_validate(args: argparse.Namespace) -> int:
     for work_id, entries in (config.get("attempts") or {}).items():
         for index, entry in enumerate(entries):
             print(f"attempts.{work_id}[{index}]: keys=[{', '.join(sorted(entry))}]")
-            assurance = entry.get("assurance")
-            if isinstance(assurance, Mapping):
+            # INV-021: one attempt may carry several ordered settlements
+            # (`assurances`); the singular `assurance` is assurance 1.
+            for slot, assurance in enumerate(attempt_assurance_entries(entry), start=1):
+                if not isinstance(assurance, Mapping):
+                    continue
                 verdict = assurance.get("verdict", "(absent)")
                 extensions = assurance.get("extensions") or {}
+                label = "assurance" if "assurances" not in entry else f"assurances[{slot - 1}]"
                 print(
-                    f"attempts.{work_id}[{index}].assurance: verdict={verdict}, "
-                    f"extensions=[{', '.join(sorted(extensions))}]"
+                    f"attempts.{work_id}[{index}].{label}: assurance_number={slot} "
+                    f"verdict={verdict}, extensions=[{', '.join(sorted(extensions))}]"
                 )
     return 0
 
@@ -532,7 +542,11 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
     # run's own history for the real-candidate assurance script.
     work_graph = MemoryWorkGraph()
     validate_capabilities(config.get("execution_capabilities", ()))
-    run_config = build_run_config(config, max_attempts_override=args.max_attempts)
+    run_config = build_run_config(
+        config,
+        max_attempts_override=args.max_attempts,
+        max_assurance_attempts_override=args.max_assurance_attempts,
+    )
 
     execution_adapter = (config.get("execution") or {}).get("adapter", "scripted")
     candidate_adapter = (config.get("candidate") or {}).get("adapter", "scripted")
@@ -590,6 +604,36 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
                     "(omit --max-attempts/config max_attempts to resume under the run's own budget)",
                 ],
             )
+        # INV-021/ADR-0006: the assurance budget is journaled at creation
+        # and single-authority thereafter on exactly the same terms, so an
+        # explicit later value that disagrees is refused identically
+        # (`SCN-021` item 12 -- the R2 sibling). A run created before
+        # ADR-0006 has no journaled field and folds under `1`; supplying a
+        # different explicit value for such a run is refused too, naming
+        # that `1`, rather than silently changing what its own journal
+        # already means.
+        journaled_assurance_budget = journaled_max_assurance_attempts(history_before_dispatch)
+        requested_max_assurance_attempts = args.max_assurance_attempts
+        if requested_max_assurance_attempts is None:
+            requested_max_assurance_attempts = explicit.get("max_assurance_attempts")
+        if (
+            requested_max_assurance_attempts is not None
+            and requested_max_assurance_attempts != journaled_assurance_budget
+        ):
+            raise validation_error(
+                f"run {run_id!r}'s assurance budget was fixed at creation: "
+                f"{journaled_assurance_budget}; requested max_assurance_attempts "
+                f"({requested_max_assurance_attempts!r}) differs and would diverge from the "
+                "journaled budget every replay must honor (INV-021, SCN-021 item 12)",
+                run_id=run_id,
+                journaled_max_assurance_attempts=journaled_assurance_budget,
+                requested_max_assurance_attempts=requested_max_assurance_attempts,
+                next_steps=[
+                    f"orc dispatch --run-id {run_id} --journal {journal_dir.resolve()} "
+                    "(omit --max-assurance-attempts/config max_assurance_attempts to resume "
+                    "under the run's own budget)",
+                ],
+            )
 
     # R3 (#240 persistence-gap-closed-as-belt ruling): an explicit
     # `--max-attempts` flag was the #240 trigger -- it reached `RunConfig`
@@ -605,6 +649,11 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
     # flag silently diverge from what got persisted.
     if args.max_attempts is not None:
         config = {**config, "max_attempts": run_config.max_attempts}
+    if args.max_assurance_attempts is not None:
+        # R3's sibling for INV-021's budget: round-trip ONLY the flag, and
+        # ONLY when one was given, so an ordinary dispatch's persisted
+        # config.json keeps exactly the shape it always had.
+        config = {**config, "max_assurance_attempts": run_config.max_assurance_attempts}
 
     orchestrator = Orchestrator(
         delivery_run_id=run_id,
@@ -789,8 +838,9 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
         data = record["data"]
         extension_keys = ", ".join(sorted(record.get("extensions", {})))
         corroborated = any(
-            "derived_identity" in (attempt.get("assurance") or {})
+            "derived_identity" in (entry or {})
             for attempt in (config.get("attempts") or {}).get(data["work_id"], [])
+            for entry in attempt_assurance_entries(attempt)
         )
         corroboration_note = " -- derived_identity corroborated" if corroborated else ""
         print(
@@ -970,7 +1020,7 @@ def cmd_record(args: argparse.Namespace) -> int:
             "orc record requires exactly one of --verdict or --outcome (one seat, one recording "
             "per invocation)",
             next_steps=[
-                "verify seat: orc record <run> --work <id> --verdict accepted|rejected",
+                "verify seat: orc record <run> --work <id> --verdict accepted|rejected|inconclusive",
                 "ship seat: orc record <run> --work <id> --outcome completed|failed",
             ],
         )
@@ -1075,13 +1125,23 @@ def cmd_record(args: argparse.Namespace) -> int:
         if derived is not None:
             assurance["derived_identity"] = derived
 
+        # INV-021/ADR-0006: the verdict fills the slot for the run's
+        # CURRENT assurance number -- the per-execution index the
+        # projection already reconstructs from journal order. Assurance 1
+        # still writes the legacy singular `assurance` key; a bounded
+        # re-request writes `assurances[n-1]`.
+        assurance_number = work.assurance_number()
         record_assurance_entry(
-            config_path, work_id=args.work, attempt_number=work.attempt_number, assurance=assurance
+            config_path,
+            work_id=args.work,
+            attempt_number=work.attempt_number,
+            assurance=assurance,
+            assurance_number=assurance_number,
         )
         extension_names = ",".join(sorted(extensions)) or "none"
         print(
             f"recorded assurance: run={run_id} work={args.work} verdict={args.verdict} "
-            f"extensions=[{extension_names}]"
+            f"assurance={assurance_number} extensions=[{extension_names}]"
         )
 
     print("next:")
@@ -1211,11 +1271,26 @@ def cmd_verdict(args: argparse.Namespace) -> int:
     history = journal.history(delivery_run_id=run_id)
     projection = journal.load_projection(delivery_run_id=run_id)
     latest: dict[str, Mapping[str, Any]] = {}
+    # INV-021/ADR-0006: one candidate may be assured more than once within
+    # one attempt (bounded re-request on `inconclusive`). The LATEST
+    # settlement for the same candidate fingerprint is the projection's
+    # verdict; the earlier ones stay visible here as a one-line trail
+    # rather than being silently dropped (P-008: never overwritten).
+    superseded: dict[str, list[Mapping[str, Any]]] = {}
     for record in history:
         if record.get("kind") == "fact" and record.get("id") == FACT_ASSURE_SETTLED:
-            work_id = record.get("data", {}).get("work_id")
-            if isinstance(work_id, str):
-                latest[work_id] = record
+            data = record.get("data", {})
+            work_id = data.get("work_id")
+            if not isinstance(work_id, str):
+                continue
+            previous = latest.get(work_id)
+            if previous is not None and previous.get("data", {}).get(
+                "candidate_fingerprint"
+            ) == data.get("candidate_fingerprint"):
+                superseded.setdefault(work_id, []).append(previous)
+            else:
+                superseded.pop(work_id, None)
+            latest[work_id] = record
 
     print(f"run: {run_id}")
     for work_id in sorted(projection.works):
@@ -1224,9 +1299,17 @@ def cmd_verdict(args: argparse.Namespace) -> int:
             print(f"work {work_id}: (no verdict yet)")
             continue
         data = record.get("data", {})
+        earlier = superseded.get(work_id, [])
+        trail = ""
+        if earlier:
+            trail = (
+                f" (assurance {len(earlier) + 1} of this candidate; earlier: "
+                + ", ".join(str(item.get("data", {}).get("verdict", "-")) for item in earlier)
+                + ")"
+            )
         print(
             f"work {work_id}: verdict={data.get('verdict', '-')} "
-            f"candidate_fingerprint={data.get('candidate_fingerprint', '-')}"
+            f"candidate_fingerprint={data.get('candidate_fingerprint', '-')}{trail}"
         )
         if data.get("evidence_refs"):
             print(f"  evidence_refs={_compact(data['evidence_refs'])}")
@@ -1553,6 +1636,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="examples:\n"
         '  orc dispatch "ship the widget" --config cfg.json\n'
         '  orc dispatch "ship the widget" --config cfg.json --journal ./.orc --max-attempts 3\n'
+        '  orc dispatch "ship the widget" --config cfg.json --max-assurance-attempts 1\n'
         "  orc dispatch --run-id demo-run --journal ./.orc  # resume an existing run\n"
         '  orc dispatch "ship the widget" --config real-cfg.json  # real git/command adapters:\n'
         '    # real-cfg.json: {"candidate": {"adapter": "git", "repo_path": "/abs/worktree"},\n'
@@ -1573,7 +1657,8 @@ def build_parser() -> argparse.ArgumentParser:
         "    # observation conflict, or at ASSURING awaiting an assurance you know (out-of-\n"
         "    # band) will never settle; --abandon-by defaults to $USER\n\n"
         + _DISPATCH_CONFIG_EPILOG
-        + "\ndefaults: --journal $ORC_JOURNAL_DIR or ./.orc, --max-attempts 3 (policy default), --run-id derived "
+        + "\ndefaults: --journal $ORC_JOURNAL_DIR or ./.orc, --max-attempts 3 and "
+        "--max-assurance-attempts 2 (policy defaults), --run-id derived "
         "deterministically from the intent text when omitted; config execution.adapter="
         "scripted, candidate.adapter=scripted",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1586,6 +1671,14 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch_parser.add_argument("--config", help="path to a portable JSON dispatch config", default=None)
     dispatch_parser.add_argument("--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None)
     dispatch_parser.add_argument("--max-attempts", type=int, default=None, help="override policy max_attempts")
+    dispatch_parser.add_argument(
+        "--max-assurance-attempts",
+        type=int,
+        default=None,
+        help="override policy max_assurance_attempts (INV-021/ADR-0006: assurances of one "
+        "candidate per attempt before an inconclusive verdict blocks; default 2). Fixed at run "
+        "creation like --max-attempts; a differing value on resume is refused",
+    )
     dispatch_parser.add_argument("--run-id", default=None, help="explicit delivery_run_id")
     dispatch_parser.add_argument(
         "--abandon-work",
@@ -1636,6 +1729,7 @@ def build_parser() -> argparse.ArgumentParser:
         "Exactly one of --verdict/--outcome is required.",
         epilog="examples:\n"
         "  orc record my-run --work work-1 --verdict accepted --evidence-ref audit.log\n"
+        "  orc record my-run --work work-1 --verdict inconclusive --evidence-ref verifier.log\n"
         "  orc record my-run --work work-1 --outcome completed --evidence-ref gh-pr:42\n\n"
         "--outcome never sets candidate identity: a git-candidate config gets it from the next "
         "`orc dispatch` pass; a scripted-candidate config keeps hand-authoring "
@@ -1645,8 +1739,11 @@ def build_parser() -> argparse.ArgumentParser:
     record_parser.add_argument("target", help="run id")
     record_parser.add_argument("--work", required=True, metavar="WORK_ID", help="work awaiting recording")
     record_parser.add_argument(
-        "--verdict", default=None, choices=("accepted", "rejected"),
-        help="verify seat: record an assurance verdict (exactly one of --verdict/--outcome required)",
+        "--verdict", default=None, choices=("accepted", "rejected", "inconclusive"),
+        help="verify seat: record an assurance verdict (exactly one of --verdict/--outcome "
+        "required). `inconclusive` (ADR-0006) is the honest verdict when you cannot decide or "
+        "could not evaluate: within the assurance budget it re-requests assurance of the SAME "
+        "candidate, never spending the ship seat's retry budget",
     )
     record_parser.add_argument(
         "--outcome", default=None, choices=("completed", "failed"),

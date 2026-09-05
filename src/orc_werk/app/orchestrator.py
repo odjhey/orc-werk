@@ -80,9 +80,11 @@ from orc_werk.core.idempotency import idempotency_key as derive_idempotency_key
 from orc_werk.core.models import Candidate
 from orc_werk.core.policy import decide
 from orc_werk.core.reducer import (
+    DEFAULT_MAX_ASSURANCE_ATTEMPTS,
     DEFAULT_MAX_ATTEMPTS,
     abandon_legality,
     apply_fact,
+    journaled_max_assurance_attempts,
     journaled_max_attempts,
     reduce,
 )
@@ -136,6 +138,13 @@ class RunConfig:
     """
 
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
+    # INV-021/ADR-0006: the assurance budget -- how many assurances one
+    # Candidate may receive within one execution attempt before an
+    # `inconclusive` settlement resolves to BLOCKED. Like `max_attempts`,
+    # this is input ONLY at run creation: `bootstrap` journals it into
+    # `FX-CREATE-WORK.data.max_assurance_attempts`, which is the single
+    # authority for every later fold of that run.
+    max_assurance_attempts: int = DEFAULT_MAX_ASSURANCE_ATTEMPTS
     resume_capability: Optional[str] = None
 
 
@@ -166,7 +175,17 @@ def is_pending(wp: WorkProjection) -> bool:
         )
         return current is not None and current["outcome"] is None
     if wp.state == STATE_ASSURING and wp.assurance_started_for_current:
-        current = wp.assurances[-1] if wp.assurances else None
+        # INV-021/ADR-0006: one execution attempt may now carry several
+        # assurance lifecycles (a bounded re-request after an
+        # `inconclusive` settlement), so match the CURRENT assurance
+        # identity explicitly rather than assuming a single entry --
+        # mirroring the EXECUTING branch above. `ASSURING` with
+        # `assurance_started_for_current` false (the resting point between
+        # an inconclusive settlement and its re-request) is deliberately
+        # NOT pending: nothing is in flight to observe.
+        current = next(
+            (item for item in wp.assurances if item["assurance_id"] == wp.current_assurance_id), None
+        )
         return current is not None and current["verdict"] is None
     return False
 
@@ -252,6 +271,21 @@ class Orchestrator:
             return journaled_max_attempts(history)
         return self.config.max_attempts
 
+    def _effective_max_assurance_attempts(self, history: Sequence[Mapping[str, Any]]) -> int:
+        """`INV-021`'s sibling of `_effective_max_attempts`, on the
+        identical R1 terms: the journaled assurance budget
+        (`FX-CREATE-WORK.data.max_assurance_attempts`) is the single
+        authority for EVERY verb on an EXISTING run;
+        `self.config.max_assurance_attempts` is input only at run creation
+        (`bootstrap`, where `history` is still empty and this call
+        correctly falls through to it, because it is about to become the
+        very record `journaled_max_assurance_attempts` would read back).
+        A run created before `ADR-0006` folds under `1` -- pre-decision
+        behavior -- via that function's documented read-fallback."""
+        if history:
+            return journaled_max_assurance_attempts(history)
+        return self.config.max_assurance_attempts
+
     def _assert_replay_consistent(self) -> None:
         """R4 (#240 ruling): post-decision replay assertion. Called at the
         end of every write path that just appended one or more records
@@ -286,6 +320,7 @@ class Orchestrator:
                 facts,
                 delivery_run_id=self.delivery_run_id,
                 max_attempts=self._effective_max_attempts(history),
+                max_assurance_attempts=self._effective_max_assurance_attempts(history),
             )
         except CoreError as exc:
             offending = exc.to_canonical()
@@ -304,7 +339,10 @@ class Orchestrator:
             return
         facts = [fact_from_envelope(r) for r in history if r["kind"] == KIND_FACT]
         projection = reduce(
-            facts, delivery_run_id=self.delivery_run_id, max_attempts=self._effective_max_attempts(history)
+            facts,
+            delivery_run_id=self.delivery_run_id,
+            max_attempts=self._effective_max_attempts(history),
+            max_assurance_attempts=self._effective_max_assurance_attempts(history),
         )
         for record in history:
             if record["kind"] != KIND_EFFECT:
@@ -425,7 +463,16 @@ class Orchestrator:
             # (issue #41) so PORT-JOURNAL-005 replay is self-sufficient --
             # a faithful replay must fold under the same policy parameters
             # the run used (CONTRACT-DURABILITY's topology/budget row).
-            data={"plan": resolved_plan, "max_attempts": self.config.max_attempts},
+            # `data.max_assurance_attempts` rides alongside on exactly the
+            # same terms (INV-021/ADR-0006): the run's effective assurance
+            # budget becomes durable journal state at creation, so every
+            # later fold -- read or write, this process or another --
+            # derives the same two budgets from the journal alone.
+            data={
+                "plan": resolved_plan,
+                "max_attempts": self.config.max_attempts,
+                "max_assurance_attempts": self.config.max_assurance_attempts,
+            },
         )
         try:
             created = self.work_graph.create(delivery_run_id=self.delivery_run_id, plan=resolved_plan)
@@ -455,6 +502,7 @@ class Orchestrator:
             facts,
             delivery_run_id=self.delivery_run_id,
             max_attempts=self._effective_max_attempts(history),
+            max_assurance_attempts=self._effective_max_assurance_attempts(history),
         )
 
     def step(self) -> bool:
@@ -627,7 +675,12 @@ class Orchestrator:
         return True
 
     def _poll_assurance(self, work_id: str, wp: WorkProjection) -> bool:
-        current = wp.assurances[-1] if wp.assurances else None
+        # INV-021: several assurance lifecycles may exist for one attempt
+        # (bounded re-request on `inconclusive`), so poll the assurance the
+        # projection currently names, not merely the last entry appended.
+        current = next(
+            (item for item in wp.assurances if item["assurance_id"] == wp.current_assurance_id), None
+        )
         if current is None or current["verdict"] is not None:
             return False
         observation = self.assurance.inspect(assurance_id=wp.current_assurance_id)
@@ -823,7 +876,12 @@ class Orchestrator:
             reason=reason,
         )
         history = self.journal.history(delivery_run_id=self.delivery_run_id)
-        apply_fact(wp, fact, max_attempts=self._effective_max_attempts(history))
+        apply_fact(
+            wp,
+            fact,
+            max_attempts=self._effective_max_attempts(history),
+            max_assurance_attempts=self._effective_max_assurance_attempts(history),
+        )
         basis_record = next(
             (
                 record
@@ -861,7 +919,11 @@ class Orchestrator:
         return progressed
 
     def _apply_decision(self, wp: WorkProjection, history: Sequence[Mapping[str, Any]]) -> bool:
-        outcome = decide(wp, max_attempts=self._effective_max_attempts(history))
+        outcome = decide(
+            wp,
+            max_attempts=self._effective_max_attempts(history),
+            max_assurance_attempts=self._effective_max_assurance_attempts(history),
+        )
         if outcome is None:
             return False
         effect = outcome.effects[0]  # v0 policy: exactly one effect per Decision.

@@ -1,6 +1,6 @@
 ---
 name: orc-ledger
-version: 4
+version: 5
 description: Onboard to and operate within a repository whose delivery is tracked by an orc ledger (an .orc/ directory of run journals). Use when a session starts work in such a repo, when the user mentions orc runs, the ledger, dispatch, pending runs, settlements, or verdicts, or before recording anything into a run.
 ---
 
@@ -49,13 +49,22 @@ here so a fresh session needs no other file:
   is the system working: report it, do not reconcile it away. Substantive
   findings ride the verdict entry's `extensions`, as specified by the external
   `PLAYBOOK-AGENT-CLI`, canonical in the orc-werk repository/package.
+- **Record `inconclusive` when you cannot decide** — never `rejected` for a
+  failure that is yours. `--verdict inconclusive` is the honest verdict when
+  you evaluated the candidate and genuinely cannot decide, or could not
+  evaluate it at all (sandbox down, tooling missing, timeout). It spends the
+  run's assurance budget, never the ship seat's retry budget: within budget
+  the kernel re-requests assurance of the *same* candidate and the next
+  verify seat picks it up; exhausted, the Work blocks with
+  `reason: assurance-inconclusive` for the operator. Put the reason in
+  `--evidence-ref` so the ledger shows *why*.
 - Exit codes: 0 all accepted · 1 blocked · 2 error · 3 pending (your seat's
   work may be done at exit 3 — read the output, not just the code).
 
 ## 4. Recording mechanics
 
-`orc record <run-id> --work <work-id> --verdict <accepted|rejected> ...`
-(verify seat) and its ship-seat sibling `orc record <run-id> --work
+`orc record <run-id> --work <work-id> --verdict
+<accepted|rejected|inconclusive> ...` (verify seat) and its ship-seat sibling `orc record <run-id> --work
 <work-id> --outcome <completed|failed> [--evidence-ref ...] [--model M
 --session-ref S --seat-ref S]` are the two recording verbs — exactly one
 per invocation, never both for the same candidate. Each validates the
