@@ -18,7 +18,7 @@ EXECUTING
 ASSURING
   ├─ accepted      → ACCEPTED
   ├─ rejected      → READY (retry, budget permitting) | BLOCKED (budget exhausted)
-  └─ inconclusive  → BLOCKED
+  └─ inconclusive  → ASSURING (re-request, same candidate, assurance budget permitting) | BLOCKED (assurance budget exhausted)
 
 Terminal states (v0/M0 reachable):
 ACCEPTED
@@ -40,7 +40,8 @@ FAILED
 | ASSURING | `FACT-ASSURE-SETTLED(accepted)` | `DEC-ACCEPT` | ACCEPTED | `FX-COMPLETE-WORK` |
 | ASSURING | `FACT-ASSURE-SETTLED(rejected)`, retry budget available (`INV-018`/`INV-019`) | `DEC-RETRY` | READY | `FX-START-EXECUTION` |
 | ASSURING | `FACT-ASSURE-SETTLED(rejected)`, retry budget exhausted (`INV-018`/`INV-019`) | `DEC-BLOCK` | BLOCKED | `FX-BLOCK-WORK` |
-| ASSURING | `FACT-ASSURE-SETTLED(inconclusive)` | `DEC-BLOCK` | BLOCKED | `FX-BLOCK-WORK` |
+| ASSURING | `FACT-ASSURE-SETTLED(inconclusive)`, assurance budget available (`INV-021`, item 11 below) | `DEC-REQUEST-ASSURANCE` | ASSURING | `FX-START-ASSURANCE` (same exact Candidate, new assurance identity) |
+| ASSURING | `FACT-ASSURE-SETTLED(inconclusive)`, assurance budget exhausted (`INV-021`, item 11 below) | `DEC-BLOCK` | BLOCKED | `FX-BLOCK-WORK` |
 | EXECUTING | `FACT-CANDIDATE-OBSERVED` naming a candidate identity with a prior `accepted` verdict (verdict inheritance, item 8 below) | *(none — mechanical, `INV-011`)* | ACCEPTED | *(none — see the `DEC-ACCEPT`/`FX-COMPLETE-WORK` row above)* |
 | EXECUTING | `FACT-CANDIDATE-OBSERVED` naming a candidate identity with a prior `rejected` verdict, retry budget available (verdict inheritance, item 8 below) | *(none — mechanical, `INV-011`)* | READY | *(none — see the `DEC-RETRY` row above)* |
 | EXECUTING | `FACT-CANDIDATE-OBSERVED` naming a candidate identity with a prior `rejected` verdict, retry budget exhausted (verdict inheritance, item 8 below) | *(none — mechanical, `INV-011`)* | BLOCKED | *(none — see the `DEC-BLOCK` row above)* |
@@ -50,6 +51,8 @@ FAILED
 Retry-budget exhaustion (`INV-018`/`INV-019`) resolves deterministically to `DEC-BLOCK` → BLOCKED via `FX-BLOCK-WORK`/`FACT-WORK-BLOCKED`. This is the single v0 budget-exhaustion terminal; the state machine does not branch to any other outcome when the budget is exhausted.
 
 `max_attempts = 3` is the v0 default policy budget used by the retry-budget checks above (`INV-018`/`INV-019`). Policy configuration MAY override this default; `INV-019` requires any configured budget be finite.
+
+`max_assurance_attempts = 2` is the default assurance budget used by the two `inconclusive` rows above (`INV-021`, `ADR-0006`): one re-request of the same candidate before an `inconclusive` outcome blocks the Work. Policy configuration MAY override it; `INV-021` requires it be finite. It is journaled at run creation alongside `max_attempts` (item 11 below).
 
 ## Mechanical fact sequencing
 
@@ -71,7 +74,9 @@ The other resting point this item's transition row names is item 7's existing `A
 
 10. **Operator cancellation.** From any non-terminal state (`READY`, `EXECUTING`, or `ASSURING`), `FACT-WORK-CANCELLED` is the legal one-step transition to and confirmation of terminal `CANCELLED`, paired with `DEC-CANCEL` (`PROTOCOL-DECISIONS`). `DEC-CANCEL` is attributed to the operator (never `V0_POLICY_ATTRIBUTION` and never emitted by `decide()` or the ship/verify agent path — `INV-011`); its `basis` cites an appropriate current-state Fact and its `data` carries the operator's reason (`INV-012`). The Fact carries the same free-form `reason`. Cancellation deliberately closes the Work without acceptance and is never a verdict: no `FACT-ASSURE-SETTLED` is fabricated (`INV-003`, `INV-009`). Folding it clears current execution, assurance, and candidate-conflict in-flight markers so replay derives a clean terminal projection. No port Effect accompanies `DEC-CANCEL`/`FACT-WORK-CANCELLED`: cancellation is journal-only. It is illegal from any terminal state and cannot be recorded twice.
 
-Note (informative): `FACT-WORK-BLOCKED`'s `reason` field is free-form per `PROTOCOL-FACTS`. The v0 policy emits exactly three values: `retry-budget-exhausted` (retry budget exhausted per `INV-018`/`INV-019`), `assurance-inconclusive` (an `inconclusive` assurance verdict), and `attempt-abandoned` (item 9's `FACT-ATTEMPT-ABANDONED` exhausted the retry budget on resolution). Future policies MAY emit other values.
+11. **Assurance re-request on `inconclusive` (`ADR-0006`, `INV-021`).** An `inconclusive` settlement decides nothing about the Candidate; whether the Work continues is decided by the assurance budget, not by the word. `assurance_number` is the per-execution-attempt assurance index — the first assurance of the current Execution's Candidate is `1` — deterministically reconstructable as the count of `FACT-ASSURE-STARTED` records journaled for the current Execution. Folding `FACT-ASSURE-SETTLED(inconclusive)` with `assurance_number < max_assurance_attempts` leaves the Work at `ASSURING` with no assurance in flight; the ordinary `DEC-REQUEST-ASSURANCE` row then fires again for the *same* `candidate_id`/fingerprint (`INV-007` — the subject has not changed, so the re-request is not a new candidate), citing the `inconclusive` settlement as basis (`INV-012`), and `FX-START-ASSURANCE` is dispatched under a fresh assurance identity with `INV-020`'s `assurance_number` key component. Folding it with `assurance_number >= max_assurance_attempts` resolves to `BLOCKED` (`DEC-BLOCK`, `reason: assurance-inconclusive`, basis the final `inconclusive` settlement). A re-request journals no `FACT-EXEC-STARTED` and therefore never advances `attempt_number` or consumes the execution retry budget (`INV-018`/`INV-019`): a verifier that cannot decide costs assurance budget, never the ship seat's. Earlier `inconclusive` settlements and their evidence remain history for that candidate, never overwritten or relabeled (`P-008`). The budget authority mirrors `max_attempts` exactly: `FX-CREATE-WORK.data.max_assurance_attempts` is journaled at creation and is the single authority for every verb's fold of that run, with `SCN-008`'s match-or-refuse rule applying to any later explicit value; a journal written before this field existed folds under a budget of `1`, which reproduces the pre-`ADR-0006` single-row behavior (`inconclusive` → `BLOCKED`) so no existing journal changes meaning on replay (`CONF-JOURNAL-003`). **Amendment to items 8 and 9:** an `inconclusive` settlement is never inherited — item 8's "a prior `FACT-ASSURE-SETTLED` exists" means a prior `accepted` or `rejected` settlement. An exactly re-observed candidate whose only settled assurances are `inconclusive` is neither an inheritance nor an item 9 conflict: it enters `ASSURING` afresh with a new attempt's full assurance budget and the ordinary `DEC-REQUEST-ASSURANCE` row follows. `SCN-021` is the executable specification.
+
+Note (informative): `FACT-WORK-BLOCKED`'s `reason` field is free-form per `PROTOCOL-FACTS`. The v0 policy emits exactly three values: `retry-budget-exhausted` (retry budget exhausted per `INV-018`/`INV-019`), `assurance-inconclusive` (the assurance budget was exhausted by `inconclusive` verdicts, `INV-021`/item 11), and `attempt-abandoned` (item 9's `FACT-ATTEMPT-ABANDONED` exhausted the retry budget on resolution). Future policies MAY emit other values.
 
 ## Reserved states and decisions
 

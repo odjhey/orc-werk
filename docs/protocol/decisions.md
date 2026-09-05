@@ -14,7 +14,7 @@ A Decision records what orchestration policy chose and why.
 |---|---|---|
 | `DEC-DISPATCH` | Dispatch | Start a new Execution for eligible Work. |
 | `DEC-RETRY` | Retry | Start another Execution for the same Work while preserving history. |
-| `DEC-REQUEST-ASSURANCE` | RequestAssurance | Evaluate one exact Candidate. |
+| `DEC-REQUEST-ASSURANCE` | RequestAssurance | Evaluate one exact Candidate — including re-evaluating the *same* Candidate under a new assurance identity after an `inconclusive` settlement while the assurance budget permits (`INV-021`, `STATE-DELIVERY` item 11), citing that settlement as basis. |
 | `DEC-ACCEPT` | Accept | Commit Work completion after required assurance succeeds. |
 | `DEC-BLOCK` | Block | Stop autonomous progress pending changed state/input/authority. |
 | `DEC-ABANDON-ATTEMPT` | AbandonAttempt | Consume an attempt's unresolved candidate-observation conflict, settled-completed Execution with no bound candidate, or unsettleable Assurance, settling that attempt as failed so ordinary retry/block machinery proceeds. |

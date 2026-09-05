@@ -30,3 +30,4 @@ The pure core must pass these scenarios with scripted/in-memory adapters before 
 18. [`SCN-018`](SCN-018-observer-hooks.md) observer hooks — config-declared, fire-and-forget commands spawned after facts newly appended by the current pass, at-most-once by contract (issue #193)
 19. [`SCN-019`](SCN-019-storage-concurrency.md) storage concurrency — locking, atomic replacement, and append safety under multiple independent CLI processes stated as the required test battery (`CONTRACT-STORAGE-CONCURRENCY`)
 20. [`SCN-020`](SCN-020-assurance-depth-opacity.md) assurance depth is opaque provenance — `assurance-depth/v1` transports losslessly and never changes transitions (`EXT-ASSURANCE-DEPTH-V1`, `CONF-EXT-008`) **(draft)**
+21. [`SCN-021`](SCN-021-inconclusive-rerequest.md) bounded assurance re-request on `inconclusive` — same candidate, new assurance identity, separate budget, legacy journals fold under budget 1 (`ADR-0006`, `INV-021`, `CONF-ASSURE-008`)

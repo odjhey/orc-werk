@@ -162,7 +162,7 @@ inspections return that immutable snapshot (`CONF-ASSURE-002`).
 | Escaped script path, malformed config, non-portable input | `ERR-VALIDATION` |
 | Script absent, non-executable, unreadable for hashing, or subprocess spawn fails | `ERR-PROVIDER-UNAVAILABLE` |
 | Malformed assurance identity | `ERR-NOT-FOUND` |
-| Crash, signal, timeout | Settled `inconclusive`, not an error |
+| Crash, signal, timeout | Settled `inconclusive`, not an error — re-requested within the assurance budget, `INV-021` |
 | Invalid stdout enrichment | Exit-derived settlement plus recorded enrichment drop |
 
 ## Lossy mappings and limitations

@@ -69,6 +69,8 @@ description: Flat documentation index.
 - [ADR-0002 Candidate-bound assurance](decisions/ADR-0002-candidate-bound-assurance.md)
 - [ADR-0003 Python-first reference implementation](decisions/ADR-0003-python-reference-implementation.md)
 - [ADR-0004 Versioned extensions](decisions/ADR-0004-versioned-extensions.md)
+- [ADR-0005 Push recording, not pull observation](decisions/ADR-0005-push-recording-not-pull-observation.md)
+- [ADR-0006 Bounded assurance re-request on inconclusive](decisions/ADR-0006-bounded-assurance-rerequest.md)
 
 ## Research and lineage
 - [Research lineage](research/README.md)

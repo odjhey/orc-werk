@@ -96,4 +96,4 @@ For a documentation-only candidate, `static` is an honest and complete depth. Wh
 }
 ```
 
-The environment prevented evaluation. No `assurance-depth/v1` payload is recorded because no method completed; the payload MUST NOT be used to say "blocked". (Whether `inconclusive` should remain terminal-blocking or admit re-verification is a separate core question raised in the provenance report, not something this extension changes.)
+The environment prevented evaluation. No `assurance-depth/v1` payload is recorded because no method completed; the payload MUST NOT be used to say "blocked". (Whether the Work continues after `inconclusive` is decided by the assurance budget, `ADR-0006`/`INV-021`, not by this extension.)
