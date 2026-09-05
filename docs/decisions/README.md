@@ -17,6 +17,7 @@ ADRs explain why decisions were made. Current contracts define what is authorita
 - [ADR-0003 — Python-first reference implementation](ADR-0003-python-reference-implementation.md)
 - [ADR-0004 — Versioned extensions for specialized semantics](ADR-0004-versioned-extensions.md)
 - [ADR-0005 — Push recording, not pull observation](ADR-0005-push-recording-not-pull-observation.md)
+- [ADR-0006 — Bounded assurance re-request on `inconclusive`](ADR-0006-bounded-assurance-rerequest.md)
 
 ## Convention
 

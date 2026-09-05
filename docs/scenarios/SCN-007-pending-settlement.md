@@ -48,7 +48,7 @@ Pending/incremental mode is the M1a **default** dispatch mode: a config with no 
 ### Repeat through assurance to ACCEPTED
 
 12. The same pattern applies at the next boundary: if the operator records only the execution settlement and candidate (outcome `completed`, Candidate C1) without yet knowing the assurance verdict, re-dispatch stops cleanly at `ASSURING` under the identical rules as invocation 1 above — no `FACT-ASSURE-SETTLED` is fabricated, no retry-budget attempt is consumed for the wait, and the CLI reports the same distinct in-progress exit code.
-13. Recording the assurance verdict and re-dispatching again advances the run to whichever terminal `STATE-DELIVERY`'s transition table names for that verdict (`ACCEPTED` for `accepted`; `READY` for `rejected` with budget available, then onward through the same incremental pattern; `BLOCKED` for `inconclusive` or budget exhaustion).
+13. Recording the assurance verdict and re-dispatching again advances the run to whichever terminal `STATE-DELIVERY`'s transition table names for that verdict (`ACCEPTED` for `accepted`; `READY` for `rejected` with budget available, then onward through the same incremental pattern; `BLOCKED` for retry-budget exhaustion; for `inconclusive`, back to `ASSURING` as a re-request of the same candidate while the assurance budget permits, else `BLOCKED` — `SCN-021`, `INV-021`).
 14. Every invocation boundary in this chain is independently crash-boring: the process may exit between any two invocations, in any order relative to when the operator records an outcome, without lost or duplicated facts, decisions, or effects.
 
 ## Must not be confused with SCN-006

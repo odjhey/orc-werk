@@ -109,7 +109,7 @@ already covers the new key generically.
 
 ## 4. Open questions for operator ruling (not changed by this proposal)
 
-**Q1 — `inconclusive` is terminal; pstack's `verifier-blocked` is not.**
+**Q1 — `inconclusive` is terminal; pstack's `verifier-blocked` is not.** *RULED 2026-09-05: option B, recorded as `ADR-0006` (`STATE-DELIVERY` item 11, `INV-021`, `SCN-021`).*
 Today an `inconclusive` verdict blocks the Work (`STATE-DELIVERY`,
 `reason: assurance-inconclusive`), and the verify seat's record verb offers
 only `accepted|rejected`, so a verifier facing a broken environment has no
