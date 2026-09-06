@@ -1474,31 +1474,55 @@ def _build_command_assurance(assurance_cfg: Mapping[str, Any]) -> AssurancePort:
     )
 
 
-def _observed_candidate_fingerprints(history: Iterable[Mapping[str, Any]]) -> dict[str, list[str]]:
+def _attempt_numbers_by_execution(history: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+    """`execution_id -> attempt_number`, read off each `FX-START-EXECUTION`
+    effect (which journals both). Candidate observations carry only the
+    `execution_id`; this is how they are placed back onto the attempt that
+    produced them (issue #269)."""
+    by_execution: dict[str, int] = {}
+    for record in history:
+        if record.get("kind") != "effect" or record.get("id") != FX_START_EXECUTION:
+            continue
+        data = record.get("data", {})
+        execution_id = (data.get("dispatch_result") or {}).get("execution_id")
+        attempt_number = data.get("attempt_number")
+        if execution_id and isinstance(attempt_number, int):
+            by_execution[execution_id] = attempt_number
+    return by_execution
+
+
+def _observed_candidate_fingerprints(history: Iterable[Mapping[str, Any]]) -> dict[str, dict[int, str]]:
     """Real-candidate counterpart of `build_scripted_adapters`'
     config-driven `fingerprint_of(candidate_content)` keying: a
     `GitDiffCandidate` fingerprint depends on real git state, unknowable at
     config-authoring time, so this reads the already-durable
     `FACT-CANDIDATE-OBSERVED` records off the run's own journal history
-    (chronological `JournalPort.history()` order) instead, grouped by
-    `work_id` -- one fingerprint per attempt that produced an assurable
-    subject, in the order those attempts settled."""
-    by_work: dict[str, list[str]] = {}
-    for record in history:
+    instead, grouped by `work_id` and keyed by the 0-based index of the
+    attempt that produced the subject. Keyed by attempt, not by position
+    among observations (issue #269): an attempt that settled `failed`
+    before any candidate existed leaves a gap, and attempt N's verdict
+    must still bind to attempt N's candidate across that gap."""
+    history_records = list(history)
+    attempt_of = _attempt_numbers_by_execution(history_records)
+    by_work: dict[str, dict[int, str]] = {}
+    for record in history_records:
         if record.get("kind") != KIND_FACT or record.get("id") != FACT_CANDIDATE_OBSERVED:
             continue
         data = record.get("data", {})
         work_id = data.get("work_id")
         fingerprint = data.get("fingerprint")
-        if work_id and fingerprint:
-            by_work.setdefault(work_id, []).append(fingerprint)
+        attempt_number = attempt_of.get(data.get("execution_id"))
+        if work_id and fingerprint and attempt_number is not None:
+            by_work.setdefault(work_id, {})[attempt_number - 1] = fingerprint
     return by_work
 
 
 def _observed_candidate_bindings(
     history: Iterable[Mapping[str, Any]],
-) -> dict[str, list[tuple[str, Mapping[str, Any]]]]:
-    """Read fingerprint and identity together from durable identify effects.
+) -> dict[str, dict[int, tuple[str, Mapping[str, Any]]]]:
+    """Read fingerprint and identity together from durable identify effects,
+    keyed like `_observed_candidate_fingerprints` (work id, then 0-based
+    attempt index of the producing execution -- issue #269).
 
     Issue #244 (SCN-014 regression): a `FX-IDENTIFY-CANDIDATE` record's
     `dispatch_result.candidate` is explicitly `null` for a non-binding null
@@ -1510,8 +1534,10 @@ def _observed_candidate_bindings(
     `dispatch_result.get("candidate")` reader in this codebase (`cli.show`,
     `cli.affordances`, `cli.main`, `cli.refs`, `cli.report`) -- this was the
     one call site that skipped the guard."""
-    by_work: dict[str, list[tuple[str, Mapping[str, Any]]]] = {}
-    for record in history:
+    history_records = list(history)
+    attempt_of = _attempt_numbers_by_execution(history_records)
+    by_work: dict[str, dict[int, tuple[str, Mapping[str, Any]]]] = {}
+    for record in history_records:
         if record.get("kind") != "effect" or record.get("id") != FX_IDENTIFY_CANDIDATE:
             continue
         data = record.get("data", {})
@@ -1521,8 +1547,9 @@ def _observed_candidate_bindings(
         work_id = data.get("work_id")
         fingerprint = candidate.get("fingerprint")
         subject_identity = candidate.get("subject_identity")
-        if work_id and fingerprint and isinstance(subject_identity, Mapping):
-            by_work.setdefault(work_id, []).append((fingerprint, subject_identity))
+        attempt_number = attempt_of.get(data.get("execution_id"))
+        if work_id and fingerprint and isinstance(subject_identity, Mapping) and attempt_number is not None:
+            by_work.setdefault(work_id, {})[attempt_number - 1] = (fingerprint, subject_identity)
     return by_work
 
 
@@ -1532,34 +1559,36 @@ def build_real_assurance_script(
     """Build a `ScriptedAssurance` script keyed by REAL, journal-observed
     candidate fingerprints instead of config-predicted ones (module
     docstring, "Attempts-merge semantics"). Each `attempts[work_id]` entry
-    (real-candidate mode: `assurance` only) is matched, in order, against
-    that work's `FACT-CANDIDATE-OBSERVED` fingerprints in the order they
-    were journaled -- attempt N's config-recorded verdict binds to attempt
-    N's real candidate. An attempt position with no verdict recorded yet is
-    skipped (nothing to bind); an attempt position with a verdict recorded
-    before its candidate has been observed yet is also skipped -- there is
-    nothing to bind it to *yet*, and `ScriptedAssurance(pending=True)`
-    reports the ordinary SCN-007 pending wait until a later dispatch (once
-    the candidate is observed) supplies the matching script entry."""
+    (real-candidate mode: `assurance` only) is matched against the
+    `FACT-CANDIDATE-OBSERVED` fingerprint of the SAME attempt number --
+    attempt N's config-recorded verdict binds to attempt N's real
+    candidate, even when an earlier attempt settled `failed` and produced
+    no candidate at all (issue #269). An attempt position with no verdict
+    recorded yet is skipped (nothing to bind); an attempt position with a
+    verdict recorded before its candidate has been observed yet is also
+    skipped -- there is nothing to bind it to *yet*, and
+    `ScriptedAssurance(pending=True)` reports the ordinary SCN-007 pending
+    wait until a later dispatch (once the candidate is observed) supplies
+    the matching script entry."""
     history_records = list(history)
     observed = _observed_candidate_bindings(history_records)
     observed_fingerprints = _observed_candidate_fingerprints(history_records)
     script: dict[str, list[dict[str, Any]]] = {}
     for work_id, attempts in attempts_by_work.items():
-        bindings = observed.get(work_id, [])
-        fingerprints = observed_fingerprints.get(work_id, [])
+        bindings = observed.get(work_id, {})
+        fingerprints = observed_fingerprints.get(work_id, {})
         for attempt_index, attempt in enumerate(attempts):
             # INV-021: an attempt binds ALL its ordered assurance
             # settlements to that attempt's one real candidate fingerprint
             # -- the re-request is of the same candidate, so the binding
             # target does not change between assurance 1 and assurance N.
             assurance_entries = attempt_assurance_entries(attempt)
-            if not assurance_entries or attempt_index >= len(fingerprints):
+            if not assurance_entries or attempt_index not in fingerprints:
                 continue
             if not any("derived_identity" in entry for entry in assurance_entries):
                 script[fingerprints[attempt_index]] = [dict(entry) for entry in assurance_entries]
                 continue
-            if attempt_index >= len(bindings):
+            if attempt_index not in bindings:
                 continue
             fingerprint, subject_identity = bindings[attempt_index]
             script[fingerprint] = [
