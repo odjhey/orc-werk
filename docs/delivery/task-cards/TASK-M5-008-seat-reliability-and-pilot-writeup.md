@@ -45,7 +45,11 @@ test's predictions (`TASK-M5-001`) held, whether the hook guards
 ## In scope
 
 - `docs/delivery/seat-reliability.md` — new file, append-only log
-  structure, seeded with this pilot's own first entry (or entries).
+  structure, seeded with this pilot's own first entry (or entries). The
+  log file and its first four entries landed early, in
+  `fix-verify-seat-fallback`, because the same-day rule required
+  recording the day's events immediately; the pilot write-up below
+  remains this card's open deliverable.
 - The pilot write-up drawing on `m5-omp-harness-pilot`'s ledger journal
   (`orc history m5-omp-harness-pilot`), the PR, and any recorded verdict.
 

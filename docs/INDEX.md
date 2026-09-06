@@ -83,6 +83,7 @@ description: Flat documentation index.
 - [M3 harden the loop](delivery/M3-harden-the-loop.md)
 - [M4 cockpit and clarity](delivery/M4-cockpit-and-clarity.md)
 - [Watchtower operations playbook](delivery/watchtower-operations.md)
+- [Seat reliability log](delivery/seat-reliability.md)
 - [Delivery stance](delivery/delivery-stance.md)
 - [Agent onboarding playbook](playbooks/agent-onboarding.md)
 - [CLI usage guide](playbooks/cli-usage.md)
