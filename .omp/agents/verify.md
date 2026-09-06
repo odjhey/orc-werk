@@ -1,7 +1,10 @@
 ---
 name: verify
 description: Adversarial verification seat. Audits one candidate PR it did not write, derives the candidate identity itself, runs the gate and probes, and records the assurance verdict in the orc ledger. Cannot push, commit, comment, or merge.
-model: openai-codex/gpt-5.6-sol:high
+# V7: every entry is a non-Anthropic family (ship runs on anthropic/*). Never add a Claude-family fallback here.
+# Order is resolution preference only; a usage-limit error on entry 1 does NOT fall through at spawn
+# (observed 2026-09-06: two spawns died at usage_limit_reached on openai-codex). Put the model with quota first.
+model: google-antigravity/gemini-3.8-flash:high, openai-codex/gpt-5.6-sol:high, google-antigravity/gpt-oss-120b
 tools: read, bash, grep, glob, hub
 autoloadSkills: orc-ledger
 output:
