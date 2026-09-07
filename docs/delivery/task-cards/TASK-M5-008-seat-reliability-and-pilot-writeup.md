@@ -76,3 +76,26 @@ automation.
   surfaced any friction.
 - The log is append-only in practice: a later PR touching this file adds
   entries rather than rewriting or deleting earlier ones.
+
+## Closure — 2026-09-07 (write-up half delivered)
+
+`docs/delivery/seat-reliability.md`'s append-only log (the first half of
+this card) landed early in `fix-verify-seat-fallback`, and its 2026-09-07
+entries (hook misfires from `TASK-M5-005`'s three run identities, and the
+hook's retirement) are appended in that same log, dated, additive.
+
+The pilot write-up (the second half) is delivered as
+`docs/reports/2026-09-07-m5-pilot-retrospective.md`. It declares its own
+cutoff anchor (a `master` commit and an ISO instant) up front and derives
+every count in it against that anchor, or against an individually dated
+instant where a narrower fact is stated — per the counting lesson (issue
+#285) the milestone itself produced. It answers, with cited evidence: which
+of `TASK-M5-001`'s capability predictions held and which were falsified by
+the seat-hook cycle (§1); where seat discipline held under real seat
+traffic and where it needed operator judgment (§2); what the seat-hook
+capability cycle cost and taught (§3, `TASK-M5-005`); the counting lesson
+itself (§4); and which of the eight TASK-M5 cards carry a terminal
+delivery, and on which rungs seat discipline now rests (§5).
+
+Both halves of this card are now delivered; nothing in this card's own
+In scope/Acceptance sections above is rewritten — this section is additive.

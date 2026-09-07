@@ -51,3 +51,40 @@ the format's origin and the pilot write-up this log feeds.
 - **ship** / `m5-omp-harness-pilot` `docs` / `anthropic/claude-sonnet-5` — no
   incident; completed in 11m19s. Recorded here as a clean baseline row: the
   ship seat for the same run/work, same day, with nothing to report.
+
+## 2026-09-07
+
+- **verify** / `task-m5-005` `hook` / `google-antigravity/gemini-3.8-flash`
+  — hook misfire: attempt 2 (seq 26) probed the freshly-installed
+  `.omp/extensions/orc-seat.ts` guard live and found it satisfiable by
+  command text that merely mentions `orc record` without invoking it
+  (`echo fake-orc-record --command "orc record run-x --work w --verdict
+  accepted"` yielded `{recorded:true}`). Consequence: rejected; filed as
+  issue #290 (command-text-bound enforcement).
+- **verify** / `task-m5-005-guards` `guards` / `google-antigravity/gemini-3.8-flash`
+  — hook misfire: attempt 2 (seq 26) found the rewritten worktree fence
+  bypassable via a symlinked write/edit, a colon-split path
+  (`./safe:/../../outside-probe/...`), and a `://`-containing path the
+  guard's own extractor skips outright — while the same fence denied a
+  legitimate own-worktree path on a case-insensitive filesystem.
+  Consequence: rejected; filed as issues #296/#297 (path canonicalization).
+- **verify** / `task-m5-005-sensor` `sensor` / `google-antigravity/gemini-3.8-flash`
+  — hook misfire: attempt 3 (seq 36) found the *fix* for #296/#297 itself
+  introduced a new escape — a case-insensitive `local://` scheme match
+  (`LOCAL_SCHEME_RE = /^local:\/\//i`) that the installed write tool does
+  not share (case-sensitive `local:` only), letting `Local://../../sibling/
+  hit.txt` land outside the ship's own worktree while the guard reported
+  `ALLOW`. Consequence: rejected; filed as issue #298 (scheme
+  adjudication) — the third escape class, introduced by the fix for the
+  second.
+- **operator** / `TASK-M5-005` — after three run identities (`task-m5-005`,
+  `task-m5-005-guards`, `task-m5-005-sensor`) each exhausted a three-attempt
+  budget on a new escape class every time (above), the `tool_call` hook
+  rung was retired by operator ruling rather than re-attempted a fourth
+  time. Landed as PR #300 (`hook-retire-decision`) and PR #299
+  (`docs/delivery/M5-omp-first-delivery.md`, `TASK-M5-005`'s and
+  `TASK-M5-008`'s cards, `README.md`, `.omp/agents/verify.md`). Seat
+  discipline now rests on tool restriction, GitHub branch protection, and
+  after-the-fact ledger audit (`docs/reports/2026-09-07-m5-pilot-retrospective.md`
+  §5). No `tool_call`-hook event is expected in this log after this date;
+  the mechanism no longer exists on `master`.
