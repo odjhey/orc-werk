@@ -3,7 +3,7 @@ id: M5-OMP-FIRST-DELIVERY
 type: milestone
 status: current
 authority: normative
-description: M5 — Oh My Pi (OMP) becomes orc-werk's primary delivery harness for its own seats; seat discipline moves from prose playbooks into OMP agent definitions, result schemas, and hooks, per ADR-0007 and the nother-guide principles it adopts by pinned reference.
+description: M5 — Oh My Pi (OMP) becomes orc-werk's primary delivery harness for its own seats; seat discipline moves from prose playbooks into OMP agent definitions and result schemas, per ADR-0007 and the nother-guide principles it adopts by pinned reference; the tool_call seat-hook rung was tested to exhaustion and abandoned (TASK-M5-005).
 ---
 
 # M5 — OMP-first delivery
@@ -100,7 +100,10 @@ per `AGENTS.md` rule 4 (docs amend first). Alongside it:
   observed failures), keeping Pipeline, Sizing, Autonomy, Dormant
   lifecycle, and Audit trail. §Model and effort selection and the
   worktree/`watch_pr.py` Conventions lines are deleted — they move to
-  agent bodies and the hook.
+  agent bodies; the `tool_call` hook rung was tested to exhaustion and
+  abandoned (`TASK-M5-005`), so this now rests on tool restriction,
+  branch protection on `master`, and after-the-fact ledger audit (Phase
+  0 above).
 - `PLAYBOOK-AGENT-CLI` keeps §1–4 (observations only, no self-assurance,
   derive identity, `inconclusive` semantics), §6 (multi-work etiquette),
   and §9 (fresh-session orientation). OMP-specific mechanics move to
@@ -163,8 +166,10 @@ deliverables.
 ## Phase 3 — Retire
 
 - Deleted: `PLAYBOOK-WATCHTOWER`'s §Model and effort selection and its
-  worktree/`watch_pr.py` Conventions lines (now enforced by agent
-  definitions and the hook); the "brief lives in the card" duplication
+  worktree/`watch_pr.py` Conventions lines (the `tool_call` hook rung
+  was tested to exhaustion and abandoned, `TASK-M5-005`; enforcement now
+  rests on tool restriction, branch protection on `master`, and
+  after-the-fact ledger audit); the "brief lives in the card" duplication
   (task cards stay the sole tier-1 spec).
 - Kept (per operator ruling): `.claude/skills` symlink and `CLAUDE.md` —
   Claude Code remains a harness in use; `scripts/watch_pr.py`;

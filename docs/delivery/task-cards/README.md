@@ -45,7 +45,7 @@ M2 cards, reshaped per operator review (2026-08-28; see `docs/delivery/M2-close-
 `TASK-M2-001` and `TASK-M2-006` are independent of each other and may ship in parallel worktrees. `TASK-M2-003` shares the acp adapter surface with `TASK-M2-001`, so sequencing to avoid worktree collisions is a watchtower call at dispatch; it is also sequenced after `TASK-M2-006` for its mirror/report-harvesting purpose. `TASK-M2-004` is gate-blocked on `TASK-M2-001` + `TASK-M2-006` and is the last M2 card to start, regardless of numbering.
 
 M5 cards (`M5-OMP-FIRST-DELIVERY`), gated by `TASK-M5-001` (the capability
-test every later card's agent/hook behavior depends on):
+test every later card's agent-definition behavior depends on):
 
 1. `TASK-M5-001` OMP capability test report (Phase 0; gates every other M5 card)
 2. `TASK-M5-002` `PLAYBOOK-WATCHTOWER`/`PLAYBOOK-AGENT-CLI`/`AGENTS.md`/`.omp/RULES.md` rewrite (depends on `TASK-M5-001`)
