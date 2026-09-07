@@ -90,15 +90,30 @@ automation.
 
 ## Status
 
-Fully delivered. `docs/delivery/seat-reliability.md`'s format and first
-four entries landed in `fix-verify-seat-fallback` (PR #268); this card's
-own PR adds the two 2026-09-07 entries above and the pilot write-up
+Fully delivered on attempt 3 of `max_attempts=3`.
+`docs/delivery/seat-reliability.md`'s format and first four entries landed
+in `fix-verify-seat-fallback` (PR #268); this card's own PR adds the
+2026-09-07 entries above and the pilot write-up
 (`docs/reports/2026-09-07-m5-pilot-retrospective.md`). Nothing in this
-card's scope remains open. One finding surfaced by the write-up is
-explicitly out of this card's own scope and left for an operator/ADR
-decision: `ADR-0007`'s `V7` ruling names `openai-codex` specifically as
-the verify family, but observed practice has been
-`google-antigravity/gemini-3.8-flash` for the entire 2026-09-07 wave with
-no `openai-codex` verdict recorded since the pilot's own day-one deaths —
-per `AGENTS.md` rule 4, this needs a formal `ADR-0007` amendment rather
-than a continuing silent deviation.
+card's scope remains open beyond the `ADR-0007` `V7` amendment, which is an
+operator/ADR decision explicitly out of this card's own scope.
+
+This card's own delivery history is itself the write-up's most on-topic
+finding: attempt 1 (`0584a66868084169ee574111c12a23f707bd8ed7`) was rejected
+by `VerifyM5008` for undercounting a ten-delivery verify-verdict tally as
+nine instead of ten and for missing `chore-verify-followups`'s own
+settlement; attempt 2 (`645c2c47a18a6800792ad44028bc548b6dd51bbc`) was
+rejected by `VerifyM5008R2` for undercounting the whole-ledger
+verify-verdict join as eleven/thirteen instead of twelve/fourteen by
+omitting a `verdict: rejected` row — its own attempt-1 rejection — plus a
+bare uncutoffed all-time integer and a stale row count. Both rejections were
+about miscounting the very live ledger this card's own write-up was
+contributing to while writing it. Attempt 3 does not merely correct the
+number: every surviving ledger count in the write-up now states its own
+as-of instant, embeds the reproducible join that produces it, and says
+explicitly that it only grows, so a later, larger recount confirms rather
+than contradicts it. See
+`docs/reports/2026-09-07-m5-pilot-retrospective.md`'s "This card's own
+delivery is a seat-reliability finding" and
+`docs/delivery/seat-reliability.md`'s corresponding 2026-09-07 entries for
+the full account.

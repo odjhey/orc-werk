@@ -10,9 +10,9 @@ description: TASK-M5-008's pilot write-up — whether TASK-M5-001's capability-t
 
 This is the second half of `TASK-M5-008`. `docs/delivery/seat-reliability.md`'s
 format and first four entries landed early in `fix-verify-seat-fallback`
-(PR #268); this report is the pilot write-up that card left open, plus two
+(PR #268); this report is the pilot write-up that card left open, plus
 newly observed reliability events appended to that log the same day they
-were found (below).
+were found (below), including this card's own two verify rejections.
 
 **Sources**, all read directly, none paraphrased from memory: `orc --limit 0`;
 `orc history <run> --limit 0` and the raw `.orc/<run>/journal.jsonl` +
@@ -22,7 +22,12 @@ were found (below).
 `fix-266-reobservation`, `task-m5-001`, and `chore-verify-followups`;
 `gh pr view` for PRs #267, #268, #270, #271, #277, #278; `ADR-0007`;
 `M5-OMP-FIRST-DELIVERY`; `docs/reports/2026-09-07-omp-capability-test.md`
-(`TASK-M5-001`'s report, PR #277, accepted `ran-real-code`).
+(`TASK-M5-001`'s report, PR #277, accepted `ran-real-code`); and, for the
+whole-ledger verify-verdict join in §2 below, every `.orc/*/journal.jsonl` +
+`times.jsonl` pair present on disk at each stated cutoff — which is how
+`task-m5-002`, `docs-adr0007-v7-amendment`, and this run's own
+`task-m5-008/journal.jsonl` (both prior attempts' settlements) enter that
+join despite being outside the ten-named-delivery scope above.
 
 Every claim below cites a run id + seq or a PR number. Where the ledger is
 silent, this says so — that is the `T5`/`T6` rule this card itself imposes,
@@ -87,9 +92,12 @@ shipped yet.
 
 ## 2. Did seat discipline hold under real traffic?
 
-Eleven runs carry ledger evidence for this question: the pilot itself, its
+Eleven runs carry ledger evidence for this question — the pilot itself, its
 same-day follow-up, two external-candidate-lane adoptions, and the
-2026-09-07 wave of seven further deliveries, all now settled.
+2026-09-07 wave of seven further deliveries, all now settled — counted
+directly from the eleven rows of the table immediately below, a fixed
+enumeration closed to this card's own named scope rather than a live query
+against the still-growing ledger.
 
 | Run (PR) | Ship model / session | Verify model / session | Verdict (attempts) |
 |---|---|---|---|
@@ -161,39 +169,131 @@ pairing, not a second week of the ledger quietly deviating from its own
 governing decision. This write-up flags it; amending the ADR is out of this
 card's scope and is named under Ambiguities below.
 
-### A live ledger during a live write-up: counts are snapshots, not totals
+### A live ledger during a live write-up: state derivations, not transcribed totals
 
-This section's own settled-verdict counts moved three times while this card
-was in flight — worth recording as a property of auditing a ledger the
-write-up itself contributes to, not an error to average away. Scoped to the
-ten named deliveries in the table above: this write-up's first attempt
-(commit `0584a66`, 2026-09-07T01:47:30Z) said nine settled verify verdicts,
-because it missed that `chore-verify-followups` had already settled
+This section's settled-verdict counts moved on every one of this card's
+three attempts, and not because the arithmetic was hard: each of the first
+two attempts transcribed a snapshot integer instead of publishing the join
+that produces it, against a ledger this card is itself a member of. Scoped
+to the ten named deliveries in the table above: attempt 1 (commit `0584a66`,
+2026-09-07T01:47:30Z) said nine settled verify verdicts, missing that
+`chore-verify-followups` had already settled
 (`.orc/chore-verify-followups/journal.jsonl` `FACT-ASSURE-SETTLED` seq 16,
 `01:37:18Z` — ten minutes before that commit); the verify seat that rejected
-the attempt recounted correctly to ten. Separately, and outside this scope: a
-whole-ledger join of every run's `FACT-ASSURE-SETTLED` fact against its own
-`times.jsonl` `observed_at` (not limited to the ten named deliveries) finds
-**eleven** settled verify verdicts on 2026-09-07 and **thirteen** across
-2026-09-06/07 combined, as of `2026-09-07T02:07:16Z` (this correction's own
-recount, captured immediately before committing it). The eleventh-for-
-2026-09-07 is `task-m5-002`/`playbook` (`gh-pr:279`,
-`.orc/task-m5-002/journal.jsonl` seq 16, `google-antigravity/gemini-3.8-flash`,
-settled `01:54:14Z`) — a delivery outside this card's own named Sources list,
-which settled after the rejecting verify seat's recount and before this
-correction's. Every count above states its scope (the ten named deliveries,
-or the whole ledger) and its cutoff, because an integer against a ledger
-still being written to is unfalsifiable without both.
+attempt 1 (`VerifyM5008`, seq 16 of this run) recounted correctly to ten for
+that scope.
 
-What does not move with any of this: across the entire ledger (71 top-level
-`FACT-ASSURE-SETTLED` facts, every run directory, all-time — not just
-2026-09-06/07), zero recorded `openai-codex` as the verify model, checked
-directly against each fact's own `executor-identity/v1.model` (top-level
-facts only; a `DEC-*` entry's `basis` array embeds a duplicate copy of the
-fact it cites, which a naive text search double-counts). Every 2026-09-06/07
-settled verify verdict — all thirteen of them — ran on
-`google-antigravity/gemini-3.8-flash`. That is the fact the `ADR-0007` `V7`
-amendment argument below rests on; the day-count is illustration, not load.
+Outside the ten-delivery scope, the load-bearing question is the
+**whole-ledger** count of settled verify verdicts, because that is what the
+`V7`-pairing argument below rests on. The reproducible join: for every
+`.orc/*/journal.jsonl`, read each `FACT-ASSURE-SETTLED` fact's `data.verdict`,
+`data.work_id`, and `extensions."executor-identity/v1"`; look up its
+`observed_at` in the same run's `times.jsonl` by matching `seq`; keep rows
+whose `observed_at` falls on 2026-09-06 or 2026-09-07 up to a stated cutoff.
+**`verdict: "rejected"` rows count** — a rejection is a settled verify
+verdict, not an absence of one:
+
+```
+python3 - <<'PY'
+import json, glob, os
+def times(p):
+    return {json.loads(l)['seq']: json.loads(l)['observed_at']
+            for l in open(p) if l.strip()}
+rows = []
+for j in sorted(glob.glob('.orc/*/journal.jsonl')):
+    run, t = os.path.dirname(j), os.path.join(os.path.dirname(j), 'times.jsonl')
+    if not os.path.exists(t):
+        continue
+    tm = times(t)
+    for line in open(j):
+        if not line.strip():
+            continue
+        o = json.loads(line)
+        if o.get('kind') == 'fact' and o.get('id') == 'FACT-ASSURE-SETTLED':
+            ext = o.get('extensions', {}).get('executor-identity/v1', {})
+            rows.append((tm.get(o['seq']), run, o['data'].get('work_id'),
+                         o['data'].get('verdict'), ext.get('model')))
+rows.sort()
+CUTOFF = '2026-09-07T02:07:16Z'   # set per invocation
+d7  = [r for r in rows if r[0] and r[0].startswith('2026-09-07') and r[0] <= CUTOFF]
+d67 = [r for r in rows if r[0] and r[0] >= '2026-09-06T00:00:00Z' and r[0] <= CUTOFF]
+print(len(d7), len(d67))
+PY
+```
+
+Attempt 2 (commit `645c2c4`) ran a version of this join at a stated cutoff of
+`2026-09-07T02:07:16Z` and reported eleven on 2026-09-07 and thirteen across
+2026-09-06/07 — one short on each, because the row it missed was `verdict:
+rejected`: this card's *own* attempt-1 rejection
+(`task-m5-008`/`writeup` seq 16, `02:01:57.177Z`, model
+`google-antigravity/gemini-3.8-flash`, session `VerifyM5008`). Attempt 2's
+own prose named this exact reject as a counting miss on a *different* run
+(`chore-verify-followups`) and then omitted it from the join it claimed to
+have performed on itself. Attempt 2's verify seat (`VerifyM5008R2`) re-ran
+the script above with `rejected` rows included at the same `02:07:16Z`
+cutoff and found **twelve** on 2026-09-07 and **fourteen** across
+2026-09-06/07; running the script above with that exact `CUTOFF` reproduces
+twelve/fourteen, not eleven/thirteen.
+
+Running the same script again now, at cutoff `2026-09-07T02:33:37Z`
+(captured while drafting this correction), finds **fourteen** on 2026-09-07
+and **sixteen** across 2026-09-06/07 — two more of each than the
+`02:07:16Z` figures, because two more verify verdicts settled in the
+interval: `docs-adr0007-v7-amendment`/`amend` (`verdict: rejected`,
+`02:14:58.097Z` — a sibling card's own run, no relation to this one beyond
+sharing the ledger) and **this card's own attempt-2 rejection**
+(`task-m5-008`/`writeup` seq 26, `verdict: rejected`, `02:29:58.366Z`, model
+`google-antigravity/gemini-3.8-flash`, session `VerifyM5008R2`). Both
+cutoffs and both figures are stated so a reader can re-run the script and
+land on either number depending on when they run it. **This count only
+grows**: it is a running tally over a ledger that keeps accepting new
+settlements, including from this very card's own repeated rejection, so a
+later, larger recount *confirms* this one rather than contradicting it. A
+lower future count, or one that silently drops `rejected` rows, is the
+defect to watch for — a higher one is not.
+
+The `openai-codex`-as-verify-model finding does not depend on any total
+above and is stated here without one, on purpose: as of
+`2026-09-07T02:33:37Z`, filtering the same join's rows (whole-ledger, all
+dates, top-level `FACT-ASSURE-SETTLED` facts only — a `DEC-*` entry's
+`basis` array embeds a duplicate copy of the fact it cites and would
+double-count a naive text search) to `model` containing `openai-codex`
+returns **zero** rows. This claim needs no denominator and does not grow
+the way the settled-verdict count above does: it either stays zero or a
+single counter-example appears, and either way the script above (filtered
+on `model` instead of counted) reproduces it directly, at any cutoff,
+forever. This — every settled verify verdict in the ledger having run on a
+materially different model family than the ship seat it audited, with zero
+observed exceptions — is the durable finding the `V7` argument below rests
+on. The settled-verdict totals above are corroborating detail, not the
+claim itself, and would support the same conclusion whether they read
+twelve/fourteen, fourteen/sixteen, or higher still by the time anyone
+re-runs them.
+
+### This card's own delivery is a seat-reliability finding
+
+`TASK-M5-008` is a card about seat reliability that twice failed to reliably
+count the seat traffic it was itself part of — the single most on-topic
+failure this write-up could report, so it is reported here rather than
+left implicit in the ledger:
+
+| Attempt | sha | Ship session | Verify session (seq) | Verdict at `02:0x`/`02:2x`Z | Root cause |
+|---|---|---|---|---|---|
+| 1 | `0584a66868084169ee574111c12a23f707bd8ed7` | `ShipM5008` | `VerifyM5008` (seq 16, `02:01:57.177Z`) | rejected | Declared `chore-verify-followups` "not yet settled" (it had merged 10 minutes before the commit) and undercounted the ten-named-delivery verify-verdict tally as nine instead of ten. |
+| 2 | `645c2c47a18a6800792ad44028bc548b6dd51bbc` | `ShipM5008R2` | `VerifyM5008R2` (seq 26, `02:29:58.366Z`) | rejected | Fixed attempt 1's misses, then undercounted its own whole-ledger verify-verdict join as eleven/thirteen instead of twelve/fourteen by omitting a `verdict: rejected` row (this card's own attempt-1 rejection); also carried a bare, uncutoffed "71 all-time" `FACT-ASSURE-SETTLED` figure (unreproducible — 140 top-level facts existed at that same cutoff) and a stale "eight `ship.md` rows" figure left over from before `chore-verify-followups` settled. |
+| 3 (this one) | see `git rev-parse HEAD` | `ShipM5008R3` | pending | — | Does not attempt a better transcribed number. Every surviving count above states its own as-of instant, embeds the join that reproduces it, and says plainly that it only grows. |
+
+The lesson is not "recount more carefully." A census taken from inside a
+population that is still growing while you write is stale the instant it is
+committed, no matter how carefully it was taken — attempt 2 recounted
+attempt 1's exact miss and still landed short, because it counted a
+snapshot rather than stating a derivation. The fix that survives is to
+publish the join (script, cutoff, and the rule that `verdict: rejected` is
+a settled verdict like any other) so any reader — including a later attempt
+of this very card — can reproduce or supersede the number, instead of
+trusting a transcribed integer that was already wrong by the time it was
+typed. `docs/delivery/seat-reliability.md`'s 2026-09-07 section carries the
+corresponding dated entries for both rejections, per `T5`/`T6`.
 
 ### The two external-candidate-lane runs are not evidence about `.omp/agents/ship.md`
 
@@ -208,9 +308,17 @@ fallback path (`orc history docs-external-candidate-lane` seq 16's own
 findings confirm the lane's five rules, including "ship-seat adoption onto a
 current base precedes judgment"), not a seat-discipline lapse — but it means
 these two rows say nothing about whether the real `ship.md` agent stays on
-`anthropic` in practice; only the eight rows that ran an actual
-`.omp/agents/ship.md`-driven `task` spawn do. All eight of those ran
-`anthropic/claude-sonnet-5` (in full or bare form — see below). No
+`anthropic` in practice; only the rows that ran an actual
+`.omp/agents/ship.md`-driven `task` spawn do. Counted directly from the
+table above (a fixed, closed enumeration scoped to this card, not a
+live-ledger query, so it carries no cutoff or growth note): eleven rows
+total, two of which (`adopt-270-attempt-binding`, `docs-external-candidate-lane`)
+are the watchtower adoptions named above, leaving **nine** —
+`m5-omp-harness-pilot`, `fix-verify-seat-fallback`, `fix-262-docs-polish`,
+`task-m5-003`, `fix-254-active-filter`, `task-m5-006`,
+`fix-266-reobservation`, `task-m5-001`, and `chore-verify-followups`. All
+nine of those ran `anthropic/claude-sonnet-5` (in full or bare form — see
+below). No
 self-assurance was observed in either adopted run: the independent verify
 seats (`VerifyAdopt270`, `VerifyLaneDoc`) ran in separate sessions from
 `omp:watchtower` and derived their own sha per `PLAYBOOK-AGENT-CLI`.
@@ -299,10 +407,20 @@ day as observed, per `T5`/`T6`:
 - A live, independent hit of the `test_hung_observer` flake (open issue
   #232) by `VerifyM5006` during PR #275's audit — a first full-suite
   `bash scripts/check.sh` run failed on it before a second run passed.
+- This card's own two verify rejections — attempt 1
+  (`0584a66868084169ee574111c12a23f707bd8ed7`, rejected by `VerifyM5008`)
+  and attempt 2 (`645c2c47a18a6800792ad44028bc548b6dd51bbc`, rejected by
+  `VerifyM5008R2`) — both for miscounting the live ledger this write-up was
+  itself contributing to; full account in "This card's own delivery is a
+  seat-reliability finding" above.
 
-No other model hang, rate-limit, or hook misfire is evidenced in any journal
-read for this write-up beyond the four entries `fix-verify-seat-fallback`
-already logged on 2026-09-06.
+No model hang, rate-limit, or hook misfire beyond the four entries
+`fix-verify-seat-fallback` already logged on 2026-09-06 is evidenced in any
+journal read for this write-up; the third bullet above is a different
+failure class (a counting/verification-discipline failure, not a hang,
+rate-limit, or hook misfire) and is recorded because the log's own format
+names "a schema-rejection surprise" as in scope and this is that surprise's
+sibling: a live-ledger-count surprise.
 
 ## Ambiguities encountered
 

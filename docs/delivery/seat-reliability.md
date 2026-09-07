@@ -89,3 +89,33 @@ the format's origin and the pilot write-up this log feeds.
   load`) under real verify-seat load, not a synthetic probe — ledger
   citation `.orc/task-m5-006/journal.jsonl` seq 16
   (`FACT-ASSURE-SETTLED`, `review-findings/v1`).
+- **verify** / `task-m5-008` `writeup` / `google-antigravity/gemini-3.8-flash`
+  (`VerifyM5008`) — rejected attempt 1's candidate
+  (`0584a66868084169ee574111c12a23f707bd8ed7`) at seq 16 (`02:01:57.177Z`):
+  the write-up declared `chore-verify-followups` "not yet settled" ten
+  minutes after it had actually merged, and undercounted the ten-named-
+  delivery verify-verdict tally as nine instead of ten. Consequence:
+  `DEC-RETRY` to attempt 2 (`.orc/task-m5-008/journal.jsonl` seq 17); one of
+  the run's two assurance attempts spent.
+- **verify** / `task-m5-008` `writeup` / `google-antigravity/gemini-3.8-flash`
+  (`VerifyM5008R2`) — rejected attempt 2's candidate
+  (`645c2c47a18a6800792ad44028bc548b6dd51bbc`) at seq 26 (`02:29:58.366Z`):
+  the corrected write-up's own whole-ledger verify-verdict join undercounted
+  eleven/thirteen instead of twelve/fourteen by omitting a `verdict:
+  rejected` row — its own attempt-1 rejection immediately above — and also
+  carried a bare, uncutoffed "71 all-time" `FACT-ASSURE-SETTLED` figure and
+  a stale "eight `ship.md` rows" figure. Consequence: `DEC-RETRY` to attempt
+  3, exhausting the run's assurance budget (`max_assurance_attempts=2`); a
+  third reject at attempt 3 would permanently block the run at
+  `retry-budget-exhausted`.
+- **ship** / `task-m5-008` `writeup` / `anthropic/claude-sonnet-5`
+  (`ShipM5008`, `ShipM5008R2`) — two consecutive ship attempts each
+  transcribed a snapshot integer against the very ledger the write-up was
+  appending to, instead of publishing a cutoff plus a reproducible join;
+  both misses undercounted settled verify verdicts, and the second miss was
+  the run's own first rejection. Consequence: attempt 3
+  (`docs/reports/2026-09-07-m5-pilot-retrospective.md`, "This card's own
+  delivery is a seat-reliability finding") replaced every surviving ledger
+  count in the write-up with an explicit (as-of instant, reproducible
+  derivation, monotonicity note) triple and deleted counts that were not
+  load-bearing, rather than retrying with a merely corrected number.
