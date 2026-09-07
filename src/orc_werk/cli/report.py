@@ -69,6 +69,7 @@ from orc_werk.core.state import (
     STATE_BLOCKED,
     STATE_EXECUTING,
     STATE_READY,
+    TERMINAL_STATES,
     DeliveryProjection,
     WorkProjection,
 )
@@ -472,7 +473,7 @@ def _index_state_rollup(projection: DeliveryProjection) -> tuple[str, bool]:
     for wp in projection.works.values():
         counts[wp.state] = counts.get(wp.state, 0) + 1
     summary = ",".join(f"{state}:{counts[state]}" for state in sorted(counts)) or "none"
-    any_blocked, any_non_accepted = _summarize_states(projection)
+    any_blocked, _any_non_accepted = _summarize_states(projection)
     flags = []
     if any_blocked:
         flags.append("blocked")
@@ -480,7 +481,14 @@ def _index_state_rollup(projection: DeliveryProjection) -> tuple[str, bool]:
         flags.append("pending")
     if flags:
         summary += f" flags={','.join(flags)}"
-    return summary, any_blocked or any_non_accepted
+    # Issue #254: BLOCKED is terminal (STATE-DELIVERY's canonical terminal
+    # set is ACCEPTED/BLOCKED/CANCELLED), exactly like ACCEPTED/CANCELLED.
+    # A run whose every Work has settled into a terminal state -- BLOCKED
+    # included -- needs no further operator action and nothing moves it,
+    # so it is not "active": `active` means "at least one Work is still
+    # non-terminal", not "at least one Work is not ACCEPTED".
+    active = any(wp.state not in TERMINAL_STATES for wp in projection.works.values())
+    return summary, active
 
 
 # ---------------------------------------------------------------------------

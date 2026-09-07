@@ -181,7 +181,11 @@ class BareIndexTest(unittest.TestCase):
             )
             self.assertNotIn("next (older) page:", third.stdout)
 
-    def test_state_filter_keeps_only_non_terminal_or_blocked_runs(self) -> None:
+    def test_state_filter_excludes_settled_runs_including_terminal_blocked(self) -> None:
+        """Issue #254: BLOCKED is terminal (`STATE-DELIVERY`) exactly like
+        ACCEPTED, so a retry-budget-exhausted run must drop out of
+        `--state active` precisely as an ACCEPTED run already does; only
+        the still-non-terminal `pending` run remains."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             configs = {
@@ -205,10 +209,13 @@ class BareIndexTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
             run_lines = [line for line in result.stdout.splitlines() if line.startswith(tuple(configs))]
             self.assertTrue(any(line.startswith("pending:") for line in run_lines))
-            self.assertTrue(any(line.startswith("blocked:") for line in run_lines))
+            self.assertFalse(any(line.startswith("blocked:") for line in run_lines))
             self.assertFalse(any(line.startswith("accepted:") for line in run_lines))
             self.assertIn("flags=pending", result.stdout)
-            self.assertIn("flags=blocked", result.stdout)
+            self.assertNotIn("flags=blocked", result.stdout)
+
+            unfiltered = _run_cli(tmp_dir, "--limit", "0")
+            self.assertIn("flags=blocked", unfiltered.stdout)
 
     def test_invalid_state_filter_is_canonical_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
