@@ -37,10 +37,12 @@ observed symptom — appended the same day an event is observed, never
 retroactively reconstructed from memory (`T5`/`T6`). A pilot write-up
 (as a dated entry or a linked report under `docs/reports/`) records what
 `m5-omp-harness-pilot`'s own run actually showed: whether the capability
-test's predictions (`TASK-M5-001`) held, whether the hook guards
-(`TASK-M5-005`) fired correctly under real seat traffic, and whether the
-`V7` model-family pairing (ship on `anthropic`, verify on
-`openai-codex`) surfaced any friction.
+test's predictions (`TASK-M5-001`) held, what the seat-hook capability
+cycle (`TASK-M5-005` — tested to exhaustion across three attempt cycles
+and abandoned 2026-09-07; it never fired in production) actually cost in
+attempts and model time and what it taught about the limits of
+`tool_call`-hook enforcement, and whether the `V7` model-family pairing
+(ship on `anthropic`, verify on `openai-codex`) surfaced any friction.
 
 ## In scope
 

@@ -51,7 +51,7 @@ test every later card's agent/hook behavior depends on):
 2. `TASK-M5-002` `PLAYBOOK-WATCHTOWER`/`PLAYBOOK-AGENT-CLI`/`AGENTS.md`/`.omp/RULES.md` rewrite (depends on `TASK-M5-001`)
 3. `TASK-M5-003` `docs/adapters/omp/*` + `executor-identity/v1` OMP example (depends on `TASK-M5-001`; independent of `TASK-M5-002`)
 4. `TASK-M5-004` `.omp/agents/*` + `.omp/config.yml` — the pilot card, delivered by the `m5-omp-harness-pilot` PR itself (depends on `TASK-M5-001`)
-5. `TASK-M5-005` `.omp/extensions/orc-seat.ts` hook guard + red test (depends on `TASK-M5-001`, `TASK-M5-004`)
+5. `TASK-M5-005` `tool_call` seat-hook capability finding — tested to exhaustion, abandoned 2026-09-07 (depends on `TASK-M5-001`, `TASK-M5-004`)
 6. `TASK-M5-006` `orc-ledger` skill v6 + `scripts/check.sh` loud line (depends on `TASK-M5-002`)
 7. `TASK-M5-007` `orc onboard` OMP scaffold + `PRODUCT-ADOPTION` amendment (depends on `TASK-M5-004`, `TASK-M5-002`)
 8. `TASK-M5-008` `docs/delivery/seat-reliability.md` + pilot write-up (depends on the pilot run itself and at least one later card's delivery data; sequenced last)
