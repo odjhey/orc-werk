@@ -51,12 +51,25 @@ means a green PR remotely.
 declared as OMP agent definitions rather than re-taught by prose:
 `.omp/agents/scout.md` (recon), `.omp/agents/ship.md` (implementation),
 and `.omp/agents/verify.md` (adversarial audit), configured project-wide
-by `.omp/config.yml`. A `.omp/extensions/orc-seat.ts` guard hook
-(mechanically blocking `yield` before a record, `gh pr merge` from any
-subagent, and push/commit/comment from the verify role) is planned but
-not yet built (`TASK-M5-005`/`TASK-M5-006`); until it lands, the same
-invariants are enforced by convention via `.omp/RULES.md` and the seat
-definitions' own prose. `.omp/RULES.md` is the sticky, always-loaded
+by `.omp/config.yml`. A `.omp/extensions/orc-seat.ts` guard hook is
+planned (`TASK-M5-005`) to mechanically enforce exactly one guard: a
+structural, cwd/path-derived fence on `edit`/`write` file paths, keeping a
+ship seat's writes inside its own worktree. It will not attempt to block
+`yield` before a record, deny `gh pr merge`, or deny verify-role
+push/commit/comment, as an earlier design intended — a `tool_call` hook
+receives only the bare command string, never argv or process identity, so
+every guard deciding by matching that text was defeated by the shell
+(established when `task-m5-005`'s attempt 1 was rejected by six
+reproduced-in-system escapes). Per the 2026-09-07 operator ruling, those
+three invariants moved rung instead: no direct push to `master` is GitHub
+branch protection (applied 2026-09-07); record-before-yield is the orc
+ledger's own state machine (unrecorded work never settles, whatever an
+agent yields); merge authority has no enforcement rung at all — every
+seat authenticates as the same GitHub identity, so it remains
+seat-discipline prose plus after-the-fact ledger detection. Until the
+fence itself lands, all of this is enforced by convention via
+`.omp/RULES.md` and the seat definitions' own prose. `.omp/RULES.md` is
+the sticky, always-loaded
 statement of these invariants for any OMP session working this
 repository. Harness-specific mechanics for OMP live in
 `docs/adapters/omp/` (`ADAPTER-OMP`); a future harness swap changes that

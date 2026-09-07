@@ -65,12 +65,15 @@ capability is a gap, not a pass, per `nother-guide`'s
    session and after a reboot; confirm it survives both.
 
 Open probe carried into the report: whether a hook or extension can learn
-the running agent's role (name) to apply per-role deny rules. If it
-cannot, per-role rules move into the agent's own `tools` list and system
-prompt, and the hook enforces only the role-independent rules (block
-`yield` until a record was observed; block `gh pr merge` from any
-subagent) — this fallback is itself part of the capability report, not a
-silent workaround. `TASK-M5-001` is this phase's deliverable.
+the running agent's role (name) to apply per-role deny rules. The report
+answered **yes** (`session_init.agent`, `TASK-M5-001`'s §6 correction,
+2026-09-07) — but per the 2026-09-07 operator ruling that answer did not
+save the role-independent fallback guards either: block-`yield`-until-a-
+record and block-`gh pr merge` both decide by matching the bash command's
+own text, and `task-m5-005`'s rejected attempt 1 showed that text is
+defeated by shell escaping regardless of whether role is known. Both were
+dropped from the hook's scope; `AGENTS.md` records where they now live.
+`TASK-M5-001` is this phase's deliverable.
 
 ## Phase 1 — Policy layer (docs first)
 
@@ -118,12 +121,21 @@ per `AGENTS.md` rule 4 (docs amend first). Alongside it:
   the recording rules, records the verdict; output schema `{run_id,
   work_id, verdict, derived_head_sha, evidence_grade, findings[],
   ambiguities[], recorded}`.
-- `.omp/extensions/orc-seat.ts` — `tool_call` guards: block `yield` until
-  an `orc record` bash call with exit `0`/`3` was observed in the session;
-  block `gh pr merge` from any subagent; deny `git push`/`git commit`/
-  `gh pr comment`/`gh pr review` from the verify role; fence `edit`/`write`
-  outside `.worktrees/<branch>` from the ship role. Ships with a red test
-  (`V2`): a script proving each guard fires before it is trusted.
+- `.omp/extensions/orc-seat.ts` — one `tool_call` guard: fence `edit`/
+  `write` outside `.worktrees/<branch>` from the ship role, the sole
+  guard that decides on structure rather than command text. **Amended
+  2026-09-07** (operator ruling, `task-m5-005-guards` seq 16): this
+  bullet originally also planned three text-matching guards in the same
+  hook — block `yield` until an `orc record` bash call with exit `0`/`3`
+  was observed; block `gh pr merge` from any subagent; deny `git push`/
+  `git commit`/`gh pr comment`/`gh pr review` from the verify role — all
+  three defeated by shell escaping against the bare command string a
+  `tool_call` hook receives, regardless of the calling role being known.
+  All three moved rung instead: GitHub branch protection on `master` for
+  shared-branch push, the orc ledger's own state machine for
+  record-before-yield, and no enforcement rung at all for merge
+  authority. Ships with a red test (`V2`): a script proving the retained
+  guard fires before it is trusted.
 - `.omp/config.yml` — `task.enableEffort`, `task.maxRuntimeMs`, and
   `modelRoles` for ship/verify/scout.
 - `orc-ledger` skill v6 — §3's seat section references the OMP agent
@@ -206,9 +218,22 @@ least one subsequent card's delivery data.
 - `.omp/agents/ship.md`, `.omp/agents/verify.md`, `.omp/agents/scout.md`,
   and `.omp/config.yml` exist, and ship/verify are on different model
   families.
-- `.omp/extensions/orc-seat.ts` exists with a red-then-green test proving
-  each guard (yield-after-record, no `gh pr merge`, verify push/commit
-  denial, ship worktree fence) actually fires.
+- **Amended 2026-09-07** (operator ruling, following `task-m5-005-guards`
+  run's six reproduced-in-system REJECTs at attempt 1 —
+  `.orc/task-m5-005-guards/journal.jsonl` seq 16 — which established that
+  an OMP `tool_call` hook receives only the bash command as a string,
+  never argv or process identity, so a guard deciding by matching that
+  text is defeated by shell escaping; originally this criterion required
+  `.omp/extensions/orc-seat.ts` to prove four guards fire: yield-after-
+  record, no `gh pr merge`, verify push/commit denial, and the ship
+  worktree fence): `.omp/extensions/orc-seat.ts` exists with a red-then-
+  green test proving the one guard that is structurally decidable in a
+  `tool_call` hook — the ship worktree fence on `edit`/`write` paths —
+  actually fires. The other three retreat to the rung that can hold them:
+  no direct push to a shared branch is GitHub branch protection on
+  `master`; record-before-yield is the orc ledger's own state machine;
+  merge authority has no enforcement rung and remains seat-discipline
+  prose plus after-the-fact ledger detection.
 - `scripts/check.sh`'s final line is `check: green. NOT covered:
   <list|none>`.
 - `orc onboard` installs the `.omp/agents/*` scaffold alongside the skill,

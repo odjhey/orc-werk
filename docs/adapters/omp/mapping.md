@@ -55,10 +55,16 @@ ambiguities[], recorded}` (`TASK-M5-004`). This is **not** the same
 artifact as `FACT-EXEC-SETTLED`/`FACT-ASSURE-SETTLED`: the schema
 rejection only guards the shape of the agent's yielded JSON. It proves
 nothing about whether the agent's body actually called `orc record` with
-matching values, or at all, before yielding — that enforcement is
-`TASK-M5-005`'s `tool_call` hook (block `yield` until a successful `orc
-record` was observed in the session), a separate mechanism from the
-schema. See `capabilities.md`'s named limitation on this gap.
+matching values, or at all, before yielding. Per the 2026-09-07 operator
+ruling this gap is closed by the orc ledger's own state machine — a Work
+never settles unless `orc record` actually ran, whatever an agent's
+`yield` claims — not by a `TASK-M5-005` `tool_call` hook: a hook can read
+the calling agent's own role structurally (`session_init.agent`,
+`capabilities.md`'s role-identity finding) but cannot reliably verify
+that a prior `bash` call was a genuine `orc record` invocation rather
+than a command-text match against a spoofed stub — exactly the guard
+`task-m5-005`'s rejected attempt 1 defeated with a command-local `PATH`.
+See `capabilities.md`'s named limitation on this gap.
 
 ### Session/transcript ↔ evidence ref
 
@@ -96,7 +102,7 @@ the OMP session/agent identity; `role` from the agent name."
 | `model` | The model actually serving the request for that agent instance (visible via `/model` or the session's own `model_change` entries) | **Synthesized, agent-supplied.** Nothing mechanically copies this into the `orc record --model` flag; the agent's own body passes it as free text. It commonly diverges from the agent *definition*'s configured default when a retry/fallback chain substituted another model — this is a legitimate, separately-logged event (`docs/delivery/seat-reliability.md`), not a mapping defect. |
 | `session_ref` | The OMP orchestrating session (a human-legible label the agent chooses, e.g. `"omp:watchtower"`, not the raw session-file id) | **Synthesized, agent-supplied.** No hook or extension today reads OMP's own session header `id` and injects it; the agent body picks a label at `orc record` time. Distinct seats sharing one orchestrating session (issue #182) still need distinct `seat_ref` values — `session_ref` alone never distinguishes them. |
 | `seat_ref` | A per-seat identifier the recording agent chooses, conventionally `<role>-<work_id>-<sha7-of-candidate-head>` | **Synthesized, agent-supplied**, but conventionally stable and reproducible: two record attempts for the same seat/candidate pairing naturally produce the same value without coordination. |
-| `role` | The agent definition's own `name` (`ship`/`verify`) | **Agent-supplied, not mechanically verified.** Whether a hook/extension can *itself* learn the running agent's name to enforce this field is exactly `TASK-M5-001`'s open role-identity probe (see `capabilities.md`); until that probe is answered, `role` is correct only because each agent definition's own body is written to always pass its own literal role string. |
+| `role` | The agent definition's own `name` (`ship`/`verify`) | **Agent-supplied, not mechanically verified by this recording path.** A hook/extension *can* learn the running agent's name structurally (`ctx.sessionManager.getEntries()` → `session_init.agent`, `TASK-M5-001`'s corrected role-identity finding, `capabilities.md`), but nothing today wires that read into populating this field automatically — `role` is correct here only because each agent definition's own body is written to always pass its own literal role string to `orc record`. |
 
 None of these four fields is read from OMP by any mechanism today —
 every one is text the recording agent supplies to `orc record`'s
