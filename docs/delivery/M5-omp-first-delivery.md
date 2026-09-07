@@ -51,9 +51,16 @@ recorded against the real command and its observed output — an untested
 capability is a gap, not a pass, per `nother-guide`'s
 `harness-capabilities.md`:
 
-1. Spawn verify on a non-Anthropic model family with a tool restriction
-   that denies `git push`; confirm the hook denies it against a disposable
-   local remote.
+1. **Superseded 2026-09-07** (see this document's Acceptance-section
+   amendment and `AGENTS.md`): originally, spawn verify on a
+   non-Anthropic model family with a tool restriction that denies `git
+   push`, and confirm the hook denies it against a disposable local
+   remote. The probe that ran was non-adversarial (an unescaped `git
+   push` command) and passed
+   (`docs/reports/2026-09-07-omp-capability-test.md` §1); a
+   backslash-escaped command defeats the same hook (issues #290, #296),
+   so per-role push denial moved rung to GitHub branch protection
+   instead.
 2. Give a task item no `cwd`; confirm the ship agent creates its own
    worktree and a hook fences writes outside it — and confirm the guard is
    observed firing red before it is trusted (`V2`).
@@ -133,7 +140,9 @@ per `AGENTS.md` rule 4 (docs amend first). Alongside it:
   `tool_call` hook receives, regardless of the calling role being known.
   All three moved rung instead: GitHub branch protection on `master` for
   shared-branch push, the orc ledger's own state machine for
-  record-before-yield, and no enforcement rung at all for merge
+  record-before-yield on paths that reach `ACCEPTED`/`BLOCKED` through
+  bound assurance (the cancellation path is a disclosed, unenforced
+  escape — issue #293), and no enforcement rung at all for merge
   authority. Ships with a red test (`V2`): a script proving the retained
   guard fires before it is trusted.
 - `.omp/config.yml` — `task.enableEffort`, `task.maxRuntimeMs`, and
@@ -184,7 +193,7 @@ work, since both land in the same check.sh/skill surface).
    OMP example (Phase 1).
 4. `TASK-M5-004` — `.omp/agents/*` + `.omp/config.yml`, the pilot card
    (Phase 2; **delivered by this pilot PR**).
-5. `TASK-M5-005` — `.omp/extensions/orc-seat.ts` hook guards + red test
+5. `TASK-M5-005` — `.omp/extensions/orc-seat.ts` hook guard + red test
    (Phase 2).
 6. `TASK-M5-006` — `orc-ledger` skill v6 + `scripts/check.sh` loud line
    (Phases 2/3).
@@ -231,7 +240,9 @@ least one subsequent card's delivery data.
   `tool_call` hook — the ship worktree fence on `edit`/`write` paths —
   actually fires. The other three retreat to the rung that can hold them:
   no direct push to a shared branch is GitHub branch protection on
-  `master`; record-before-yield is the orc ledger's own state machine;
+  `master`; record-before-yield is enforced structurally only for the
+  paths that reach `ACCEPTED`/`BLOCKED` through bound assurance, with
+  the cancellation path a disclosed, unenforced escape (issue #293);
   merge authority has no enforcement rung and remains seat-discipline
   prose plus after-the-fact ledger detection.
 - `scripts/check.sh`'s final line is `check: green. NOT covered:

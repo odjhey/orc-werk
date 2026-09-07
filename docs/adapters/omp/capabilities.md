@@ -36,14 +36,14 @@ role-identity probe.** The table below is sourced from that report's own
 §8 consequence summary and nothing else. The report has already been
 amended once on `master` (a role-identity correction, PR #286, informed
 by findings from `task-m5-005`'s rejected attempt in PR #284) and has a
-further amendment open as PR #292 as of this writing; this table reflects
+further amendment open as PR #292 (observed OPEN, unmerged, at `2026-09-07T07:02:32Z`); this table reflects
 the report's content at this repo's current commit only, not any
 in-flight PR's content.
 
 | Point | Harness mechanism | Status |
 |---|---|---|
 | 1. Tool restriction denies `git push` from a non-Anthropic-family verify seat | GitHub branch protection on `master` (not a `tool_call` hook — a hook can read the calling agent's role structurally (`session_init.agent`, role-identity row below) but the escaped-command probes established it cannot reliably decide whether a given, possibly-obscured command *is* a `git push`; per-role push denial needs an action-decidable rung, per the 2026-09-07 operator ruling) | PASS against an unescaped probe, both via a custom hook and native `bash.patterns` (report §1); superseded as the guard mechanism by the 2026-09-07 ruling — see Mechanism |
-| 2. Ship agent creates its own worktree; a hook fences writes outside it | `.omp/extensions/orc-seat.ts` — the sole guard the 2026-09-07 operator ruling retains in the hook; not yet built as of this writing (`TASK-M5-005`) | PASS for the fencing mechanism itself, red-then-green (report §2), with a corrected premise: OMP does not auto-create the worktree for a non-isolated spawn, so the hook must be told the path by a fixed convention, not read it off an OMP-tracked field |
+| 2. Ship agent creates its own worktree; a hook fences writes outside it | `.omp/extensions/orc-seat.ts` — the sole guard the 2026-09-07 operator ruling retains in the hook; does not exist in this repository's `c7beea5` baseline (`TASK-M5-005`, PR #284, observed OPEN and unmerged at `2026-09-07T07:02:32Z`) | PASS for the fencing mechanism itself, red-then-green (report §2), with a corrected premise: OMP does not auto-create the worktree for a non-isolated spawn, so the hook must be told the path by a fixed convention, not read it off an OMP-tracked field |
 | 3. `outputSchema` + `schemaMode: strict` rejects a result missing a required field | OMP's own structured-output validation | PASS (report §3) |
 | 4. `task.maxRuntimeMs` stops a task and its descendants; `history://` survives | OMP task lifecycle | PASS (report §4): the underlying process is actually killed, not merely abandoned, and `history://` still reads back after the abort |
 | 5. A full transcript reads back from `~/.omp/agent/sessions/...jsonl` after a new session and after a reboot | OMP session storage | PASS (report §5), with a nuance: `--export` requires the transcript's actual path, not a bare session id |
@@ -70,9 +70,12 @@ the bare command string, never proof that a prior `bash` call actually
 invoked `orc record` and exited `0`/`3`, so `TASK-M5-005` dropped this
 guard from its scope (the same command-string limitation that defeated
 `task-m5-005`'s other text-matching guards). The gap is closed one rung up
-instead: the orc ledger's own state machine never treats a Work as
-settled unless `orc record` actually ran, whatever an agent's `yield`
-claims. Short of that, it remains process discipline (the agent's own
+instead: the orc ledger's own state machine closes the gap for the paths
+that reach `ACCEPTED`/`BLOCKED` through bound assurance — those paths
+never treat a Work as settled unless `orc record` actually ran, whatever
+an agent's `yield` claims; the cancellation path is a disclosed,
+unenforced escape from that rung (issue #293). Short of the
+assurance-bearing rung, it remains process discipline (the agent's own
 body instructs "record before yield"), enforced no more strongly than
 `PLAYBOOK-AGENT-CLI` always required.
 
