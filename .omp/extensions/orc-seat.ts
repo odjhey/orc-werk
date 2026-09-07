@@ -23,7 +23,7 @@
 // disclosed, not fixed -- sound detection would need an unbounded, racy inode sweep of
 // every sibling worktree on every call, and is not attempted here.
 //
-// The unresolvable-target defect (issue #297) went through TWO delivered fixes, not
+// The unresolvable-target defect (issue #297) went through THREE delivered fixes, not
 // one, and the difference matters for future maintainers:
 //
 // - Attempt 1 of this run (`task-m5-005-sensor`, head `623f2cf`) special-cased `ssh` --
@@ -60,6 +60,36 @@
 //   mechanism, and this card's PR body for the over-denial measurement (grepping every
 //   seat definition in this repo for a `write`/`edit` call naming an internal URI as its
 //   target) that backs treating this as a safe default rather than a breaking one.
+// - Attempt 3 (this delivery, ledger `task-m5-005-sensor` seq 26, REJECT finding 1)
+//   narrows attempt 2's blanket "every `scheme://...`-shaped string is unresolvable"
+//   rule one step further: a real `bun run` fixture probe reproduced it denying
+//   `conflict://<id>` -- OMP's own supported merge-conflict-resolution write, not a
+//   remote or opaque target -- the real-ship over-denial class this file's own limits
+//   paragraph above already warns is worse than the escape attempt 2 closed. Rather than
+//   append `conflict` to a name list (attempt 1's own mistake, one level removed), this
+//   fix derives the writable-target universe from the INSTALLED HARNESS CONTRACT: OMP's
+//   own `write` tool already rejects any unrecognized scheme upstream of this hook
+//   (`omp://tools/write.md:59`; installed `write.ts:114-139`,
+//   `assertWriteTargetAddressable`) -- so this hook's blanket deny for those was always a
+//   redundant second fail-closed layer, never load-bearing. Of the schemes the write tool
+//   DOES resolve, exactly two writable forms land on a real, harness-revalidated on-disk
+//   file this hook cannot itself resolve at hook time, but can trust is INSIDE-or-outside
+//   adjudicable the same way any local path is: `local://` (`write.ts:1215-1217`, backed
+//   by the session-local artifact sandbox via `plan-mode-guard.ts:36-42,114-119`'s
+//   `resolvePlanPath`) and unscoped `conflict://<id>`/`conflict://*`
+//   (`write.ts:128-131,836-840,1220-1234`, spliced into a registered, revalidated
+//   on-disk marker region per `omp://tools/write.md:57-61`'s Flow). `classifyRaw` below
+//   now gives these two shapes a third reading kind, `"adjudicated-inside"`, distinct
+//   from an actual local `"path"` and from `"unresolvable"`; `evaluateWorktreeFenceGuard`
+//   ALLOWs a call whose candidates are `"adjudicated-inside"` only, still denying if even
+//   one candidate is genuinely unresolvable. The scoped, read-only
+//   `conflict://<id>/<scope>` form is deliberately excluded (`write.md`'s own
+//   "Merge-conflict resolution" section: it can never legitimately be a write target) and
+//   stays `"unresolvable"`. `ssh://` -- issue #297's own original escape -- and every
+//   other scheme, including one invented tomorrow, still deny: none of them is backed by
+//   a harness-documented on-disk path inside a ship's own worktree, so no adjudication
+//   ground applies to them. See this card's PR body for the re-derived writable-scheme
+//   enumeration, the per-scheme probe, and the re-measured cost.
 //
 // *** Command-text interception was attempted, and abandoned, for the other three ***
 //
@@ -199,7 +229,7 @@ export function createOrcSeatState(): OrcSeatState {
 //
 // Soundness (issues #296 and #297): this predicate decides on `event.input.path`,
 // structured, normalized input the hook genuinely receives for `write`/`edit` -- never
-// on command text. Five defects were found live and fixed here:
+// on command text. Six defects were found live and fixed here:
 //
 // 1. Symlink escape: a lexical `path.resolve` string comparison never resolves
 //    symlinks, so `write escape-link/x.txt` where `escape-link -> ../outside` compared
@@ -249,6 +279,25 @@ export function createOrcSeatState(): OrcSeatState {
 //    empty or all-whitespace `path` string each used to produce zero raw candidates and
 //    therefore ALLOW, for the identical reason as (4) -- there is no local path to
 //    derive. These now deny for the same structural reason, not as special cases.
+// 6. Real-ship over-denial on harness-adjudicated writable schemes (issue #297,
+//    attempt 3, ledger `task-m5-005-sensor` seq 26, REJECT finding 1): fix (4) above
+//    denied for the same structural reason ANY `scheme://...`-shaped candidate, so it
+//    fell through to `INTERNAL_URI_SCHEME_RE` above and stays "unresolvable" for
+//    `conflict://<id>`/`conflict://*` and `local://` too -- therefore denied as (4) --
+//    even though the installed harness contract resolves these two writable forms to a
+//    real on-disk path, adjudicated identically to any other path candidate. There is no
+//    local path to derive these forms from AT HOOK TIME (both resolve through live
+//    session/plan-mode state this hook cannot reconstruct), but "cannot resolve here" is
+//    a DIFFERENT fact from "no local path exists at all", and the harness's own written
+//    contract supplies the missing guarantee this hook lacks: both targets, in their
+//    WRITABLE form, land on a real on-disk file the write tool itself revalidates.
+//    `classifyRaw` below therefore gives these two shapes a THIRD reading kind,
+//    `"adjudicated-inside"`, and `evaluateWorktreeFenceGuard` ALLOWs a call whose only
+//    candidates are that kind, naming the ground in a code comment at the decision site.
+//    The read-only scoped form (`conflict://<id>/<scope>`) is excluded and stays
+//    `"unresolvable"` -- per `omp://tools/write.md`'s own "Merge-conflict resolution"
+//    section it can never legitimately be a write target -- and every OTHER scheme,
+//    including `ssh://` (issue #297's own original escape), still denies, unchanged.
 //
 // Root and target are each resolved independently to one canonical real path, then
 // compared with a single `path.relative` (never a walk comparing inode identity up two
@@ -262,25 +311,48 @@ const WORKTREES_SEGMENT = ".worktrees";
 
 const INTERNAL_URI_SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//;
 
+// These two writable forms are each resolved by the write tool to a real, revalidated
+// on-disk file before it ever touches anything (`omp://tools/write.md:60-61`; installed
+// `write.ts:128-131` -- `conflict` is let through the harness's own unknown-scheme guard
+// BECAUSE it is "spliced downstream by `parseConflictUri`"; `write.ts:836-846` and
+// `:1220-1238` -- that splice replaces a REGISTERED, re-validated marker region in a real
+// file; `write.ts:1215-1217` and `plan-mode-guard.ts:36-42,114-119` -- `local://` is
+// "backed by the session-local artifact sandbox" and resolves via `resolvePlanPath`
+// to the session's own artifact-sandbox root). This hook cannot itself resolve either
+// target to a comparable path AT HOOK TIME -- both resolutions need the live
+// session/plan-mode state this hook does not have -- but the harness's own written
+// contract already establishes that both, in their WRITABLE form, land inside a real,
+// on-disk file the write tool itself revalidates before replacement. `local://` never
+// takes a scope suffix. `conflict://<id>` is writable; `conflict://<id>/<scope>` is the
+// read-only per-side view (`write.md`'s own "Merge-conflict resolution" section) and is
+// deliberately excluded here -- it can never legitimately be a write target regardless.
+const LOCAL_SCHEME_RE = /^local:\/\//i;
+const CONFLICT_WRITABLE_RE = /^conflict:\/\/([^/]*)$/i;
+
 /** One raw `write`/`edit` path-candidate string, classified `"path"` (evaluate as a
- * filesystem path) or `"unresolvable"` (this guard cannot derive any local filesystem
- * path from it -- issue #297). A candidate is `"unresolvable"` when it is blank (empty
- * or all-whitespace -- there is no leaf name to derive a path from) or shaped like
- * `scheme://...` for ANY scheme, recognized or not: such a string names an address
- * space this guard has no local path for (an internal store, an MCP resource, a remote
- * host, or a scheme nobody has invented yet), by construction, never by membership in
- * an enumerated table. There is no allowlist of "known-safe" schemes here -- see the
- * file header's account of why attempt 1's `IGNORED_URI_SCHEMES` table was itself the
- * defect: a scheme absent from a table is indistinguishable, to a table lookup, from a
- * scheme that is merely new. A `"path"` reading is the literal string itself, and --
- * since OMP's own `write`/`edit` accept `archive.ext:inner/path`/`db.sqlite:table`
- * selector syntax -- the substring before its first `:`, when one is present and
- * non-empty. Never guesses which reading is "the" intended one; the caller checks all
- * of them and blocks if any escapes (issue #296). */
-type Reading = { kind: "path" | "unresolvable"; value: string };
+ * filesystem path), `"adjudicated-inside"` (a harness-documented writable scheme this
+ * guard cannot itself resolve to a local path, but which the write tool resolves to a
+ * real, revalidated on-disk file -- issue #297 attempt 3: see `LOCAL_SCHEME_RE`/
+ * `CONFLICT_WRITABLE_RE` above), or `"unresolvable"` (this guard cannot derive any local
+ * filesystem path from it, and has no harness ground to treat it as inside either --
+ * issue #297). A candidate is `"unresolvable"` when it is blank (empty or all-whitespace
+ * -- there is no leaf name to derive a path from) or shaped like `scheme://...` for any
+ * OTHER scheme, recognized or not: such a string names an address space this guard has
+ * no local path for (an internal store, an MCP resource, a remote host, or a scheme
+ * nobody has invented yet), by construction, never by membership in an enumerated table.
+ * There is no allowlist of "known-safe" schemes here -- see the file header's account of
+ * why attempt 1's `IGNORED_URI_SCHEMES` table was itself the defect: a scheme absent
+ * from a table is indistinguishable, to a table lookup, from a scheme that is merely
+ * new. A `"path"` reading is the literal string itself, and -- since OMP's own
+ * `write`/`edit` accept `archive.ext:inner/path`/`db.sqlite:table` selector syntax -- the
+ * substring before its first `:`, when one is present and non-empty. Never guesses which
+ * reading is "the" intended one; the caller checks all of them and blocks if any escapes
+ * (issue #296). */
+type Reading = { kind: "path" | "unresolvable" | "adjudicated-inside"; value: string };
 
 function classifyRaw(raw: string): Reading[] {
   if (raw.trim() === "") return [{ kind: "unresolvable", value: raw === "" ? "(empty path)" : "(blank path)" }];
+  if (LOCAL_SCHEME_RE.test(raw) || CONFLICT_WRITABLE_RE.test(raw)) return [{ kind: "adjudicated-inside", value: raw }];
   if (INTERNAL_URI_SCHEME_RE.test(raw)) return [{ kind: "unresolvable", value: raw }];
   const readings = new Set<string>([raw]);
   const colonIdx = raw.indexOf(":");
@@ -311,9 +383,11 @@ function rawCandidates(toolName: string, input: unknown): string[] {
 }
 
 /** Every plausible LOCAL filesystem-path reading (issue #296) of this call's raw
- * candidates -- never an unresolvable one; see `extractUnresolvableTargets` for those.
- * An empty result means this call has zero derivable local paths, for any reason:
- * `evaluateWorktreeFenceGuard` denies whenever this is empty (issue #297). */
+ * candidates -- never an unresolvable one, and never a harness-adjudicated one either
+ * (issue #297 attempt 3: see `extractUnresolvableTargets` and `adjudicated-inside`
+ * above). An empty result means this call has zero derivable local paths, for any
+ * reason: `evaluateWorktreeFenceGuard` denies whenever this is empty AND no candidate
+ * was harness-adjudicated (issue #297). */
 export function extractCandidatePaths(toolName: string, input: unknown): string[] {
   return [
     ...new Set(
@@ -326,8 +400,9 @@ export function extractCandidatePaths(toolName: string, input: unknown): string[
 }
 
 /** Every raw candidate (or a description of a missing one) this call names that this
- * guard cannot derive to a local path to compare -- an internal-URI-shaped target of
- * any scheme, or a blank string (issue #297). Does NOT include the case where
+ * guard cannot derive to a local path to compare AND has no harness ground to
+ * adjudicate as inside instead (issue #297 attempt 3, in which case it is
+ * `"adjudicated-inside"`, not reported here). Does NOT include the case where
  * `rawCandidates` itself returned nothing at all (a missing/malformed argument shape);
  * `evaluateWorktreeFenceGuard`'s own deny path names that case separately, since there
  * is no raw string to report here. */
@@ -450,7 +525,15 @@ export function evaluateWorktreeFenceGuard(
   const readings = raw.flatMap(classifyRaw);
   const unresolvable = readings.filter((r) => r.kind === "unresolvable").map((r) => r.value);
   const candidates = [...new Set(readings.filter((r) => r.kind === "path").map((r) => r.value))];
+  const adjudicated = readings.some((r) => r.kind === "adjudicated-inside");
   if (candidates.length === 0) {
+    if (unresolvable.length === 0 && adjudicated) {
+      // Issue #297 attempt 3 (ledger `task-m5-005-sensor` seq 26, REJECT finding 1): a
+      // call whose only candidates are harness-adjudicated (`local://...` or unscoped
+      // `conflict://<id>`/`conflict://*`) is ALLOWED, not denied -- see the file
+      // header's account of why and `classifyRaw` above for the mechanism.
+      return undefined;
+    }
     const named = unresolvable.length > 0 ? unresolvable.join(", ") : describeMissingTarget(toolName, input);
     return {
       block: true,

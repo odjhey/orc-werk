@@ -37,20 +37,31 @@
 // This file imports ONLY the four symbols `../orc-seat.ts` has exported since before
 // this card's own attempt 1 (`evaluateWorktreeFenceGuard`, `extractCandidatePaths`,
 // `extractUnresolvableTargets`, the default `orcSeat` factory) -- never an internal
-// helper (`classifyRaw`, `rawCandidates`, the removed scheme tables). This is what
-// makes the swap below EXECUTABLE: this exact test file's module load succeeds against
-// either revision, so the swap proves a real assertion-level diff, never a module-load
-// crash standing in for one (ledger `task-m5-005-sensor` seq 16, REJECT finding 2 --
-// the prior attempt's swap target, `git show ef093a3:...`, predates
+// helper (`classifyRaw`, `rawCandidates`, the removed scheme tables/regexes). This is
+// what makes the swap below EXECUTABLE: this exact test file's module load succeeds
+// against any of these revisions, so the swap proves a real assertion-level diff, never
+// a module-load crash standing in for one (ledger `task-m5-005-sensor` seq 16, REJECT
+// finding 2 -- the prior attempt's swap target, `git show ef093a3:...`, predates
 // `extractUnresolvableTargets`'s introduction entirely and was never loadable; the
-// correct "pre-change" baseline for THIS delivery's own fix is this run's own attempt 1,
+// correct "pre-change" baseline for attempt 2's own fix is this run's own attempt 1,
 // head `623f2cf`, which already exports all four symbols this file uses). Reproduce
-// the swap yourself:
+// the full attempt-1-to-HEAD swap yourself (see this card's PR body for the exact
+// counts, dated):
 //
 //   git show 623f2cf:.omp/extensions/orc-seat.ts | sponge .omp/extensions/orc-seat.ts
-//   bun test ./.omp/extensions/__tests__/orc-seat.test.ts   # RED: see this card's PR body for the exact counts
+//   bun test ./.omp/extensions/__tests__/orc-seat.test.ts   # RED
 //   git checkout HEAD -- .omp/extensions/orc-seat.ts        # or: git show <this commit>:... | sponge ...
-//   bun test ./.omp/extensions/__tests__/orc-seat.test.ts   # GREEN: see this card's PR body for the exact counts
+//   bun test ./.omp/extensions/__tests__/orc-seat.test.ts   # GREEN
+//
+// This delivery (attempt 3) additionally fixes an over-denial in attempt 2's own fix
+// (ledger `task-m5-005-sensor` seq 26, REJECT finding 1): the dedicated swap for THAT
+// fix uses attempt 2's own head, `6d44ff4`, as the RED baseline instead (see this card's
+// PR body for the exact counts, dated):
+//
+//   git show 6d44ff4:.omp/extensions/orc-seat.ts | sponge .omp/extensions/orc-seat.ts
+//   bun test ./.omp/extensions/__tests__/orc-seat.test.ts   # RED (exactly the 3 conflict/local tests below fail)
+//   git checkout HEAD -- .omp/extensions/orc-seat.ts
+//   bun test ./.omp/extensions/__tests__/orc-seat.test.ts   # GREEN
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -291,17 +302,25 @@ describe("worktree fence soundness (issue #296): symlinks, colon/scheme selector
 // eleven OTHER recognized schemes -- and any zero-raw-candidate call at all (`write {}`,
 // a non-string `path`, `edit` with no hashline, a blank `path`) -- still fell through to
 // ALLOW: reproduced live by an independent verify seat (ledger `task-m5-005-sensor` seq
-// 16, REJECT finding 1) via a real `bun run` fixture probe. This delivery (attempt 2)
-// replaces both tables with one structural rule in `classifyRaw`/`evaluateWorktreeFence
-// Guard`: a call is denied whenever it yields zero candidates this guard can derive to a
-// LOCAL filesystem path, regardless of why -- no scheme name is ever consulted against a
-// list. Each RED-then-GREEN pair below FAILS against attempt 1's implementation (`git
-// show 623f2cf:.omp/extensions/orc-seat.ts`, this run's own prior, rejected delivery --
-// see this file's header for the exact swap command and this card's PR body for both
-// raw run outputs) and PASSES against the fixed one below.
+// 16, REJECT finding 1) via a real `bun run` fixture probe. Attempt 2 replaced both
+// tables with one structural rule in `classifyRaw`/`evaluateWorktreeFenceGuard`: a call
+// is denied whenever it yields zero candidates this guard can derive to a LOCAL
+// filesystem path, regardless of why -- no scheme name is ever consulted against a list.
+// That rule over-denied: an independent verify seat (ledger `task-m5-005-sensor` seq 26,
+// REJECT finding 1) reproduced live, against head `6d44ff4`, that a `conflict://<id>`
+// write -- OMP's own supported merge-conflict-resolution transport -- was denied
+// identically to a genuine escape. Attempt 3 (this delivery) narrows the rule one more
+// step: `classifyRaw` gives `local://...` and unscoped `conflict://<id>`/`conflict://*`
+// a third reading kind, `"adjudicated-inside"`, on the ground that the write tool itself
+// resolves and revalidates both against a real on-disk file (see `../orc-seat.ts`'s
+// header for the full harness-contract citation), and
+// `evaluateWorktreeFenceGuard` ALLOWs a call whose only candidates are that kind. Each
+// RED-then-GREEN pair below FAILS against the implementation named in its own comment
+// and PASSES against the fixed one in this delivery -- see this file's header for the
+// exact swap commands and this card's PR body for both raw run outputs.
 // ---------------------------------------------------------------------------------------
 
-describe("worktree fence fail-closed on zero derivable local paths (issue #297, attempt 2: derivability, not a scheme list)", () => {
+describe("worktree fence fail-closed on zero derivable local paths (issue #297, attempts 2-3: derivability, not a scheme list)", () => {
   function makeShipWorktree(branch: string): { shipCwd: string } {
     const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "orc-seat-unresolvable-")));
     const shipCwd = path.join(tmpRoot, "repo", ".worktrees", branch);
@@ -335,15 +354,14 @@ describe("worktree fence fail-closed on zero derivable local paths (issue #297, 
   });
 
   // Every internal-URI scheme this repo's own `read`/`write`/`edit` tool surface
-  // documents (`omp://internal-schemes.md`-adjacent tool descriptions: `local://`,
-  // `memory://`, `artifact://`, `history://`, `agent://`, `rule://`, `skill://`,
-  // `mcp://`, `issue://`, `pr://`, `omp://`) plus `ssh://` -- twelve in total, matching
-  // this card's own required coverage list. Attempt 1 ALLOWed the first eleven of these
-  // unconditionally (`IGNORED_URI_SCHEMES`); this loop proves none of the twelve is
-  // special-cased any more, `local://` included -- reversing attempt 1's own assumption
-  // that "documented as never touching a real filesystem" meant "safe to skip checking".
-  const TWELVE_SCHEMES = [
-    "local",
+  // documents (`omp://internal-schemes.md`-adjacent tool descriptions: `memory://`,
+  // `history://`, `agent://`, `rule://`, `skill://`, `mcp://`, `issue://`, `pr://`,
+  // `omp://`) plus `artifact://` and `ssh://` -- eleven in total. `local://` is
+  // deliberately NOT in this list: attempt 3 (below) moves it to ALLOW-by-adjudication,
+  // the one intentional behaviour change this delivery makes -- see `../orc-seat.ts`'s
+  // header for why. Attempt 1 ALLOWed all eleven of these unconditionally
+  // (`IGNORED_URI_SCHEMES`); this loop proves none of them is special-cased any more.
+  const ELEVEN_SCHEMES = [
     "memory",
     "artifact",
     "history",
@@ -357,7 +375,7 @@ describe("worktree fence fail-closed on zero derivable local paths (issue #297, 
     "ssh",
   ] as const;
 
-  for (const scheme of TWELVE_SCHEMES) {
+  for (const scheme of ELEVEN_SCHEMES) {
     test(`RED-then-GREEN — a write targeting \`${scheme}://...\` is denied for zero derivable local paths, not silently allowed`, () => {
       const { shipCwd } = makeShipWorktree(`task-scheme-${scheme}`);
       const target = `${scheme}://probe/target.txt`;
@@ -367,6 +385,20 @@ describe("worktree fence fail-closed on zero derivable local paths (issue #297, 
       expect(extractCandidatePaths("write", { path: target })).toEqual([]);
     });
   }
+
+  test("RED-then-GREEN — a write targeting a novel, never-seen scheme (`zzfuture://...`) is denied, proving this is derivability-driven and not a name lookup", () => {
+    // `zzfuture` names no scheme this repo's source has ever mentioned (ledger
+    // `task-m5-005-sensor` seq 26, VERIFIED finding 2: an independent verify seat's own
+    // repo-wide source search found no `zzfuture` occurrence anywhere). A name lookup
+    // (attempt 1's tables) could only ever deny schemes someone remembered to list;
+    // this guard denies it purely because it is `scheme://`-shaped and neither
+    // `local://` nor a writable `conflict://` — no table entry for `zzfuture` exists or
+    // is needed.
+    const { shipCwd } = makeShipWorktree("task-scheme-zzfuture");
+    const target = "zzfuture://probe/target.txt";
+    const result = evaluateWorktreeFenceGuard("ship", "write", { path: target }, shipCwd);
+    expect(result).toEqual({ block: true, reason: expect.stringContaining(target) });
+  });
 
   // Malformed/missing-argument shapes: attempt 1 ALLOWed each of these too, for the
   // identical underlying reason as the eleven schemes above -- `rawCandidates` (or its
@@ -408,5 +440,75 @@ describe("worktree fence fail-closed on zero derivable local paths (issue #297, 
     const { shipCwd } = makeShipWorktree("task-whitespace-padding-ok");
     const result = evaluateWorktreeFenceGuard("ship", "write", { path: "  inside.txt" }, shipCwd);
     expect(result).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Harness-adjudicated writable schemes (issue #297 attempt 3): `local://` and unscoped
+// `conflict://<id>`/`conflict://*` are ALLOWED, not denied, on the ground that OMP's own
+// `write` tool resolves and revalidates both against a real on-disk file before ever
+// touching it (see `../orc-seat.ts`'s header for the full harness-contract citation: an
+// independent verify seat, ledger `task-m5-005-sensor` seq 26 REJECT finding 1,
+// reproduced live that attempt 2 denied `conflict://<id>` -- OMP's own supported
+// merge-conflict-resolution write -- identically to a genuine escape). Each RED-then-
+// GREEN pair below FAILS against attempt 2 (`git show 6d44ff4:.omp/extensions/orc-seat.ts`
+// -- the just-rejected delivery this attempt corrects) and PASSES against this delivery
+// -- see this card's PR body for both raw swap outputs.
+// ---------------------------------------------------------------------------------------
+
+describe("worktree fence: harness-adjudicated writable schemes (issue #297 attempt 3) are ALLOWED, not denied", () => {
+  function makeShipWorktree(branch: string): { shipCwd: string } {
+    const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "orc-seat-adjudicated-")));
+    const shipCwd = path.join(tmpRoot, "repo", ".worktrees", branch);
+    fs.mkdirSync(shipCwd, { recursive: true });
+    return { shipCwd };
+  }
+
+  test("RED-then-GREEN — a write targeting a writable `conflict://<id>` is ALLOWED, not denied as an unresolvable scheme", () => {
+    const { shipCwd } = makeShipWorktree("task-conflict-id");
+    const result = evaluateWorktreeFenceGuard("ship", "write", { path: "conflict://17" }, shipCwd);
+    expect(result).toBeUndefined();
+    expect(extractUnresolvableTargets("write", { path: "conflict://17" })).toEqual([]);
+    expect(extractCandidatePaths("write", { path: "conflict://17" })).toEqual([]);
+  });
+
+  test("RED-then-GREEN — an edit targeting a writable `conflict://*` hashline is ALLOWED, not denied", () => {
+    const { shipCwd } = makeShipWorktree("task-conflict-star");
+    const input = { input: "[conflict://*#A1B2]\nPUT 1.=1:\n+x\n" };
+    const result = evaluateWorktreeFenceGuard("ship", "edit", input, shipCwd);
+    expect(result).toBeUndefined();
+  });
+
+  test("ALLOWED — a scoped, read-only `conflict://<id>/<scope>` target still denies as unresolvable (never a legitimate write target)", () => {
+    // Per `omp://tools/write.md`'s own "Merge-conflict resolution" section, the scoped
+    // form is read-only: it can never legitimately be a write target, so no
+    // adjudication ground applies to it and it stays denied like any other scheme this
+    // guard cannot derive to a local path.
+    const { shipCwd } = makeShipWorktree("task-conflict-scoped");
+    const target = "conflict://17/ours";
+    const result = evaluateWorktreeFenceGuard("ship", "write", { path: target }, shipCwd);
+    expect(result).toEqual({ block: true, reason: expect.stringContaining(target) });
+  });
+
+  test("RED-then-GREEN — a write targeting `local://...` is ALLOWED, not denied as an unresolvable scheme (deliberate change from attempt 2)", () => {
+    // Attempt 2 denied EVERY `scheme://...`-shaped string, `local://` included. This is
+    // the one deliberate behaviour change this delivery makes: `local://` moves from
+    // attempt 2's blanket DENY to ALLOW-by-adjudication, on the same harness-contract
+    // ground as `conflict://` above (see `../orc-seat.ts`'s header).
+    const { shipCwd } = makeShipWorktree("task-local");
+    const result = evaluateWorktreeFenceGuard("ship", "write", { path: "local://plan.md" }, shipCwd);
+    expect(result).toBeUndefined();
+  });
+
+  test("DENIED — an edit mixing an adjudicated candidate with a genuinely unresolvable one still denies on the unresolvable one", () => {
+    // Soundness check on the guard clause itself: `unresolvable.length === 0 && adjudicated`.
+    // A multi-file edit naming both a writable `conflict://<id>` hashline and an
+    // `ssh://` one must not let the adjudicated candidate paper over the genuine escape.
+    const { shipCwd } = makeShipWorktree("task-mixed");
+    const input = {
+      input: "[conflict://17#A1B2]\nPUT 1.=1:\n+x\n[ssh://host/x#C3D4]\nPUT 1.=1:\n+y\n",
+    };
+    const result = evaluateWorktreeFenceGuard("ship", "edit", input, shipCwd);
+    expect(result).toEqual({ block: true, reason: expect.stringContaining("ssh://host/x") });
   });
 });

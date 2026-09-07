@@ -3,7 +3,7 @@ id: TASK-M5-005
 type: task-card
 status: current
 authority: normative
-description: Author .omp/extensions/orc-seat.ts — as of Amendments 4-7, a single advisory tripwire (not an enforcement mechanism) fencing the ship seat's write/edit calls to its own .worktrees/<branch>, failing closed on any target with zero derivable local paths (issue #297); record-before-yield, no-self-merge, and verify push/commit/comment/review denial are policy honored by the seat definitions and audited after the fact, not hook-enforced. Red-then-green tests prove the tripwire fires.
+description: Author .omp/extensions/orc-seat.ts — as of Amendments 4-8, a single advisory tripwire (not an enforcement mechanism) fencing the ship seat's write/edit calls to its own .worktrees/<branch>, failing closed on any target with zero derivable local paths (issue #297) except the two harness-adjudicated writable forms (local://, unscoped conflict://<id>/conflict://*), which it allows on the write tool's own documented on-disk revalidation; record-before-yield, no-self-merge, and verify push/commit/comment/review denial are policy honored by the seat definitions and audited after the fact, not hook-enforced. Red-then-green tests prove the tripwire fires.
 implements:
   - ADR-0007
 verifies: []
@@ -630,3 +630,80 @@ against real code by an independent verify seat. This amendment records how atte
 This amendment does not reopen guards 1, 2, 3, or 5, and does not change
 `.omp/extensions/orc-seat.ts`'s single-retained-guard scope; guard 4 remains the only guard the file
 implements, now fixed to fail closed on derivability rather than an enumerated scheme list.
+
+## Amendment 8 — 2026-09-07, run `task-m5-005-sensor`, attempt 3, issue #297 over-denial fix, derived from the harness contract (dated, with provenance)
+
+`orc verdict task-m5-005-sensor` (journal seq 26, head `6d44ff4`) rejected attempt 2 with one REJECT
+finding (four others VERIFIED fixed, unreopened by this amendment) — this amendment fixes exactly the
+mechanism named in that finding, not the sentence.
+
+1. **Real-ship over-denial on `conflict://` (the sole finding).** Amendment 7's structural fix classified
+   EVERY `scheme://...`-shaped string as unresolvable and denied it, including `conflict://<id>` — OMP's
+   own supported merge-conflict-resolution write. A real `bun -e` fixture probe at `6d44ff4` reproduced
+   `{"target":"conflict://17","candidates":[],"unresolvable":["conflict://17"],"guard":"DENY"}`. Per the
+   finding: `omp://tools/write.md:57-61` and installed `write.ts:128-131,836-840,1220-1234` establish that
+   a writable `conflict://<id>` splices a registered, revalidated on-disk file — denying it is the
+   real-ship over-denial class this file's own header already names as worse than the escape attempt 2
+   closed. The prior attempt's cost measurement was itself false: it enumerated only twelve schemes and
+   its own all-scheme search actually printed four `history://` lines, not the claimed two.
+2. **Root cause and fix: derive the writable-target universe from the harness contract, not a name
+   list.** Re-deriving from `@oh-my-pi/pi-coding-agent`'s own installed source (never from the guard's own
+   prior scheme lists) found exactly 15 router-registered internal-URL schemes
+   (`internal-urls/router.ts:38-53`), of which only THREE implement a `write` method at all — `ssh`
+   (`ssh-protocol.ts:363`), `vault` (`vault-protocol.ts:719`), `xd` (`xd-protocol.ts:45`) — plus TWO
+   further schemes `write.ts` itself handles as bespoke, non-router-dispatched writable forms: `local`
+   (`write.ts:1215-1217`, backed by the session-local artifact sandbox via `plan-mode-guard.ts:36-42,
+   114-119`'s `resolvePlanPath`) and unscoped `conflict://<id>`/`conflict://*` (`write.ts:1220-1238`,
+   spliced into a registered, revalidated on-disk file per `write.ts:128-131`'s own comment and
+   `omp://tools/write.md:59-61`'s Flow steps 3-5). Every OTHER registered scheme
+   (`omp`,`agent`,`artifact`,`memory`,`skill`,`rule`,`security`,`mcp`,`issue`,`pr`,`history`) has no
+   `write` at all — OMP's own write tool rejects them before this hook ever runs (`write.md:59`: "Unknown
+   schemes... fail instead of becoming local filenames"), so this hook's DENY for them is a second,
+   redundant fail-closed layer, never load-bearing. `.omp/extensions/orc-seat.ts`'s `classifyRaw` now
+   gives `local://` and unscoped `conflict://<id>`/`conflict://*` a third reading kind,
+   `"adjudicated-inside"`, distinct from `"path"` and `"unresolvable"`; `evaluateWorktreeFenceGuard`
+   ALLOWs a call whose candidates are `"adjudicated-inside"` only, and still denies if even one candidate
+   is genuinely unresolvable (e.g. an `edit` mixing a `conflict://<id>` hashline with an `ssh://` one).
+   The scoped, read-only `conflict://<id>/<scope>` form is deliberately excluded (per
+   `write.md:61`/`write.ts:1222-1226`, it can never legitimately be a write target) and stays denied,
+   unchanged.
+3. **`local://` moves from DENY to ALLOW-by-adjudication — a deliberate change, stated plainly.** Amendment
+   7 denied `local://` identically to every other unrecognized scheme. That was itself an over-denial by
+   the same harness-contract reasoning as `conflict://` (`local://` is also backed by a real,
+   harness-resolved on-disk path — a session's own artifact sandbox, never an opaque or remote target).
+   This is the one intentional behaviour change this amendment makes; it is not left to look like drift.
+   `ssh://` (issue #297's own original escape), `vault://`, `xd://`, and every other scheme stay denied,
+   unchanged: none of those three ever targets a path inside a ship's own worktree (a remote host, a
+   global secret store, a mounted external-tool device respectively), so no adjudication ground applies to
+   any of them.
+4. **Per-scheme cost measurement redone and republished.** All 15 router-registered schemes plus both
+   `conflict://` forms (writable and scoped) plus a novel `zzfuture://` were probed individually against
+   the fixed guard; only `local://` and writable `conflict://` ALLOW, every other member (including the
+   scoped, read-only `conflict://<id>/<scope>` form) still DENIES. See this attempt's PR body for the
+   full, timestamped per-scheme table.
+5. **Swap and tests republished.** The existing attempt-1-to-HEAD swap (`623f2cf` → HEAD) is kept, with
+   updated pass/fail/`expect()` counts reflecting the added tests. A dedicated second swap, from attempt
+   2's own head `6d44ff4` to this attempt's HEAD, isolates exactly this fix: 3 tests fail at `6d44ff4`
+   (the `conflict://<id>`, `conflict://*`, and `local://` ALLOW assertions) and pass at HEAD. `local` is
+   removed from the deny-loop scheme list (now eleven schemes, `ssh` included, `local` excluded) with the
+   removal's reason stated in-line; a dedicated test proves the scoped `conflict://<id>/<scope>` form
+   still denies; a dedicated test proves a mixed adjudicated+unresolvable `edit` still denies on the
+   unresolvable candidate. See this attempt's PR body for both raw swap outputs.
+6. **Everything Amendment 7 verified stays untouched, restated where line numbers shifted.** Territory
+   (still exactly five declared paths), the packaged-scaffold drift test (unmodified, no allowlist
+   change), the enforcement inventory, the tool-list and Guard 2/3/5 corrections, and the hardlink
+   disclosure (`.omp/extensions/orc-seat.ts:19-24,461-472` after this amendment's insertions shifted the
+   second range from Amendment 7's `:384-397`; this card's own `:489-497` is unaffected, unmoved) are
+   unchanged in substance; this attempt's PR body republishes any numbers that moved due to this
+   amendment's own insertions, rather than leaving them stale.
+
+This amendment does not reopen guards 1, 2, 3, or 5, and does not change
+`.omp/extensions/orc-seat.ts`'s single-retained-guard scope; guard 4 remains the only guard the file
+implements. Disclosed, not fixed, by this amendment: the hardlink gap (unchanged, see Amendment 4/5's own
+account and the file's `realOf` comment); the hook's in-principle unsoundness against deliberate evasion
+(unchanged, stated in the file header since Amendment 4); and one further residual limitation this fix
+leaves open — if the harness ever adds a THIRD bespoke writable scheme resolving to a real on-disk path
+outside the router's `write()` dispatch, this hook will deny it exactly as it denied `conflict://` before
+this amendment, until a future amendment adds it to the two-shape adjudication check. This is a structural
+property of a hook maintained separately from the harness it inspects, not a claim that today's two-shape
+list is future-proof.
