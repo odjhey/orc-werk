@@ -12,7 +12,20 @@ This is the second half of `TASK-M5-008`. `docs/delivery/seat-reliability.md`'s
 format and first four entries landed early in `fix-verify-seat-fallback`
 (PR #268); this report is the pilot write-up that card left open, plus
 newly observed reliability events appended to that log the same day they
-were found (below), including this card's own two verify rejections.
+were found (below), including two verify rejections against `task-m5-008`'s
+own first two attempts (see "This card's own delivery is a seat-reliability
+finding" below for the full account and why that count stops there).
+
+**Observation cutoff:** every ledger count, timestamp, and state claim in
+this document — including every table — is accurate as of
+**`2026-09-07T03:51:29Z`**, unless a narrower, earlier cutoff is stated
+inline for one specific claim (several sections below fix their own,
+earlier, cutoff at whatever instant they were checked mid-draft). The
+ledger keeps accepting new settlements after that instant, including about
+this document's own delivery; this document does not update itself as
+that happens, and does not attempt to state its own final disposition —
+see the closing paragraph of "This card's own delivery is a
+seat-reliability finding" below for why.
 
 **Sources**, all read directly, none paraphrased from memory: `orc --limit 0`;
 `orc history <run> --limit 0` and the raw `.orc/<run>/journal.jsonl` +
@@ -25,8 +38,9 @@ were found (below), including this card's own two verify rejections.
 (`TASK-M5-001`'s report, PR #277, accepted `ran-real-code`); and, for the
 whole-ledger verify-verdict join in §2 below, every `.orc/*/journal.jsonl` +
 `times.jsonl` pair present on disk at each stated cutoff — which is how
-`task-m5-002`, `docs-adr0007-v7-amendment`, and this run's own
-`task-m5-008/journal.jsonl` (both prior attempts' settlements) enter that
+`task-m5-002`, `docs-adr0007-v7-amendment`, and `task-m5-008/journal.jsonl`
+(this document's originating run, both of its first two attempts'
+settlements) enter that
 join despite being outside the ten-named-delivery scope above.
 
 Every claim below cites a run id + seq or a PR number. Where the ledger is
@@ -90,8 +104,9 @@ therefore *cannot* branch on a structural role field, was wrong.
 `agent: agent.name` at spawn time); `fix-capability-role-finding`/`correct`
 seq 16 accepted the fix into the capability report itself
 (`docs/reports/2026-09-07-omp-capability-test.md` §6 Correction), landing
-as `gh-pr:286`, merge commit `c7beea5`, `2026-09-07T02:58:02Z` — before
-this candidate's own commit at `03:16:48Z`. So `TASK-M5-005`'s per-role
+as `gh-pr:286`, merge commit `c7beea5`, `2026-09-07T02:58:02Z` — well
+before this document's stated observation cutoff above. So
+`TASK-M5-005`'s per-role
 rules *can* branch on a structural role field after all — whether the
 card's own shipped hook does so correctly is a separate, still-live
 question, tracked below.
@@ -201,8 +216,10 @@ an independent sibling run, not this card, which remains out of
 
 ### A live ledger during a live write-up: state derivations, not transcribed totals
 
-This section's settled-verdict counts moved on every one of this card's
-three attempts, and not because the arithmetic was hard: each of the first
+This section's settled-verdict counts moved on each of `task-m5-008`'s
+three attempts — this card's original run, closed by the abandon
+described in "This card's own delivery is a seat-reliability finding"
+below — and not because the arithmetic was hard: each of the first
 two attempts transcribed a snapshot integer instead of publishing the join
 that produces it, against a ledger this card is itself a member of. Scoped
 to the ten named deliveries in the table above: attempt 1 (commit `0584a66`,
@@ -210,7 +227,7 @@ to the ten named deliveries in the table above: attempt 1 (commit `0584a66`,
 `chore-verify-followups` had already settled
 (`.orc/chore-verify-followups/journal.jsonl` `FACT-ASSURE-SETTLED` seq 16,
 `01:37:18Z` — ten minutes before that commit); the verify seat that rejected
-attempt 1 (`VerifyM5008`, seq 16 of this run) recounted correctly to ten for
+attempt 1 (`VerifyM5008`, seq 16 of `task-m5-008`) recounted correctly to ten for
 that scope.
 
 Outside the ten-delivery scope, the load-bearing question is the
@@ -320,28 +337,50 @@ re-runs them.
 
 ### This card's own delivery is a seat-reliability finding
 
-`TASK-M5-008` is a card about seat reliability that twice failed to reliably
-count the seat traffic it was itself part of — the single most on-topic
-failure this write-up could report, so it is reported here rather than
-left implicit in the ledger:
+`TASK-M5-008` is a card about seat reliability whose own delivery
+repeatedly failed to reliably describe the seat traffic it was itself
+part of — the single most on-topic failure this write-up could report, so
+it is reported here, as history up to this document's stated cutoff,
+rather than left implicit in the ledger:
 
-| Attempt | sha | Ship session | Verify session (seq) | Verdict at `02:0x`/`02:2x`Z | Root cause |
-|---|---|---|---|---|---|
-| 1 | `0584a66868084169ee574111c12a23f707bd8ed7` | `ShipM5008` | `VerifyM5008` (seq 16, `02:01:57.177Z`) | rejected | Declared `chore-verify-followups` "not yet settled" (it had merged 10 minutes before the commit) and undercounted the ten-named-delivery verify-verdict tally as nine instead of ten. |
-| 2 | `645c2c47a18a6800792ad44028bc548b6dd51bbc` | `ShipM5008R2` | `VerifyM5008R2` (seq 26, `02:29:58.366Z`) | rejected | Fixed attempt 1's misses, then undercounted its own whole-ledger verify-verdict join as eleven/thirteen instead of twelve/fourteen by omitting a `verdict: rejected` row (this card's own attempt-1 rejection); also carried a bare, uncutoffed "71 all-time" `FACT-ASSURE-SETTLED` figure (unreproducible — 140 top-level facts existed at that same cutoff) and a stale "eight `ship.md` rows" figure left over from before `chore-verify-followups` settled. |
-| 3 (this one) | see `git rev-parse HEAD` | `ShipM5008R3` | pending | — | Does not attempt a better transcribed number. Every surviving count above states its own as-of instant, embeds the join that reproduces it, and says plainly that it only grows. |
+| Run | Attempt | sha | Ship session | Verify session (seq, time) | Outcome | Root cause |
+|---|---|---|---|---|---|---|
+| `task-m5-008` | 1 | `0584a66868084169ee574111c12a23f707bd8ed7` | `ShipM5008` | `VerifyM5008` (seq 16, `02:01:57.177Z`) | rejected | Declared `chore-verify-followups` "not yet settled" (it had merged 10 minutes before the commit) and undercounted the ten-named-delivery verify-verdict tally as nine instead of ten. |
+| `task-m5-008` | 2 | `645c2c47a18a6800792ad44028bc548b6dd51bbc` | `ShipM5008R2` | `VerifyM5008R2` (seq 26, `02:29:58.366Z`) | rejected | Fixed attempt 1's misses, then undercounted its own whole-ledger verify-verdict join as eleven/thirteen instead of twelve/fourteen by omitting a `verdict: rejected` row (its own attempt-1 rejection); also carried a bare, uncutoffed "71 all-time" `FACT-ASSURE-SETTLED` figure (unreproducible — 140 top-level facts existed at that same cutoff) and a stale "eight `ship.md` rows" figure left over from before `chore-verify-followups` settled. |
+| `task-m5-008` | 3 | `c3992270b934d6b8916f9e830f0d44c017ab2696` | `ShipM5008R3` | assurance requested, never settled | **abandoned** | Fixed the counting *method* (published the reproducible join instead of a transcribed integer) and correctly scoped the `V7`-amendment claim to a `02:33:37Z` cutoff — but the candidate froze `ASSURING` seven minutes before a sibling run (`docs-adr0007-v7-amendment`, `gh-pr:283`) merged and retroactively falsified that same still-open framing. No in-run remedy existed to rebind the frozen candidate to a corrected one (`record_execution_outcome_entry` refuses a second recorded outcome; `FACT-CANDIDATE-OBSERVED` folds only while `EXECUTING`) — the mechanism is documented in full as issue #289. Operator abandoned the attempt (`.orc/task-m5-008/journal.jsonl` seq 37, `03:07:51.165565Z`); `task-m5-008`/`writeup` is now `BLOCKED`, its three attempts spent. |
+| `task-m5-008-writeup-r2` | 1 | `3c67cdf7448579684e55cbe0dd3b79c80c6e86f5` | `ShipWriteupR2` | `VerifyWriteupR2` (seq 16, `03:27:00.811866Z`) | rejected | An unscoped whole-ledger "every settled verify verdict used a materially different family" claim (false before `V7` ratified — an Anthropic-on-Anthropic pairing predates it); a still-standing "role identity is structurally unreachable" claim already falsified by the merged correction described above; a dropped line from a quoted `ADR-0007` sentence; a stale duplicate `Not covered` bullet. |
+| `task-m5-008-writeup-r2` | 2 | `b5ef29db056e492220b22fbb868a2a5e92343170` | `ShipWriteupR2b` | `VerifyWriteupR2b` (seq 26, `03:47:15.284484Z`) | rejected | All four attempt-1 defects closed correctly, but stale self-history survived describing this card as having "only two verify rejections / three attempts" and naming its own next attempt "this one, pending"; and a self-reported commit instant (`03:16:48Z`) copied forward from the *prior*, already-rejected candidate rather than its own. |
 
-The lesson is not "recount more carefully." A census taken from inside a
-population that is still growing while you write is stale the instant it is
-committed, no matter how carefully it was taken — attempt 2 recounted
-attempt 1's exact miss and still landed short, because it counted a
-snapshot rather than stating a derivation. The fix that survives is to
-publish the join (script, cutoff, and the rule that `verdict: rejected` is
-a settled verdict like any other) so any reader — including a later attempt
-of this very card — can reproduce or supersede the number, instead of
-trusting a transcribed integer that was already wrong by the time it was
-typed. `docs/delivery/seat-reliability.md`'s 2026-09-07 section carries the
-corresponding dated entries for both rejections, per `T5`/`T6`.
+The re-ship under a new run, rather than a fourth attempt of the old one,
+is itself part of the finding: `task-m5-008`'s own
+`record_execution_outcome_entry` had no affordance for "this frozen
+candidate was invalidated by something outside it," so the only paths
+available once assurance was already requested were to let a verify seat
+accept a document carrying a knowingly-false claim, or spend the abandon
+and re-open under `task-m5-008-writeup-r2` on the same branch and PR —
+issue #289 is the durable record of why, filed the same day.
+
+The lesson is not "recount more carefully" or "retry with a fresher
+number." A census taken from inside a population that is still growing
+while you write is stale the instant it is committed, no matter how
+carefully it was taken — and that includes a document's claims about its
+*own* delivery: its own commit instant does not exist until the commit is
+made, and its own attempt number, rejection count, and disposition keep
+changing after the text is written, for exactly the same reason the
+verify-verdict tallies elsewhere in this document do. The fix that
+survives is the one applied to every other count here: state a cutoff,
+describe only what is true as of it, and say plainly that the record keeps
+growing past that point. Applied to this section: **this document does
+not attempt to report its own final disposition** — whether this text is
+later accepted, rejected, or further superseded — because that fact is
+created after this document is written, by the same live ledger this
+section is about. A reader who wants `task-m5-008`'s current delivery
+state should run `orc status task-m5-008-writeup-r2` (or `orc history
+task-m5-008-writeup-r2 --limit 0`), not this document.
+`docs/delivery/seat-reliability.md`'s 2026-09-07 section carries the dated
+entries for `task-m5-008`'s own two rejections in the table above, per
+`T5`/`T6`; it was not revised for the later `task-m5-008-writeup-r2`
+attempts because that run's own history is recorded here instead.
 
 ### The two external-candidate-lane runs are not evidence about `.omp/agents/ship.md`
 
@@ -464,12 +503,15 @@ day as observed, per `T5`/`T6`:
 - A live, independent hit of the `test_hung_observer` flake (open issue
   #232) by `VerifyM5006` during PR #275's audit — a first full-suite
   `bash scripts/check.sh` run failed on it before a second run passed.
-- This card's own two verify rejections — attempt 1
+- `task-m5-008`'s own two verify rejections — attempt 1
   (`0584a66868084169ee574111c12a23f707bd8ed7`, rejected by `VerifyM5008`)
   and attempt 2 (`645c2c47a18a6800792ad44028bc548b6dd51bbc`, rejected by
   `VerifyM5008R2`) — both for miscounting the live ledger this write-up was
-  itself contributing to; full account in "This card's own delivery is a
-  seat-reliability finding" above.
+  itself contributing to (these are the two entries actually appended to
+  `docs/delivery/seat-reliability.md`'s 2026-09-07 section; the later
+  `task-m5-008-writeup-r2` rejections are recorded in the ledger and in
+  "This card's own delivery is a seat-reliability finding" above, not
+  re-appended there).
 
 No model hang, rate-limit, or hook misfire beyond the four entries
 `fix-verify-seat-fallback` already logged on 2026-09-06 is evidenced in any
@@ -485,9 +527,10 @@ sibling: a live-ledger-count surprise.
   recorded across different runs denote the same model is not resolvable
   from the ledger alone. (`ADR-0007`'s `V7` naming `openai-codex`
   specifically was flagged here as a candidate ambiguity in an earlier
-  draft of this section; it resolved before this attempt's own commit —
-  landed as `gh-pr:283`, accepted `02:33:43.900878Z`, merged `db9d122` at
-  `02:34:35Z`, see the `V7` section above — and is no longer open.)
+  draft of this section; it resolved well before this document's stated
+  observation cutoff above — landed as `gh-pr:283`, accepted
+  `02:33:43.900878Z`, merged `db9d122` at `02:34:35Z`, see the `V7` section
+  above — and is no longer open.)
 
 ## Not covered
 
