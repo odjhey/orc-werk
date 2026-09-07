@@ -1,5 +1,18 @@
 # orc-ledger skill changelog
 
+## v6 -- 2026-09-07
+
+- Point §3 ("Know your seat") at the OMP-native realization of each seat:
+  `.omp/agents/scout.md`, `.omp/agents/ship.md`, and `.omp/agents/verify.md`
+  (`ADR-0007`, `TASK-M5-006`), so an OMP session onboarding via this skill
+  has a direct pointer from the roles it describes to the agent
+  definitions actually driving it. Includes the `V7` rule: `verify.md`'s
+  model list is every non-Anthropic family, since ship runs on
+  `anthropic/*` -- no seat marks its own homework. Recording semantics
+  (§1-§9 of the underlying playbook) are unchanged.
+
+content-sha256: 1bce6594e928dd5a83dfa2525cdb40e1af67868b8f126278cbf7c8d71ed0df69
+
 ## v5 -- 2026-09-05
 
 - Teach `orc record --verdict inconclusive` (`ADR-0006`, #264): the honest verify-seat verdict when you cannot decide or could not evaluate. It spends the run's assurance budget (`max_assurance_attempts`, `INV-021`), never the ship seat's retry budget -- within budget the kernel re-requests assurance of the same candidate, exhausted the Work blocks with `reason: assurance-inconclusive`.
