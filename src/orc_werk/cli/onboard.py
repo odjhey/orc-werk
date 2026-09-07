@@ -1,10 +1,10 @@
 """`orc onboard [--path DIR] [--print-agents-block] [--force] [--agents-file
-NAME] [--journal JOURNAL]` (`TASK-M3D-001`, `M3-HARDEN-THE-LOOP` Phase M3d):
-mechanically scaffolds an adopting repository -- the hand-work
-`docs/product/adoption.md` (`PRODUCT-ADOPTION`) currently documents as a
-manual copy ("Copy the `orc-ledger` project skill ... into the adopting
-repository"). Five steps, each independently idempotent and each reported
-honestly:
+NAME] [--journal JOURNAL] [--omp]` (`TASK-M3D-001`, `M3-HARDEN-THE-LOOP`
+Phase M3d; `TASK-M5-007` added the `--omp` step): mechanically scaffolds
+an adopting repository -- the hand-work `docs/product/adoption.md`
+(`PRODUCT-ADOPTION`) currently documents as a manual copy ("Copy the
+`orc-ledger` project skill ... into the adopting repository"). Six
+steps, each independently idempotent and each reported honestly:
 
 1. **gitignore** -- ensure a `.orc/` entry exists in the target repo's
    `.gitignore` (create the file if absent, append the entry if the file
@@ -40,7 +40,26 @@ honestly:
    prints this block to stdout ONLY and performs no other step, writes no
    file -- for pasting into whatever agent-instructions file a repo
    already uses instead of the default `AGENTS.md` target.
-5. **install verification** -- honestly reports what resolved: `orc` on
+5. **OMP seat scaffold** (`--omp`, `TASK-M5-007`, `ADR-0007`) -- when
+   `--omp` is passed, OR a `.omp/` directory already exists at `--path`
+   (so a repo that already began adopting OMP keeps it current without
+   remembering the flag on every re-run), write template copies of
+   `.omp/agents/scout.md`, `.omp/agents/ship.md`, `.omp/agents/verify.md`,
+   `.omp/config.yml`, and `.omp/RULES.md`. **Canonical origin**, same
+   discipline as the skill: every byte is read from THIS installed
+   package (`orc_werk.omp_scaffold`, via `importlib.resources`), never a
+   second copy hand-maintained in this module's own source -- see
+   `orc_werk.omp_scaffold`'s docstring for why these templates are an
+   authored copy of orc-werk's own `.omp/` files, not a symlink to them
+   (unlike the skill's chain): every difference from the live files is
+   drift-checked by `tests/scenarios/test_cli_onboard.py`'s
+   `PackagedScaffoldDriftTest` against an enumerated allowlist (account-
+   specific `model:` pins get an adopter-facing disclaimer; orc-werk-
+   repo-specific phrasing is generalized), so a live seat edit that isn't
+   propagated here breaks the build rather than silently drifting. With
+   the trigger absent, this step installs nothing and today's onboarding
+   behavior (skill + agents-block only) is unchanged.
+6. **install verification** -- honestly reports what resolved: `orc` on
    `$PATH` (`shutil.which`) vs. this interpreter's own ability to import
    `orc_werk` (module form); the journal directory `--journal`/
    `$ORC_JOURNAL_DIR`/`./.orc` (`orc_werk.cli.journal_reading.
@@ -54,11 +73,11 @@ non-negotiable): every step compares what it would write against what is
 already there. An exact match is a `skip` note (no write, no diff). A
 mismatch against something this command did not create -- an
 operator-modified `.gitignore` line is impossible by construction (append-
-only, never rewritten), but the skill file, the `.claude/skills` link, and
-the agents-block CAN already hold different content -- is `skip-with-note`
-by default (never a hard failure; the note names exactly what to do:
-rerun with `--force`) unless `--force` is given, which overwrites/replaces
-it in place, also reported.
+only, never rewritten), but the skill file, the `.claude/skills` link,
+the agents-block, and each `.omp/` scaffold file CAN already hold
+different content -- is `skip-with-note` by default (never a hard
+failure; the note names exactly what to do: rerun with `--force`) unless
+`--force` is given, which overwrites/replaces it in place, also reported.
 
 Pure scaffolding: this module never touches a delivery journal, never
 imports `orc_werk.app`/`orc_werk.core` beyond the shared canonical-error
@@ -128,6 +147,38 @@ def _skill_version(skill_text: str) -> int:
 
 def _changelog_registry(changelog_text: str) -> dict[str, int]:
     return {digest: int(version) for version, digest in _CHANGELOG_ENTRY_RE.findall(changelog_text)}
+
+
+_OMP_SCAFFOLD_PACKAGE = "orc_werk.omp_scaffold"
+OMP_AGENT_NAMES = ("scout", "ship", "verify")
+
+
+def omp_scaffold_agent_text(name: str) -> str:
+    """One `.omp/agents/<name>.md` template's canonical content, read from
+    THIS installed package -- see `orc_werk.omp_scaffold`'s docstring for
+    why this is an authored copy of orc-werk's own `.omp/agents/<name>.md`
+    (drift-checked by `PackagedScaffoldDriftTest`), not a symlink to it."""
+    if name not in OMP_AGENT_NAMES:
+        raise ValueError(f"unknown OMP agent template: {name!r}")
+    return (
+        importlib.resources.files(_OMP_SCAFFOLD_PACKAGE)
+        .joinpath("agents", f"{name}.md")
+        .read_text(encoding="utf-8")
+    )
+
+
+def omp_scaffold_config_text() -> str:
+    """The `.omp/config.yml` template's canonical content."""
+    return (
+        importlib.resources.files(_OMP_SCAFFOLD_PACKAGE).joinpath("config.yml").read_text(encoding="utf-8")
+    )
+
+
+def omp_scaffold_rules_text() -> str:
+    """The `.omp/RULES.md` template's canonical content."""
+    return (
+        importlib.resources.files(_OMP_SCAFFOLD_PACKAGE).joinpath("RULES.md").read_text(encoding="utf-8")
+    )
 
 
 def agents_block_text(
@@ -213,6 +264,10 @@ _CLAUDE_SKILL_LINK_TARGET = Path("..") / ".." / ".agents" / "skills" / "orc-ledg
 DEFAULT_AGENTS_FILE = "AGENTS.md"
 _PROFILE_REL = Path(".orc") / "profile.json"
 _STARTER_PROFILE = "{}\n"
+_OMP_DIR_REL = Path(".omp")
+_OMP_AGENTS_REL = {name: Path(".omp") / "agents" / f"{name}.md" for name in OMP_AGENT_NAMES}
+_OMP_CONFIG_REL = Path(".omp") / "config.yml"
+_OMP_RULES_REL = Path(".omp") / "RULES.md"
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -489,7 +544,54 @@ def _step_agents_block(
     return f"agents-block: replaced (--force) in {hyperlink_path(path.resolve())}"
 
 
-# --- Step 5: install verification ----------------------------------------------
+# --- Step 5: OMP seat scaffold (--omp, TASK-M5-007) -----------------------------
+
+
+def _write_omp_scaffold_file(path: Path, *, canonical: str, label: str, force: bool) -> str:
+    """One `.omp/` scaffold file's never-clobber/`--force` write, matching the
+    skill install steps' own discipline: an exact match is a silent-diff
+    `skip`; a mismatch this command did not create is `skip-with-note`
+    unless `--force`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        if path.read_text(encoding="utf-8") == canonical:
+            return f"omp {label}: already installed -- skip"
+        if not force:
+            return (
+                f"omp {label}: skip -- {hyperlink_path(path.resolve())} exists and differs from the "
+                "package template (operator-modified); rerun with --force to overwrite"
+            )
+        _atomic_write_text(path, canonical)
+        return f"omp {label}: replaced (--force) at {hyperlink_path(path.resolve())}"
+    _atomic_write_text(path, canonical)
+    return f"omp {label}: installed at {hyperlink_path(path.resolve())}"
+
+
+def _step_omp_scaffold(target: Path, *, force: bool) -> list[str]:
+    lines = []
+    for name in OMP_AGENT_NAMES:
+        lines.append(
+            _write_omp_scaffold_file(
+                target / _OMP_AGENTS_REL[name],
+                canonical=omp_scaffold_agent_text(name),
+                label=f"agents/{name}.md",
+                force=force,
+            )
+        )
+    lines.append(
+        _write_omp_scaffold_file(
+            target / _OMP_CONFIG_REL, canonical=omp_scaffold_config_text(), label="config.yml", force=force
+        )
+    )
+    lines.append(
+        _write_omp_scaffold_file(
+            target / _OMP_RULES_REL, canonical=omp_scaffold_rules_text(), label="RULES.md", force=force
+        )
+    )
+    return lines
+
+
+# --- Step 6: install verification ----------------------------------------------
 
 
 def _verify(target: Path, *, journal_flag: Optional[str]) -> list[str]:
@@ -597,6 +699,16 @@ def cmd_onboard(args: argparse.Namespace) -> int:
             ledger=args.ledger,
         )
     )
+    omp_requested = bool(args.omp) or (target / _OMP_DIR_REL).exists()
+    if omp_requested:
+        print(
+            "omp: --omp requested"
+            if args.omp
+            else f"omp: existing {hyperlink_path((target / _OMP_DIR_REL).resolve())} detected"
+        )
+        for line in _step_omp_scaffold(target, force=args.force):
+            print(line)
+
     for line in _verify(target, journal_flag=args.journal):
         print(line)
 
@@ -611,8 +723,12 @@ __all__ = [
     "BLOCK_END",
     "DEFAULT_AGENTS_FILE",
     "GITIGNORE_ENTRY",
+    "OMP_AGENT_NAMES",
     "agents_block_text",
     "cmd_onboard",
+    "omp_scaffold_agent_text",
+    "omp_scaffold_config_text",
+    "omp_scaffold_rules_text",
     "packaged_skill_changelog_text",
     "packaged_skill_text",
 ]

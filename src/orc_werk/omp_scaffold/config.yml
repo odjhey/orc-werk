@@ -1,0 +1,12 @@
+# Project harness config for this repo's delivery seats (see .omp/agents/*.md).
+# Seats are OMP subagents; the orc ledger stays the durable record (ADR-0005 --
+# canonical to the orc-werk repository/package, cited here for context only).
+# TEMPLATE (orc onboard --omp): the values below mirror orc-werk's own pilot
+# defaults; tune maxRuntimeMs/maxRecursionDepth to taste, nothing here is
+# account-specific.
+task:
+  enableEffort: true
+  # Hard wall clock per seat; the ledger, not process disappearance, settles outcomes.
+  maxRuntimeMs: 5400000
+  # watchtower -> seat only; seats never spawn further seats.
+  maxRecursionDepth: 1

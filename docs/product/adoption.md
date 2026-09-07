@@ -119,6 +119,64 @@ is self-contained, names `orc -h`, `orc config-schema`, `orc validate`, and
 `orc verdict` as local references, and marks upstream Orc Werk stable-ID
 citations as external.
 
+### OMP seat scaffold (`--omp`, `TASK-M5-007`, `ADR-0007`)
+
+`orc onboard --path DIR --omp` (or a plain `orc onboard` re-run against a
+target that already has a `.omp/` directory — the flag is implied once that
+directory exists) additionally installs the OMP-native seat shape this
+repository's own delivery adopts: `.omp/agents/scout.md`,
+`.omp/agents/ship.md`, `.omp/agents/verify.md`, `.omp/config.yml`, and
+`.omp/RULES.md`. This is a second, independent rung layered on the skill
+install above, not a replacement for it — the skill is protocol content any
+harness session loads (`autoloadSkills` from an agent definition, or a
+manually-read `SKILL.md`); the OMP scaffold is the harness-native seat
+*shape* — frontmatter-declared model/tools/output-schema per seat
+(`TASK-M5-004`) plus the cross-seat invariants (`.omp/RULES.md`) that
+ADR-0007 ratified for scout/ship/verify. A `ship.md` seat still
+`autoloadSkills: orc-ledger` to pick up the protocol content the skill
+carries; the scaffold does not duplicate it.
+
+**What ships versus what the adopter must author.** All five files are
+installed as complete, working templates — not stubs the adopter must
+finish — mirroring this repository's own `.omp/agents/*.md` and
+`.omp/RULES.md` content (`TASK-M5-004`, `TASK-M5-002`) with the
+repository-specific language (default branch name, `orc` invocation form)
+generalized for an unknown adopting repo. `.omp/config.yml` ships as a
+harness *policy* file (`enableEffort`, `maxRuntimeMs`, `maxRecursionDepth`)
+because those are safe, repo-portable defaults, not machine-local or
+account-specific settings — nothing about them names a provider, a model,
+or an operator's own credentials, so there is nothing here an adopter is
+forced to author before first use. The one thing the adopter must still
+do is pick real models: every `model:` pin in the scaffolded agent files
+carries an inline `# TEMPLATE (orc onboard --omp)` comment naming it a
+mirror of this repository's own pilot default and instructing the operator
+to substitute a model actually available in their account, because an
+adopter's available model families will differ from orc-werk's own. The
+`verify.md` template's comment additionally names `ADR-0007`'s `V7`
+ruling — ship and verify must run different model families, because a
+verify seat sharing the ship seat's model family cannot render an
+independent, adversarial verdict — as a requirement to preserve when
+swapping pins in, not an incidental detail. This repository's own
+seat-reliability log (`docs/delivery/seat-reliability.md`) records
+something narrower and still worth an adopter's attention: real
+spawn-time model unavailability, not a rejection caused by violating that
+pairing — two verify spawns died at a usage-limit error there because OMP
+does not fall through a frontmatter model list to a later entry on a
+spawn-time usage-limit error. The lesson the log actually supports is the
+one the template comment repeats: pick models your own account can
+reach before first use, not that an unexamined pin would reproduce a
+pairing-violation rejection the log has never recorded.
+
+**Idempotency and pre-existing files.** Each of the five files follows the
+identical never-clobber/`--force` discipline already documented above for
+the skill and the agents-block: a first run installs an absent file and
+reports so; a re-run against an unmodified installed copy is a silent,
+repeatable no-op reported as `-- skip`; a re-run against an
+operator-modified copy is skipped with a named reason unless `--force` is
+passed, which then reports the file as replaced. Nothing under
+`.omp/agents/` or `.omp/RULES.md` is ever rewritten without that explicit
+flag, matching the skill's own operator-modification model.
+
 ## 4. Worked example — a fleet control tower (Rozoro)
 
 Rozoro is a control-tower persona: an operator delegating parallel work to a fleet of coding agents, then watching, steering, and reaping what comes back. It is a useful worked example precisely because it is not itself an Orc Werk deployment — mapping it onto the four questions any adopter must answer (`PRODUCT-THESIS`) exposes both the fit and the honest gaps.

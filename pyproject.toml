@@ -27,3 +27,12 @@ where = ["src"]
 # source. `.agents/skills/orc-ledger/SKILL.md` is a relative symlink to
 # this exact file (see src/orc_werk/skills/__init__.py's docstring).
 "orc_werk.skills" = ["orc-ledger/SKILL.md", "orc-ledger/CHANGELOG.md"]
+
+# TASK-M5-007 `orc onboard --omp`: the .omp/ scaffold templates' single
+# authored copy lives under src/orc_werk/omp_scaffold/; this ships them
+# with the installed package so `onboard` copies them from the installed
+# package, never a second hand-maintained copy embedded in Python source
+# (see src/orc_werk/omp_scaffold/__init__.py's docstring for why these
+# are a deliberately independent copy of this repo's own .omp/, not a
+# symlink to it).
+"orc_werk.omp_scaffold" = ["RULES.md", "config.yml", "agents/*.md"]
