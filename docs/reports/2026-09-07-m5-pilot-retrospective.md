@@ -87,8 +87,12 @@ restrict `write`/`edit` today) or as session-wide rules, per report §6/§8.
 `TASK-M5-005` was still `EXECUTING` (not yet `ACCEPTED`) in the ledger at the
 time of this write-up (`orc --limit 0`: `task-m5-005: states=EXECUTING:1
 flags=pending`) — this consequence is a design constraint for that card, not
-something this write-up can confirm was built correctly, because it has not
-shipped yet.
+something this write-up can confirm was built correctly. Re-checked for
+this correction at `2026-09-07T03:11:37Z`, `task-m5-005`/`hook` had since
+advanced to `ASSURING`, attempt 2, awaiting its first of two required
+assurance verdicts (`orc status task-m5-005`) — still not `ACCEPTED`, so
+it still has not shipped as of that instant, but this is a snapshot, not
+a standing fact: re-check `orc status task-m5-005` for the current state.
 
 ## 2. Did seat discipline hold under real traffic?
 
@@ -154,20 +158,35 @@ day one: `fix-verify-seat-fallback`'s own seat-reliability entries
 dying at `usage_limit_reached` within the pilot's own run, and
 `.omp/agents/verify.md`'s `model:` list was reordered same-day to lead with
 `google-antigravity/gemini-3.8-flash` — logged there as "a recorded
-deviation, not an amendment: revisit once Codex quota is restored." It was
-not revisited: within the ten named deliveries this write-up tracks, all ten
-now carry a settled verify verdict — `chore-verify-followups` was the last to
-settle, at `01:37:18Z` — and every one ran on `google-antigravity` with no
-`openai-codex` fallback ever observed firing. A one-day hand substitution has
-become the standing practice across two calendar days and ten deliveries, while `ADR-0007`'s own
-text still names `openai-codex` as the contract-layer pairing. Per
-`AGENTS.md` rule 4 ("update/propose the canonical contract first when
-behavior is ambiguous"), this is no longer a live, time-boxed deviation with
-a trigger — it needs a formal `ADR-0007` amendment recording
-`google-antigravity` (or "any non-Anthropic family") as the actual `V7`
-pairing, not a second week of the ledger quietly deviating from its own
-governing decision. This write-up flags it; amending the ADR is out of this
-card's scope and is named under Ambiguities below.
+deviation, not an amendment: revisit once Codex quota is restored." As of
+this section's own cutoff `2026-09-07T02:33:37Z` (the same cutoff used for
+the whole-ledger counts below), it had not been revisited: within the ten
+named deliveries this write-up tracks, all ten carried a settled verify
+verdict — `chore-verify-followups` was the last to settle, at `01:37:18Z`
+— and every one ran on `google-antigravity` with no `openai-codex`
+fallback ever observed firing. A one-day hand substitution had by that
+instant become the standing practice across two calendar days and ten
+deliveries, while `ADR-0007`'s ratified text still named `openai-codex` as
+the contract-layer pairing. Per `AGENTS.md` rule 4 ("update/propose the
+canonical contract first when behavior is ambiguous"), that was no longer
+a live, time-boxed deviation with a trigger — as of that instant it needed
+a formal `ADR-0007` amendment, which was out of this card's own scope.
+
+**It did not stay open.** A sibling run, `docs-adr0007-v7-amendment`,
+settled `accepted` at `02:33:43.900878Z` — six seconds after this
+section's cutoff above — and its PR (`gh-pr:283`, merge commit
+`db9d1222a796358a9f59688f19f6f18cddac3483`) merged to `master` at
+`02:34:35Z`, seven minutes before the abandoned attempt's own commit
+(`c3992270`) and well before this write-up's own corrections were
+applied. `ADR-0007`'s `V7` section now states the invariant directly —
+"verify runs on a model family different from the ship seat that
+actually produced the candidate" — instead of naming `openai-codex`
+specifically; the original 2026-09-06 ruling (`openai-codex`/`anthropic`)
+is left in the ADR as written, a historical record of what was decided
+and why, not rewritten to read as though it always said this. The
+deviation this write-up flagged closed the same day it was flagged — by
+an independent sibling run, not this card, which remains out of
+`TASK-M5-008`'s own scope.
 
 ### A live ledger during a live write-up: state derivations, not transcribed totals
 
@@ -239,10 +258,13 @@ Running the same script again now, at cutoff `2026-09-07T02:33:37Z`
 (captured while drafting this correction), finds **fourteen** on 2026-09-07
 and **sixteen** across 2026-09-06/07 — two more of each than the
 `02:07:16Z` figures, because two more verify verdicts settled in the
-interval: `docs-adr0007-v7-amendment`/`amend` (`verdict: rejected`,
-`02:14:58.097Z` — a sibling card's own run, no relation to this one beyond
-sharing the ledger) and **this card's own attempt-2 rejection**
-(`task-m5-008`/`writeup` seq 26, `verdict: rejected`, `02:29:58.366Z`, model
+interval: `docs-adr0007-v7-amendment`/`amend` (`verdict: rejected` at seq
+16, `02:14:58.097Z` — a sibling card's own run, no relation to this one
+beyond sharing the ledger; that same run's attempt 2 then settled
+`accepted` at seq 26, `02:33:43.900878Z`, six seconds *after* this
+cutoff — see the `V7` section above for what it changed) and **this
+card's own attempt-2 rejection** (`task-m5-008`/`writeup` seq 26,
+`verdict: rejected`, `02:29:58.366Z`, model
 `google-antigravity/gemini-3.8-flash`, session `VerifyM5008R2`). Both
 cutoffs and both figures are stated so a reader can re-run the script and
 land on either number depending on when they run it. **This count only
@@ -327,17 +349,25 @@ seats (`VerifyAdopt270`, `VerifyLaneDoc`) ran in separate sessions from
 
 `ADR-0007`'s Costs section is explicit: "the hook-enforced rules
 (`TASK-M5-005`) are only as strong as OMP's own `tool_call` guard mechanism...
-before any rule is trusted to fire." `TASK-M5-005` (`.omp/extensions/
 orc-seat.ts`) was `EXECUTING`, not `ACCEPTED`, in the ledger throughout every
-run in the table above (`orc --limit 0`), and `master`'s tree has no
-`.omp/extensions/` path at all (`git ls-tree -r master --name-only | grep
-omp/extensions` — no output). Every seat-discipline observation above —
+run in the table above (`orc --limit 0`), and, as freshly re-checked for
+this correction at `2026-09-07T03:11:37Z`, `master`'s tree still has no
+`.omp/extensions/` path (`git ls-tree -r master --name-only | grep
+omp/extensions` — no output at that instant; `task-m5-005`/`hook` was
+`ASSURING`, attempt 2, awaiting its first of two required assurance
+verdicts at that same instant, per `orc status task-m5-005` — still not
+`ACCEPTED`, so this observation may not hold by the time it is re-read).
+Every seat-discipline observation above —
 verify-cannot-push, no self-assurance, ship-in-its-own-worktree, record-
 before-yield — held because the agent definitions (`ship.md`/`verify.md`)
 and the seats' own compliance said so, not because a blocking hook enforced
-it. Say this plainly: nothing in this wave tests whether `TASK-M5-005`'s
-hook will actually fire correctly once it exists; that is still an open,
-undelivered card with its own red-then-green obligation.
+it. Say this plainly, as of `2026-09-07T03:11:37Z` (the same instant as
+the `master`-tree check above, with `task-m5-005`/`hook` observed
+`ASSURING` and not yet `ACCEPTED`): nothing in this wave tests whether
+`TASK-M5-005`'s hook will actually fire correctly once it exists; that is
+still an open, undelivered card with its own red-then-green obligation —
+a claim scoped to that instant, not a standing fact, since the card may
+settle at any time.
 
 ### A self-report format inconsistency, tying into the report's §7b finding
 
@@ -424,23 +454,23 @@ sibling: a live-ledger-count surprise.
 
 ## Ambiguities encountered
 
-- `ADR-0007`'s `V7` ruling names `openai-codex` specifically as the verify
-  family; observed practice across the entire 2026-09-07 wave is
-  `google-antigravity`. This looks like it has crossed from a named,
-  time-boxed deviation into a de facto contract change that has not been
-  formally amended. Amending `ADR-0007` itself is outside this card's scope
-  (`TASK-M5-008` — the log and the write-up only); flagged here per
-  `AGENTS.md` rule 4 rather than silently deviating further.
 - Whether `claude-sonnet-5` (bare) and `anthropic/claude-sonnet-5` (prefixed)
   recorded across different runs denote the same model is not resolvable
-  from the ledger alone.
+  from the ledger alone. (`ADR-0007`'s `V7` naming `openai-codex`
+  specifically was flagged here as a candidate ambiguity in an earlier
+  draft of this section; it resolved before this attempt's own commit —
+  landed as `gh-pr:283`, accepted `02:33:43.900878Z`, merged `db9d122` at
+  `02:34:35Z`, see the `V7` section above — and is no longer open.)
 
 ## Not covered
 
 - `TASK-M5-005`'s hook guards firing correctly: the card has not shipped as
   of this write-up (`EXECUTING`, not `ACCEPTED`); nothing here tests it.
-- A formal amendment to `ADR-0007`'s `V7` wording: named above as needed, not
-  performed by this card.
+- A formal amendment to `ADR-0007`'s `V7` wording: this card did not
+  perform it (out of `TASK-M5-008`'s own scope) — it was performed by a
+  sibling run the same day (`docs-adr0007-v7-amendment`, `gh-pr:283`,
+  accepted `02:33:43.900878Z`, merged `db9d122` at `02:34:35Z`); see the
+  `V7` section above.
 - Any run outside the eleven listed above; this write-up does not claim to
   characterize the entire M5 migration, only the pilot and the wave that
   followed it, per this card's own scope.
