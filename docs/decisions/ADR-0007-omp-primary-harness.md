@@ -284,3 +284,75 @@ change either.
 - `TASK-M5-001`, `TASK-M5-002`, `TASK-M5-003`, `TASK-M5-004`, `TASK-M5-005`, `TASK-M5-006`, `TASK-M5-007`, `TASK-M5-008`
 - `ADAPTERS-README`
 - `PRODUCT-ADOPTION`
+- `SEAT-RELIABILITY` (`docs/delivery/seat-reliability.md`, cited by the `V7` amendment below)
+
+## Amendment (2026-09-07, `TASK-M5-008` pilot write-up, PR #280): `V7` states the invariant; the model assignment is deployment preference
+
+The `V7` ruling above named `openai-codex` (`gpt-5.6-sol`) as the verify
+family and `anthropic` (`claude-sonnet-5`) as the ship family, calling that
+specific pairing a `contract`-layer requirement "because the two families
+genuinely differ." Two calendar days of post-ratification delivery
+(2026-09-06/07) — the ledger's own record, not this write-up's prose — show
+the pairing itself did not hold, while the invariant it was meant to
+encode did:
+
+- Two `openai-codex` verify spawns (`VerifyM5Pilot`, `VerifyM5PilotB`,
+  both against `m5-omp-harness-pilot`'s `docs` work) died within seconds
+  of `usage_limit_reached` on 2026-09-06 and recorded nothing to the
+  ledger — no `FACT-ASSURE-SETTLED`, so no assurance budget was spent
+  (`docs/delivery/seat-reliability.md`'s 2026-09-06 entries 1–2).
+- As of this amendment's own commit (`2026-09-07T10:02:48+08:00`; the
+  ledger is live and settles underneath any snapshot, so a bare integer
+  here would already be stale by the time a future reader checks it —
+  re-derive with `orc history <run> --limit 0` or a join of
+  `FACT-ASSURE-SETTLED` against `times.jsonl` for the current count),
+  every verify verdict the ledger had settled between 2026-09-06 and
+  2026-09-07 ran on `google-antigravity/gemini-3.8-flash`: 13 settled
+  `FACT-ASSURE-SETTLED` records across 12 works — `m5-omp-harness-pilot`
+  (PR #267), `fix-verify-seat-fallback` (PR #268), `adopt-270-attempt-binding`
+  (PR #270), `docs-external-candidate-lane` (PR #271), `fix-262-docs-polish`
+  (PR #272, rejected then accepted — the one work verified twice),
+  `task-m5-003` (PR #273), `fix-254-active-filter` (PR #274), `task-m5-006`
+  (PR #275), `fix-266-reobservation` (PR #276), `task-m5-001` (PR #277),
+  `chore-verify-followups` (PR #278), `task-m5-002` (PR #279). **Zero of
+  these ran on `openai-codex` — and whole-ledger, at any point in time,
+  zero `FACT-ASSURE-SETTLED` record has ever carried `executor-identity/v1.
+  model` = `openai-codex/*`.** That whole-ledger zero, not the 13, is the
+  load-bearing fact; the per-window count is corroborating detail that
+  will drift as more works settle. (`TASK-M5-008`'s companion run was
+  still `ASSURING`, unsettled, as of the same cutoff, so it is not
+  counted either way.) Ship, over the same window, ran mostly on an
+  `anthropic/claude-sonnet-5` variant but twice on `xai-oauth/grok-4.6`
+  (`adopt-270-attempt-binding`, `docs-external-candidate-lane`) — ship's
+  own family was not fixed either, and verify differed from ship's
+  *actual* family every single time, never merely from its `anthropic`
+  default.
+- `docs/delivery/seat-reliability.md`'s 2026-09-06 entry recorded this at
+  the time as "a recorded deviation, not an amendment," naming an
+  explicit trigger: revisit once Codex quota is restored, or once a
+  `retry.fallbackChains` key exists so a usage-limit death falls through
+  automatically. Neither trigger fired by 2026-09-07; the deviation is
+  now the entirety of observed practice, which is exactly the standing-
+  deviation-without-an-amendment condition `AGENTS.md` rule 4 forbids
+  keeping quiet.
+
+**Amended ruling.** `V7`'s load-bearing requirement is the invariant this
+ADR's own heading already states — **verify runs on a model family
+different from the ship seat that actually produced the candidate** — not
+the specific `openai-codex` assignment, which was an implementation
+preference that did not survive contact with quota reality. This ADR no
+longer names a specific verify family or model. The prioritized, ordered
+model list a verify spawn resolves against is a deployment-preference
+decision that belongs in `.omp/agents/verify.md`'s `model:` field alone
+(already reordered this way by PR #268, `google-antigravity/gemini-3.8-flash`
+first, `openai-codex/gpt-5.6-sol` second, ahead of this amendment landing)
+and MUST continue to satisfy the invariant above — every entry non-Anthropic,
+for as long as ship runs `anthropic/*` — without this ADR re-litigating or
+re-pinning the list itself. Scout's shared-family deviation (see the
+`nother-guide adopted by pinned reference` section above) is unaffected:
+scout remains read-only and never verdict-bearing, so `V7`'s risk-control
+purpose does not reach it.
+
+The original operator ruling above is left as written: a historical
+record of what was decided on 2026-09-06 and why, not rewritten to read
+as though it always said this.
