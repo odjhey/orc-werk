@@ -3,7 +3,7 @@ id: PLAYBOOK-WATCHTOWER
 type: playbook
 status: current
 authority: informative
-description: Multi-agent delivery operating model (watchtower/scout/ship/verify) used to build and evolve this repository.
+description: Multi-agent delivery operating model (watchtower/scout/ship/verify) used to build and evolve this repository — harness-independent seat policy; harness-specific mechanics live in docs/adapters/<harness>/.
 ---
 
 # Watchtower operations playbook
@@ -12,15 +12,21 @@ This playbook records the delivery operating model used to ship M0 and expected 
 
 The cross-cutting *method* the roles below rely on — how to write agent-facing instructions, diagnose a bug, verify work on separated axes, generate a design before pricing it, and keep records — lives in `PLAYBOOK-ENGINEERING-METHOD`. That doc is deliberately orc-agnostic (it applies to any agent in this workflow); this one is the orc-specific pipeline that references it.
 
-## Roles
+## Seats
 
-- **Watchtower** — the coordinating session. Decomposes milestones into PR-sized tasks, sequences delivery, makes contract rulings when audits surface ambiguity, reviews and merges every PR, and maintains the audit trail and deferred-decision ledger. The watchtower does not implement product code directly; it authors only small process/docs changes like this one.
-- **Scouts** (reconnaissance) — read-only agents that map contracts before implementation: produce the contract map, decomposition proposal, and — critically — the list of ambiguities that must be resolved in docs before code. Also used for proposal/issue assessments (compatibility, feasibility, alignment).
-- **Ship agents** — implementation agents. One task card, one worktree under `.worktrees/<branch>`, one branch, one PR. They receive governing contract IDs and a checkable definition of done; they must not invent semantics — genuine ambiguity is reported back in the PR body ("Ambiguities encountered"), not silently resolved. A guard, allowlist, or permission that refuses an action is likewise **reported, never worked around** — a refusal is a signal to route back, not an obstacle to engineer past. They never merge.
-- **Verification scouts** — adversarial read-only auditors that run on every implementation PR before merge. They audit both directions: does the diff respect the governing contracts (checked against actual doc text, not plausibility), and did implementation expose gaps in the docs that need amendment. When a diff — or recon — contradicts an existing contract, the conflict is surfaced as a **first-class callout** that cites the contract by its stable ID and states why it should be reopened ("contradicts &lt;contract-id&gt;, worth reopening because …"), never silently routed around: the bidirectional check is only real if a contradiction is licensed to challenge the contract *out loud* rather than quietly conform to or ignore it. Verdicts: MERGE / MERGE-WITH-FOLLOW-UPS / FIX-BEFORE-MERGE, with findings, doc-amendment deadlines, and explicit confirmations of what was positively verified.
-- **Dogfood checker** — a read-only, user-perspective agent run against the real CLI, not the test suite. It selects and executes the slice of `dogfood/` (`DOGFOOD-CORPUS`) whose concern tags intersect a shipped change, then reports PASS / BUG / FRICTION per scenario with evidence (commands, exit codes, `status`/`history` excerpts). It never fixes anything itself — no code, no docs, no issues filed directly; routing the healing (a fix PR, an issue, a docs amendment) is the watchtower's job, per `DELIVERY-STANCE`'s "dogfood feedback is the backlog."
+This table states each seat's harness-independent boundary — what it may touch, never what tool runs it. Model/effort configuration, tool restrictions, structured-output enforcement, and worktree fencing are *mechanics*; today's mechanics live in `.omp/agents/*.md` and `.omp/config.yml`, documented for this harness in `docs/adapters/omp/` (`ADAPTER-OMP`, `ADR-0007`). A future harness swap changes the mechanics column, never the boundary.
 
-Starting at M1a+ (`M-001`), ship agents and verification scouts also record their own observations directly into the delivery ledger through the `orc` CLI rather than the watchtower transcribing outcomes on their behalf — see `docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`) for the ship/verify recording protocol, role separation (no self-assurance), and the independent-derivation rule for verdicts. This is additive to the roles above, not a replacement: ship agents still ship, verification scouts still audit adversarially; the CLI is now how each records its own outcome, in addition to the PR-thread audit trail below.
+| Seat | Effects boundary | Model family (current harness) | Effort | Result schema | Observed failures |
+|---|---|---|---|---|---|
+| **Watchtower** | Coordinating session: decomposes milestones into PR-sized tasks, sequences delivery, rules on ambiguity when audits surface it, reviews and merges every PR, maintains the audit trail and deferred-decision ledger. Authors only small process/docs changes directly, never product code. | strongest available (Fable-class for proposal/architecture assessments) | escalate for subtle contract-interaction audits (state-machine totality, idempotency/replay); cheap for docs-shipping and mechanical fix rounds | none — a coordinating session, not a candidate-producing seat | `docs/delivery/seat-reliability.md` |
+| **Scout** (reconnaissance) | Read-only: contract map, decomposition proposal, ambiguity list before implementation; also proposal/issue assessment (compatibility, feasibility, alignment). Never edits, writes, commits, or records to the ledger. | `.omp/agents/scout.md` — anthropic (Opus-class) | high | `{report, unverified[], ambiguities[], stale_after}` | `docs/delivery/seat-reliability.md` |
+| **Ship agent** | One task card, one worktree under `.worktrees/<branch>`, one branch, one PR; receives governing contract IDs and a checkable definition of done. Never invents semantics — genuine ambiguity routes back in the PR body ("Ambiguities encountered"), never silently resolved. A refusal (guard/allowlist/permission) is likewise reported, never engineered past. Never merges. | `.omp/agents/ship.md` — anthropic (Sonnet-class, mid-tier) | medium | `{run_id, work_id, branch, pr, head_sha, gate, not_covered[], ambiguities[], recorded}` | `docs/delivery/seat-reliability.md` |
+| **Verification scout** | Adversarial, read-only audit of every implementation PR before merge, on both directions: does the diff respect governing contracts (checked against doc text, not plausibility), and did implementation expose a doc gap. A contradiction with an existing contract is a first-class callout citing the contract's stable ID, never silently routed around. Never pushes, commits, comments, or merges. | `.omp/agents/verify.md` — a different provider family from ship (`V7`; non-Anthropic, currently `openai-codex`-first) | high | `{run_id, work_id, verdict, derived_head_sha, evidence_grade, findings[], ambiguities[], recorded}` | `docs/delivery/seat-reliability.md` |
+| **Dogfood checker** | Read-only, user-perspective agent run against the real CLI, not the test suite; selects and runs the `dogfood/` (`DOGFOOD-CORPUS`) slice tagged to a shipped change. Never fixes anything itself — no code, no docs, no issues filed directly; routing the healing is the watchtower's job, per `DELIVERY-STANCE`'s "dogfood feedback is the backlog." | anthropic (no dedicated `.omp/agents/*` definition yet) | high | PASS / BUG / FRICTION per scenario, with evidence (commands, exit codes, `status`/`history` excerpts) | `docs/delivery/seat-reliability.md` |
+
+The **quality bar** every seat ships against is `docs/delivery/delivery-stance.md` (`DELIVERY-STANCE`). Verification-scout verdicts: MERGE / MERGE-WITH-FOLLOW-UPS / FIX-BEFORE-MERGE, with findings, doc-amendment deadlines, and explicit confirmations of what was positively verified.
+
+Starting at M1a+ (`M-001`), ship agents and verification scouts also record their own observations directly into the delivery ledger through the `orc` CLI rather than the watchtower transcribing outcomes on their behalf — see `docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`) for the ship/verify recording protocol, role separation (no self-assurance), and the independent-derivation rule for verdicts. This is additive to the seats above, not a replacement: ship agents still ship, verification scouts still audit adversarially; the CLI is now how each records its own outcome, in addition to the PR-thread audit trail below.
 
 ## Pipeline
 
@@ -142,21 +148,9 @@ Every decision must be reconstructable after the fact:
 - Consciously deferred decisions (with the trigger that will force each) are tracked as a deferred-decision ledger; deferrals are recorded, never implicit.
 - Operator (human) review is asynchronous and non-blocking: contract rulings are reviewable as small isolated diffs in `docs/` history, and overriding any ruling is itself one docs PR.
 
-## Model and effort selection
-
-Capability is spent where decisions are made; mechanical work runs on economical models.
-
-- **Ship agents** run on a mid-tier implementation model (Sonnet-class). Tasks reach them with zero unresolved ambiguity and a checkable definition of done, so authorship is mechanical-once-specified; capability budget goes to review instead.
-- **Reconnaissance and verification scouts** run on a high-capability reasoning model (Opus-class). Decomposition and adversarial audit are the judgment-dense stages — a missed contract interaction there costs more than any implementation bug.
-- **Assessment scouts** for proposals and architecture rulings that shape milestones run on the strongest model available (Fable-class): these produce dispositions the watchtower adopts largely as-is.
-- **Reasoning effort** defaults to inherited session settings; escalate for audits of subtle contract interactions (state-machine totality, idempotency/replay), and keep docs-shipping and mechanical fix rounds cheap.
-- The **quality bar these agents ship against** is defined in `docs/delivery/delivery-stance.md` (`DELIVERY-STANCE`).
-
 ## Conventions
 
-- Worktrees: `.worktrees/<branch-name>` (gitignored), removed after merge.
 - Local gate `bash scripts/check.sh` mirrors CI exactly; green locally means green remotely.
 - Commits carry attribution trailers; PR bodies end with generation attribution.
 - Run `python3 scripts/docs_check.py` before committing any documentation change.
-- `scripts/watch_pr.py` is the read-only merge-frontier watcher; it classifies blockers in conflicts > unresolved threads > CI > merge-gate order, and `--verified-sha` checks the verdict-staleness rule before merge.
 - **Authoring the packaged `orc-ledger` skill's frontmatter `description`** (it is loaded by adopters' agents, including strict-YAML providers): (a) no colon-space (`: `) in an unquoted value — strict parsers (e.g. Pi's) read it as a nested mapping and the skill silently fails to load; single-quote the value and double inner apostrophes if a mid-sentence colon is unavoidable; (b) state **what + when** (the trigger phrases that should route to it) and never a how-summary of the workflow — a description that lists the steps makes the agent follow the summary and skip loading the body. The same colon-space caution applies to any doc frontmatter that a non-`docs_check` tool might strict-parse.
