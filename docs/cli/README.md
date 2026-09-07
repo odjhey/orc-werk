@@ -455,8 +455,10 @@ usage: orc [--limit LIMIT] [--before RUN_ID] [--state active] [--json]
 The content-first invocation lists the most-recently-active runs in the
 default journal directory. It shows 30 by default; `--limit N` bounds the
 listing, `--limit 0` shows all runs, and `--before RUN_ID` selects runs
-older than that cursor in index order. `--state active` includes runs with
-blocked or other non-accepted work; omitting it lists every run. An invalid
+older than that cursor in index order. `--state active` excludes runs
+whose every Work has settled into a terminal state (`ACCEPTED`, `BLOCKED`,
+or `CANCELLED` -- `STATE-DELIVERY`) and includes every other run (issue
+#254); omitting it lists every run. An invalid
 state filter is canonical `ERR-VALIDATION`. A truncated listing names
 `orc --limit 0` and prints an exact next-(older)-page command;
 `orc report --index` is the secondary HTML view.

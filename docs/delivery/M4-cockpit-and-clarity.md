@@ -220,6 +220,26 @@ cockpit. The whole milestone is small and mostly composition-layer/docs.
    surface would only duplicate it. The dir-level aggregate header is a
    deferred nicety, not a milestone item. **M4b is complete.**
 
+   **Amendment (issue #254, 2026-09-07):** the worked example above --
+   keeping a retry-budget-exhausted `BLOCKED` run in `--state active`
+   forever, with no affordance to retire it -- was the defect issue #254
+   reported: five ancient `BLOCKED` runs whose underlying issues were
+   long since fixed elsewhere sat permanently in the active view.
+   `STATE-DELIVERY` names `BLOCKED` a terminal state alongside `ACCEPTED`
+   and `CANCELLED`; `--state active` had only ever excluded `ACCEPTED`.
+   Fix: `_index_state_rollup` (report.py) now treats a run as active when
+   at least one Work is *not yet terminal*, matching `STATE-DELIVERY`'s
+   full terminal set rather than singling out `ACCEPTED`. This reuses
+   existing canonical vocabulary -- no new persisted state, no new
+   decision or fact -- consistent with `PRODUCT-ADOPTION`'s "what you
+   must not tailor" boundary and its explicit deferral of needs-
+   action/acknowledge workflows to the reserved attention model
+   (`INV-017`, out of scope through M1). An explicit acknowledge/archive
+   verb was considered and rejected for exactly that reason: it would
+   require a new journaled decision the milestone ledger has not opened
+   the surface for. `docs/cli/README.md`'s "Bare `orc` run index" section
+   is updated to match.
+
 ## Explicitly NOT in M4 (dormant registry, triggers unchanged)
 
 > Amended (`ADR-0005`, 2026-09-02): milestone docs are living records,
