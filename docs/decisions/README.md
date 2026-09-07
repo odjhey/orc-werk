@@ -33,4 +33,15 @@ Supersedes / Superseded by
 Related contract IDs
 ```
 
+An ADR whose ruling still stands but whose *expression* needs correction
+(the decision is not reopened or reversed, so `Supersedes`/`Superseded by`
+does not apply) is amended in place: append a dated `## Amendment (<date>,
+<trigger>): <what changed>` section after `Related contract IDs`, state
+what changed and why with evidence, and leave the original ruling above it
+untouched — a historical record of what was decided and why, not rewritten
+to read as though it always said the amended text. Precedent:
+`docs/scenarios/SCN-008-replay-budget.md`'s `## Amendment (issue #240): ...`
+section for a scenario; `ADR-0007`'s `## Amendment (2026-09-07, ...)` for
+an ADR.
+
 Do not require implementers to read ADR history to discover current behavior. Promote the lasting semantic into the appropriate product principle, invariant, domain definition, port contract, or registered extension contract.
