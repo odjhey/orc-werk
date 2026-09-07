@@ -81,3 +81,39 @@ parallel). Any change to `src/` or `tests/`.
 - `.omp/RULES.md` exists, is ≤10 lines, and states the seat invariants
   (no self-assurance, verify cannot push/commit/comment, record before
   yield, ship worktree-only, one dispatcher per run).
+
+## Amendments (recorded during execution, 2026-09-07)
+
+**1. The `PLAYBOOK-WATCHTOWER` ≤80-line target is amended; no fixed line
+target applies.** Between this card's authoring and its execution, PR
+#271 landed the External-candidate lane — five bullets plus a specimen,
+genuinely harness-independent policy (adoption-precedes-judgment,
+auditing-spends-the-seat, ledger-not-GitHub) that must survive any
+shrink. The operative acceptance standard is now: every remaining line is
+harness-independent policy or a seat-table row, and every harness-specific
+mechanic named in this card's Outcome (§Model-and-effort-selection,
+worktree/`watch_pr.py` Conventions) has moved out, not been deleted. Under
+that standard the file is 156 lines (from 162): Roles became a five-row
+seat table; §Model-and-effort-selection and the two worktree/`watch_pr.py`
+Conventions bullets are gone; External-candidate lane, Pipeline, Task
+sizing, Autonomy, Dormant-feature lifecycle, and Audit trail — all
+explicitly named "kept" above — are unchanged and account for the bulk of
+the remaining length. Hitting ≤80 lines would require deleting genuine,
+still-current policy this same card lists as kept; the amended acceptance
+is content-based, not a line count.
+
+**2. `PLAYBOOK-AGENT-CLI`'s retained-sections list is amended from "§1–4,
+§6, §9" to "§1–9 minus §7 (moved)."** §7 (worked example) still moves to
+`docs/reports/task-m1-003-worked-example.md` exactly as specified. §2, §5,
+and §8, however, contain no OMP-specific mechanics to remove — re-reading
+the current file at execution time shows §2's `executor-identity/v1`
+guidance was already harness-independent (the OMP-specific field-sourcing
+table lives solely in `docs/adapters/omp/mapping.md`, landed by
+`TASK-M5-003` as net-new content, not extracted from §2) — and two
+already-landed docs cite them by section number: `CONTRACT-STORAGE-
+CONCURRENCY` cites "`PLAYBOOK-AGENT-CLI` §5 ... §2", and `docs/adapters/
+omp/mapping.md` cites "`PLAYBOOK-AGENT-CLI` §8's reference-first narrative
+doctrine." Deleting or renumbering §2/§5/§8 would falsify those citations
+for no gain — none of the three contains harness-specific prose. §2, §5,
+and §8 are kept at their current numbers, trimmed only where a bullet
+restated content `docs/playbooks/cli-usage.md` already owns.
