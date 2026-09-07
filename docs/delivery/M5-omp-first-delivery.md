@@ -3,7 +3,7 @@ id: M5-OMP-FIRST-DELIVERY
 type: milestone
 status: current
 authority: normative
-description: M5 — Oh My Pi (OMP) becomes orc-werk's primary delivery harness for its own seats; seat discipline moves from prose playbooks into OMP agent definitions, result schemas, and hooks, per ADR-0007 and the nother-guide principles it adopts by pinned reference.
+description: M5 — Oh My Pi (OMP) becomes orc-werk's primary delivery harness for its own seats; seat discipline moves from prose playbooks into OMP agent definitions and result schemas, per ADR-0007 and the nother-guide principles it adopts by pinned reference; the tool_call seat-hook rung was tested to exhaustion and abandoned (TASK-M5-005).
 ---
 
 # M5 — OMP-first delivery
@@ -61,9 +61,17 @@ capability is a gap, not a pass, per `nother-guide`'s
    backslash-escaped command defeats the same hook (issues #290, #296),
    so per-role push denial moved rung to GitHub branch protection
    instead.
-2. Give a task item no `cwd`; confirm the ship agent creates its own
-   worktree and a hook fences writes outside it — and confirm the guard is
-   observed firing red before it is trusted (`V2`).
+2. **Superseded 2026-09-07** (see this document's Acceptance-section
+   amendment and `TASK-M5-005`'s Closure section): originally, give a
+   task item no `cwd`, confirm the ship agent creates its own worktree,
+   and confirm a hook fences writes outside it, observed firing red
+   before trusted (`V2`). That worktree fence was the one guard retained
+   after the four-guards → one-guard descope (item 1 above), but three
+   further verify seats each found a fresh way to defeat it before this
+   probe was ever satisfied by a durable hook (path-canonicalization and
+   scheme-adjudication escapes, issues #296, #297, #298). The hook
+   mechanism is abandoned; the ship worktree fence now rests on tool
+   restriction (the agent `tools:` list) and after-the-fact ledger audit.
 3. `outputSchema` + `schemaMode: strict`: confirm a result missing a
    required field (e.g. `verdict`) is rejected, not silently accepted.
 4. `task.maxRuntimeMs` stops a task on timeout; confirm descendants stop
@@ -92,7 +100,10 @@ per `AGENTS.md` rule 4 (docs amend first). Alongside it:
   observed failures), keeping Pipeline, Sizing, Autonomy, Dormant
   lifecycle, and Audit trail. §Model and effort selection and the
   worktree/`watch_pr.py` Conventions lines are deleted — they move to
-  agent bodies and the hook.
+  agent bodies; the `tool_call` hook rung was tested to exhaustion and
+  abandoned (`TASK-M5-005`), so this now rests on tool restriction,
+  branch protection on `master`, and after-the-fact ledger audit (Phase
+  0 above).
 - `PLAYBOOK-AGENT-CLI` keeps §1–4 (observations only, no self-assurance,
   derive identity, `inconclusive` semantics), §6 (multi-work etiquette),
   and §9 (fresh-session orientation). OMP-specific mechanics move to
@@ -128,23 +139,20 @@ per `AGENTS.md` rule 4 (docs amend first). Alongside it:
   the recording rules, records the verdict; output schema `{run_id,
   work_id, verdict, derived_head_sha, evidence_grade, findings[],
   ambiguities[], recorded}`.
-- `.omp/extensions/orc-seat.ts` — one `tool_call` guard: fence `edit`/
-  `write` outside `.worktrees/<branch>` from the ship role, the sole
-  guard that decides on structure rather than command text. **Amended
-  2026-09-07** (operator ruling, `task-m5-005-guards` seq 16): this
-  bullet originally also planned three text-matching guards in the same
-  hook — block `yield` until an `orc record` bash call with exit `0`/`3`
-  was observed; block `gh pr merge` from any subagent; deny `git push`/
-  `git commit`/`gh pr comment`/`gh pr review` from the verify role — all
-  three defeated by shell escaping against the bare command string a
-  `tool_call` hook receives, regardless of the calling role being known.
-  All three moved rung instead: GitHub branch protection on `master` for
-  shared-branch push, the orc ledger's own state machine for
-  record-before-yield on paths that reach `ACCEPTED`/`BLOCKED` through
-  bound assurance (the cancellation path is a disclosed, unenforced
-  escape — issue #293), and no enforcement rung at all for merge
-  authority. Ships with a red test (`V2`): a script proving the retained
-  guard fires before it is trusted.
+- `.omp/extensions/orc-seat.ts` — **abandoned 2026-09-07** (operator
+  ruling); the file never existed on `master`. It lived only on branch
+  `task-m5-005-orc-seat-hook`, closed unmerged as PR #284 at head
+  `69e4829` (branch ref preserved). Originally scoped as four `tool_call`
+  guards, then descoped 2026-09-07 (`task-m5-005-guards` seq 16) to the
+  one guard — the ship worktree fence on `edit`/`write` — held to decide
+  on structure rather than command text; that retained guard was itself
+  defeated by three further escape classes (command text; path
+  canonicalization; scheme adjudication introduced by the
+  canonicalization fix — issues #290, #296, #297, #298). The full
+  four-guards → one-guard → abandoned chain, with evidence, is in this
+  document's Acceptance section and `TASK-M5-005`'s own amendment
+  history. All four original invariants now rest on tool restriction,
+  GitHub branch protection, and after-the-fact ledger audit (`AGENTS.md`).
 - `.omp/config.yml` — `task.enableEffort`, `task.maxRuntimeMs`, and
   `modelRoles` for ship/verify/scout.
 - `orc-ledger` skill v6 — §3's seat section references the OMP agent
@@ -158,8 +166,10 @@ deliverables.
 ## Phase 3 — Retire
 
 - Deleted: `PLAYBOOK-WATCHTOWER`'s §Model and effort selection and its
-  worktree/`watch_pr.py` Conventions lines (now enforced by agent
-  definitions and the hook); the "brief lives in the card" duplication
+  worktree/`watch_pr.py` Conventions lines (the `tool_call` hook rung
+  was tested to exhaustion and abandoned, `TASK-M5-005`; enforcement now
+  rests on tool restriction, branch protection on `master`, and
+  after-the-fact ledger audit); the "brief lives in the card" duplication
   (task cards stay the sole tier-1 spec).
 - Kept (per operator ruling): `.claude/skills` symlink and `CLAUDE.md` —
   Claude Code remains a harness in use; `scripts/watch_pr.py`;
@@ -194,8 +204,8 @@ work, since both land in the same check.sh/skill surface).
    OMP example (Phase 1).
 4. `TASK-M5-004` — `.omp/agents/*` + `.omp/config.yml`, the pilot card
    (Phase 2; **delivered by this pilot PR**).
-5. `TASK-M5-005` — `.omp/extensions/orc-seat.ts` hook guard + red test
-   (Phase 2).
+5. `TASK-M5-005` — `tool_call` seat-hook capability finding: tested to
+   exhaustion and abandoned 2026-09-07 (Phase 2; see Acceptance).
 6. `TASK-M5-006` — `orc-ledger` skill v6 + `scripts/check.sh` loud line
    (Phases 2/3).
 7. `TASK-M5-007` — `orc onboard` OMP scaffold + `PRODUCT-ADOPTION`
@@ -206,8 +216,9 @@ work, since both land in the same check.sh/skill surface).
 `TASK-M5-001` gates every later card: no agent definition or hook is
 trusted until the capability it depends on has a recorded pass. Beyond
 that gate, `TASK-M5-002`/`TASK-M5-003` (docs) and `TASK-M5-004` (the
-pilot) can proceed in parallel; `TASK-M5-005` depends on `TASK-M5-004`
-existing (the hook guards the ship/verify agents it defines);
+pilot) can proceed in parallel; `TASK-M5-005`'s attempted hook depended
+on `TASK-M5-004` existing (it would have guarded the ship/verify agents
+`TASK-M5-004` defines, per the design later abandoned — see Acceptance);
 `TASK-M5-006` depends on `TASK-M5-002` (the skill's seat section
 references the rewritten playbooks); `TASK-M5-007` depends on
 `TASK-M5-004` (it scaffolds the same agent shapes into adopting repos);
@@ -228,24 +239,67 @@ least one subsequent card's delivery data.
 - `.omp/agents/ship.md`, `.omp/agents/verify.md`, `.omp/agents/scout.md`,
   and `.omp/config.yml` exist, and ship/verify are on different model
   families.
-- **Amended 2026-09-07** (operator ruling, following `task-m5-005-guards`
-  run's six reproduced-in-system REJECTs at attempt 1 —
-  `.orc/task-m5-005-guards/journal.jsonl` seq 16 — which established that
-  an OMP `tool_call` hook receives only the bash command as a string,
-  never argv or process identity, so a guard deciding by matching that
-  text is defeated by shell escaping; originally this criterion required
-  `.omp/extensions/orc-seat.ts` to prove four guards fire: yield-after-
-  record, no `gh pr merge`, verify push/commit denial, and the ship
-  worktree fence): `.omp/extensions/orc-seat.ts` exists with a red-then-
-  green test proving the one guard that is structurally decidable in a
-  `tool_call` hook — the ship worktree fence on `edit`/`write` paths —
-  actually fires. The other three retreat to the rung that can hold them:
-  no direct push to a shared branch is GitHub branch protection on
-  `master`; record-before-yield is enforced structurally only for the
-  paths that reach `ACCEPTED`/`BLOCKED` through bound assurance, with
-  the cancellation path a disclosed, unenforced escape (issue #293);
-  merge authority has no enforcement rung and remains seat-discipline
-  prose plus after-the-fact ledger detection.
+- **`TASK-M5-005` acceptance — dated chain (four guards → one guard →
+  abandoned).** Preserved in full because the progression is this
+  milestone's most valuable record: a capability question answered by
+  exhaustion.
+  - **Original (this document's first version, 2026-09-06):**
+    `.omp/extensions/orc-seat.ts` exists with a red-then-green test
+    proving four guards fire — yield-after-record, no `gh pr merge`,
+    verify push/commit/comment denial, and the ship worktree fence.
+  - **Amended 2026-09-07** (operator ruling, following
+    `task-m5-005-guards` run's six reproduced-in-system REJECTs at
+    attempt 1 — `.orc/task-m5-005-guards/journal.jsonl` seq 16 — which
+    established that an OMP `tool_call` hook receives only the bash
+    command as a string, never argv or process identity, so a guard
+    deciding by matching that text is defeated by shell escaping):
+    descoped to `.omp/extensions/orc-seat.ts` existing with a
+    red-then-green test proving the one guard structurally decidable in
+    a `tool_call` hook — the ship worktree fence on `edit`/`write`
+    paths — actually fires. The other three retreated to the rung that
+    can hold them: no direct push to a shared branch is GitHub branch
+    protection on `master`; record-before-yield is enforced
+    structurally only for the paths that reach `ACCEPTED`/`BLOCKED`
+    through bound assurance, with the cancellation path a disclosed,
+    unenforced escape (issue #293); merge authority has no enforcement
+    rung and remains seat-discipline prose plus after-the-fact ledger
+    detection.
+  - **Superseded 2026-09-07** (operator ruling; mechanism abandoned, not
+    descoped further): the retained worktree-fence guard was itself
+    defeated across three further attempt cycles —
+    `.orc/task-m5-005/journal.jsonl`, `.orc/task-m5-005-guards/journal.jsonl`,
+    and `.orc/task-m5-005-sensor/journal.jsonl` — each recording 3
+    attempts and one `FACT-ASSURE-SETTLED` `rejected` verdict per
+    attempt (9 rejections total across the three journals, cutoff
+    2026-09-07T10:22:15Z, the last of the three journals' final
+    rejection), closing PR #284 (`task-m5-005-orc-seat-hook`) unmerged
+    at head `69e4829` (branch ref preserved). Three escape classes, each
+    found by a different verify seat: **command text** (issue #290) —
+    the shell is Turing-complete; no text predicate establishes program,
+    argv, or effect. **Path canonicalization** (issues #296, #297) —
+    symlinks, colon-splitting, `scheme://` traversal, case-insensitive
+    filesystems, `ssh://` with no local path, hardlink inode aliasing
+    invisible to `realpath`. **Scheme adjudication** (issue #298),
+    introduced by the fix for the canonicalization class — a
+    case-insensitive `local://` match the harness treats case-sensitively,
+    and an unscoped `conflict://<id>` allowed without inspecting the
+    registered marker's `absolutePath`; both wrote outside the seat
+    worktree under a real `WriteTool.execute`. The canonical reason: a
+    `tool_call` hook receives the harness's *unresolved* arguments —
+    never its post-resolution path — so every attempt to close the gap
+    re-implemented that resolution, and every divergence became a fresh
+    escape. **`TASK-M5-005`'s acceptance criterion is therefore
+    satisfied by the capability finding, not by a firing guard**: the
+    question "can a `tool_call` hook enforce a seat rule?" is answered
+    **no**, by exhaustion, and that negative result is this card's
+    deliverable. All four original invariants now rest on tool
+    restriction (the agent `tools:` list — `.omp/agents/verify.md:8`
+    grants no `write`/`edit`), GitHub branch protection on `master`
+    (`enforce_admins=true`, required status check `ci-required`), and
+    after-the-fact ledger audit (the orc journal). Evidence:
+    `docs/reports/2026-09-07-omp-capability-test.md`,
+    `docs/decisions/ADR-0007-omp-primary-harness.md`, issues #290, #293,
+    #296, #297, #298, and the three run journals named above.
 - `scripts/check.sh`'s final line is `check: green. NOT covered:
   <list|none>`.
 - `orc onboard` installs the `.omp/agents/*` scaffold alongside the skill,

@@ -63,8 +63,11 @@ excluded by `.gitignore` (it is not, as of this PR).
 ## Out of scope
 
 `.omp/agents/dogfood.md` (an existing role not part of this migration's
-seat table). `.omp/extensions/orc-seat.ts` (`TASK-M5-005`, depends on
-these agent definitions existing first). The `orc onboard` scaffold step
+seat table). `.omp/extensions/orc-seat.ts` — attempted in `TASK-M5-005`,
+which depended on these agent definitions existing first; the mechanism
+was tested to exhaustion across three attempt cycles and abandoned
+2026-09-07 (see `TASK-M5-005`'s Closure section), so nothing further
+follows from this card on that front. The `orc onboard` scaffold step
 that installs this same shape into adopting repos (`TASK-M5-007`).
 
 ## Acceptance

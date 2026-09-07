@@ -51,30 +51,37 @@ means a green PR remotely.
 declared as OMP agent definitions rather than re-taught by prose:
 `.omp/agents/scout.md` (recon), `.omp/agents/ship.md` (implementation),
 and `.omp/agents/verify.md` (adversarial audit), configured project-wide
-by `.omp/config.yml`. `.omp/extensions/orc-seat.ts` does not exist in
-this repository's `e102e1e` baseline; `TASK-M5-005` is scoped to add it,
-enforcing exactly one guard: a structural, cwd/path-derived fence on
-`edit`/`write` file paths, keeping a ship seat's writes inside its own
-worktree. It will not attempt to block `yield` before a record, deny `gh
-pr merge`, or deny verify-role push/commit/comment, as an earlier design
-intended — a `tool_call` hook receives only the bare command string,
-never argv or process identity, so every guard deciding by matching that
-text was defeated by the shell (established when `task-m5-005`'s attempt
-1 was rejected by six reproduced-in-system escapes). Per the 2026-09-07
-operator ruling, those three invariants moved rung instead: no direct
-push to `master` is GitHub branch protection (applied 2026-09-07);
-record-before-yield is enforced structurally only for the paths that
-reach `ACCEPTED`/`BLOCKED` through bound assurance — the cancellation
-path is a disclosed, unenforced escape from that rung (issue #293); merge
-authority has no enforcement rung at all — every seat authenticates as
-the same GitHub identity, so it remains seat-discipline prose plus
-after-the-fact ledger detection. At `e102e1e`, before the fence exists,
-all of this is enforced by convention via `.omp/RULES.md` and the seat
-definitions' own prose. `.omp/RULES.md` is the sticky, always-loaded
-statement of these invariants for any OMP session working this
-repository. Harness-specific mechanics for OMP live in
-`docs/adapters/omp/` (`ADAPTER-OMP`); a future harness swap changes that
-directory, never this file's rules.
+by `.omp/config.yml`. **Amended 2026-09-07** (operator ruling): the
+`tool_call` seat-enforcement hook is a tested-and-abandoned mechanism,
+never a live rung and no longer a future intention.
+`.omp/extensions/orc-seat.ts` never existed on `master` — it lived only
+on branch `task-m5-005-orc-seat-hook`, closed unmerged as PR #284 at head
+`69e4829` (branch ref preserved). The reason is structural, not a bug to
+chase further: a `tool_call` hook receives *unresolved* arguments
+(`event.input.command` a raw shell string, `event.input.path` an
+unresolved target), while a sound guard needs the harness's own
+*post-resolution* path, which the hook never receives. Three independent
+verify seats each found a fresh escape class produced by re-implementing
+that resolution: command text is shell-defeated, the shell being
+Turing-complete (issue #290); path canonicalization has symlink/colon/
+scheme/case/hardlink gaps (issues #296, #297); and the fix for the
+canonicalization class introduced a third — scheme adjudication
+diverging from the harness's own resolver (issue #298). Seat discipline
+instead rests on three rungs that hold without a hook: **tool
+restriction** (the `tools:` list in an agent definition —
+`.omp/agents/verify.md:8` grants `read, bash, grep, glob, hub` and no
+`write`/`edit`); **GitHub branch protection** on `master`
+(`enforce_admins=true`, required status check `ci-required`, covering
+direct push); and **after-the-fact ledger audit** (the orc journal —
+where every escape above, and any lapse in record-before-yield or merge
+authority, was actually caught; those two invariants have no other
+enforcement rung — issue #293). A fresh session reading this file should
+not go looking for a hook: there is none, and none is planned.
+`.omp/RULES.md` is the sticky, always-loaded statement of these
+invariants for any OMP session working this repository.
+Harness-specific mechanics for OMP live in `docs/adapters/omp/`
+(`ADAPTER-OMP`); a future harness swap changes that directory, never
+this file's rules.
 
 A project skill onboards fresh sessions to the delivery ledger:
 `.claude/skills/orc-ledger` (source: `.agents/skills/orc-ledger/SKILL.md`) —
