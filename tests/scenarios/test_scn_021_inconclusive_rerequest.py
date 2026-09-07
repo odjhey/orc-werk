@@ -625,7 +625,10 @@ class InconclusiveOnlyReObservationTest(unittest.TestCase):
         # branch (ADR-0006) is the sibling of item 8's inheritance branch
         # -- both must re-attribute the re-observed candidate to the
         # CURRENT (e2) execution, not the stale e1 it first surfaced
-        # under, for the same `orc show`/`orc-status/v1` reader reason.
+        # under, for the same `WorkProjection.candidates` reader reason
+        # (report HTML's candidates table, `CommandAssurance` forwarding
+        # -- `orc-status/v1` has no such field, see the note in
+        # `test_verdict_inheritance_and_abandon.py`).
         wp = self._fold()
         self.assertEqual(wp.candidates["c1"]["execution_id"], "e2")
 

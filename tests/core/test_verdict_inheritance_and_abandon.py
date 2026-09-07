@@ -118,9 +118,14 @@ class RejectedThenInheritedTest(unittest.TestCase):
         # Issue #266 item (a): the #265 verify audit found the candidates
         # map kept the FIRST execution's id across a re-observation that
         # inherits its verdict. `execution_id` is per-Execution identity
-        # (`docs/contracts/ports/candidate-port.md`), so a reader of `orc
-        # show`/`orc-status/v1` must see the CURRENT (e2) execution, not
-        # the stale e1 the candidate first surfaced under.
+        # (`docs/contracts/ports/candidate-port.md`), so `WorkProjection.
+        # candidates` -- read by the report HTML's candidates table
+        # (`report.py`'s `_render_candidates_table`) and forwarded
+        # verbatim to the verifier via `CommandAssurance` -- must carry
+        # the CURRENT (e2) execution, not the stale e1 the candidate
+        # first surfaced under. (`orc-status/v1` has no `execution_id`/
+        # `candidates` field at all -- `jsonview.py`'s `_work_document`
+        # -- so it never observes this either way.)
         facts = _rejected_then_retried_facts()
         wp = reduce(facts, delivery_run_id=DRID, max_attempts=5).works["w1"]
         self.assertEqual(wp.candidates["c1"]["execution_id"], "e2")
