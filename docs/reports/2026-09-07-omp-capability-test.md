@@ -3,7 +3,7 @@ id: REPORT-2026-09-07-OMP-CAPABILITY-TEST
 type: report
 status: current
 authority: informative
-description: Direct, freshly-run probes of the installed OMP v18.1.12 harness against nother-guide's five-point capability test (ADR-0007, TASK-M5-001) — hook-based tool denial, worktree fencing, strict schema rejection, task.maxRuntimeMs, transcript durability — plus the role-identity probe (answered "no" here; corrected 2026-09-07 by run task-m5-005 seq 16 / PR #284 — role IS reachable via ctx.sessionManager.getBranch()/getEntries(), see §6 Correction) and two unplanned findings (silent concurrency death, unrequested model-family substitution) that TASK-M5-004/TASK-M5-005 must account for.
+description: Direct, freshly-run probes of the installed OMP v18.1.12 harness against nother-guide's five-point capability test (ADR-0007, TASK-M5-001) — hook-based tool denial, worktree fencing, strict schema rejection, task.maxRuntimeMs, transcript durability — plus the role-identity probe (answered "no" here; corrected 2026-09-07 by run task-m5-005 seq 16 / PR #284 — role IS reachable via ctx.sessionManager.getBranch()/getEntries(), see §6 Correction), a further command-interception-limit finding (established 2026-09-07 by run task-m5-005-guards seq 16 / PR #284 — command semantics, unlike role identity, are not reachable from a tool_call hook at all; see §6b), and two unplanned findings (silent concurrency death, unrequested model-family substitution) that TASK-M5-004/TASK-M5-005 must account for.
 ---
 
 # OMP v18.1.12 capability test — TASK-M5-001
@@ -113,12 +113,39 @@ Reason: Blocked by bash pattern: git push*
 
 Origin remote unchanged, confirmed by `git log --oneline` before/after.
 
-**PASS** (both mechanisms). **Consequence:** a blocking hook is *sufficient*
-but not *necessary* for this specific rule — `bash.patterns` is a native,
-hookless config key that denies the same command. It is **not** an
-agent-frontmatter field, though (confirmed against the frontmatter schema —
-see §6), so it can only be scoped per-session/per-process, not per agent
-type inside one shared session.
+**PASS (2026-09-06), for the literal command actually sent — narrow and
+non-adversarial; the generalization below is superseded, see Correction:**
+
+> **Consequence (as originally written):** a blocking hook is *sufficient*
+> but not *necessary* for this specific rule — `bash.patterns` is a
+> native, hookless config key that denies the same command. It is **not**
+> an agent-frontmatter field, though (confirmed against the frontmatter
+> schema — see §6), so it can only be scoped per-session/per-process, not
+> per agent type inside one shared session.
+
+**Correction (2026-09-07, run `task-m5-005-guards` work `guards`,
+`FACT-ASSURE-SETTLED` seq 16, PR #284; issue #290, issue #296):** both
+mechanisms probed above decide by matching the *text* of
+`git push origin master` — the custom hook against a fixed regex,
+`bash.patterns` against a glob — and neither was probed adversarially:
+no shell-escaped variant of the push command was ever sent to either one
+in this session. `task-m5-005-guards` seq 16 supplies the concrete
+counterexample against an equivalently-shaped literal-token guard
+(`.omp/extensions/orc-seat.ts:633-636`, matching only the literal tokens
+`git`/`push`): a live `g\it push origin +master` returned exit 0, no
+denial, and advanced a disposable remote's `master` — the shell strips
+the backslash before exec, so the command that ran contained `git push`
+while the string the guard matched against never did. §6b generalizes
+the mechanism: `event.input.command` is a string, never argv, and "does
+this string invoke X" has no fixed point against a Turing-complete shell
+— that bound applies identically to both mechanisms tested here.
+**Corrected scope:** the PASS above holds only for the exact, unescaped
+command this probe sent; it is not evidence that either mechanism
+enforces the git-push *rule*, and the original "sufficient... for this
+specific rule" framing is withdrawn. The actual enforcement surface for
+"no direct write to a shared branch" is server-side GitHub branch
+protection — see `ADR-0007`'s 2026-09-07 amendment, rung 2 — not a
+`tool_call` hook or `bash.patterns`.
 
 ## 2. Point 2 — write-outside-fence hook (red before green); worktree auto-creation corrected
 
@@ -173,9 +200,18 @@ $ ls -la .../inside-write.txt
 
 **PASS for the fencing mechanism** (red then green, exactly as required),
 **with a corrected premise**: the fence hook must be told the worktree path
-by some other means (fixed convention, env var, or grep-matching the bash
-`git worktree add` invocation itself); it cannot read it off an OMP-tracked
-field because OMP does not create that worktree.
+by some other means (fixed convention, env var, or a value baked into the
+hook at installation time) — **not** by grep-matching the bash
+`git worktree add` invocation's command text. That alternative is defeated
+by the same bound as §1 Correction and §6b: `event.input.command` is a
+string a hook cannot reliably parse as "this invoked `git worktree add`
+with path P," so a grep-derived trusted path is exactly the command-text
+guard this report's own corrected bound rules out. The fence survives only
+because its known-good path is supplied out-of-band (fixed convention, env
+var, or install-time value) and compared against structural context
+(`ctx.cwd`/the write target), never extracted from parsing a command
+string; it cannot read the path off an OMP-tracked field either, because
+OMP does not create that worktree.
 
 ## 3. Point 3 — `outputSchema` + `schemaMode: strict` rejects a missing required field
 
@@ -387,6 +423,88 @@ off the session's own durable entries, not inference from prose a future
 edit could reword, which is the distinction that matters for
 `TASK-M5-005`'s per-role guards.
 
+## 6b. Command-interception limit: `event.input.command` is a string only, never argv (established 2026-09-07, run `task-m5-005-guards` work `guards`, `FACT-ASSURE-SETTLED` seq 16, PR #284)
+
+`TASK-M5-005`'s guard hook was rejected on re-delivery (run
+`task-m5-005-guards`, attempt 1) with six reproduced-in-system REJECTs
+against every guard that decided by matching the *text* of the command a
+`tool_call` event carries, and none against the one guard (4, §2 above)
+that decides on structural context instead. Quoted verbatim from the
+settled assurance record (`orc history task-m5-005-guards --limit 0`,
+seq 16):
+
+> "REJECT: Guard 2 still decides on incompletely-tokenized command text.
+> In a fresh live subagent, `g\h pr merge 999 --squash; touch
+> merge-escape-landed` exited 0; the stub log contains `gh pr merge 999
+> --squash` and the sink file exists. The shell removes the backslash,
+> while `.omp/extensions/orc-seat.ts:437-449` only matches the literal
+> token `gh`."
+
+> "REJECT: Guard 5's tokenizer is bypassable by shell escaping. Fresh
+> live `g\it push origin +master` returned exit 0/no denial and advanced
+> the disposable remote's master from `fc44fb4b…` to `585e443e…`;
+> `.omp/extensions/orc-seat.ts:633-636` requires literal tokens `git`,
+> `push`."
+
+> "REJECT: Guard 1 is satisfiable without a real recording. Fresh live
+> `omp -p` ran `PATH=<probe-bin>:/usr/bin:/bin orc record run-x --work w
+> --outcome completed`; the only effect was the logging stub line `orc
+> record run-x --work w --outcome completed`, yet the structured yield
+> landed as `{recorded:true,result:"probe-yield-landed"}`."
+
+**Mechanism:** the hook's `tool_call` event hands a guard
+`event.input.command` as a single string (this run's own recorded
+intent, `FACT-INTENT-SUBMITTED`, `docs-hook-capability-limit`, names the
+accessor `readCommand`) — never a tokenized argv array, never the
+shell's resolved executable path, never the OS process identity of
+whatever the shell ultimately executes. Every REJECT above is the same
+defeat applied to a different guard: a shell construct the hook's text
+match does not anticipate (backslash-escaping a program name so the
+literal token `git`/`gh` never appears in the string, or a command-local
+`PATH=…` assignment the hook's own resolution logic never applies)
+changes what the shell runs without changing what the string "looks
+like." Issue #290 states the general form: "the shell has `||`, `&&`,
+`;`, command substitution, aliases, wrappers (`uv run`), `eval`, and
+quoting," so "deciding 'does this command string invoke X' is not
+decidable from the string."
+
+**Reproductions (fresh, live, seq 16):**
+
+- Denial bypass: `g\it push origin +master` (the shell strips the
+  backslash before exec) advanced a disposable bare remote's `master` —
+  no denial, exit 0.
+- Denial bypass under role restriction: the identical escape (`g\it push
+  origin master:verify-escape`) succeeded from a live session whose
+  `session_init.agent` was `verify`, the exact role guard 3 is supposed
+  to block from pushing at all.
+- Merge-restriction false-negative: `g\h pr merge 999 --squash; touch
+  merge-escape-landed` exited 0 with the sink file present.
+- Record-before-yield bypass: a command-local `PATH=<probe-bin>:/usr/bin:/bin`
+  pointed the shell's own `orc` resolution at a logging stub; the hook's
+  resolution never observed the reassigned `PATH`, so the yield gate
+  opened on a stub invocation, not a real `orc record`.
+
+**Consequence for anyone designing hook guards, read together with §6:**
+§6's correction established that *role* identity is reachable
+structurally, off the session's own durable `session_init.agent` entry,
+not by matching prose. This finding establishes the complementary bound:
+*command semantics* — what a shelled-out command will actually do — are
+not reachable at all, structurally or otherwise, from a `tool_call`
+hook; only `event.input.command`'s raw text is, and text is exactly what
+an unbounded shell defeats. Read together, both are facts about what the
+hook is actually handed: a guard may decide on identity
+(`session_init.agent`, §6) or on structural context the hook is given
+directly (a cwd, per guard 4, §2) — never on the prose of a command,
+because "does this string invoke X" has no fixed point against a
+Turing-complete shell. The corollary for `TASK-M5-005`/any future
+hook-based guard: a rule about *what a command does* (push, merge,
+record) cannot be enforced at this rung at all; it must move to a rung
+that does not depend on parsing shell text — either structure the hook
+is actually given (role, cwd), or a different enforcement surface
+entirely (e.g. server-side ref protection for "no direct write," the
+ledger's own state machine for "was an outcome ever recorded" — see
+`ADR-0007`'s 2026-09-07 amendment).
+
 ## 7. Two findings the card did not ask for but that change the answer to `TASK-M5-005`
 
 ### 7a. Concurrent `omp -p` processes silently no-op under load (rc=0, no output, no error)
@@ -449,12 +567,13 @@ not derived.
 
 | # | Point | Result | `V7` (verify family ≠ ship family) verifiable? | Per-role deny: hook or `tools`/prompt fallback? |
 |---|---|---|---|---|
-| 1 | git push denial | PASS (hook **and** native `bash.patterns`) | N/A | Either; `bash.patterns` needs no custom code but is session-wide, not per-agent-frontmatter (confirmed absent from the agent frontmatter field list) |
+| 1 | git push denial | narrowed, 2026-09-07: PASS only for the literal, unescaped probe command (2026-09-06) — not enforcement of the rule; both mechanisms are command-text guards defeated by the same bound as row 6b (issue #290, #296; see §1 Correction) | N/A | Neither — same command-text bound as row 6b; the actual enforcement surface is rung 2 (server-side branch protection, `ADR-0007`'s 2026-09-07 amendment) |
 | 2 | worktree fence | PASS (fencing mechanism); premise corrected (no OMP auto-worktree) | N/A | Hook only — the worktree path is not an OMP-tracked field a `tools:`-level rule could reference |
 | 3 | strict schema rejection | PASS | Strengthens it — `ship.md`/`verify.md`'s `output:` schemas are enforced by OMP itself, not model good behavior | Neither needed; already structural |
 | 4 | `maxRuntimeMs` timeout | PASS | Strengthens it — a stuck seat's process is actually killed, and `history://` still gives the auditor a transcript | N/A |
 | 5 | transcript durability | PASS (note the `--export` path-vs-id nuance) | Strengthens it — a settled seat's evidence outlives its process | N/A |
 | role-identity | answered; corrected 2026-09-07 (§6 Correction; run `task-m5-005` seq 16, PR #284) | **Yes** — structural field via `ctx.sessionManager.getEntries()`/`getBranch()` → `session_init.agent` | Strengthens it, with caveat — a hook can structurally read its own session's `session_init.agent` rather than text-matching prose, but that value is executor-set at spawn time (self-reported, like `executor-identity/v1.model` in §7b), not externally audited | Hook can branch directly on `session_init.agent`; the `tools:`/prompt-only fallback is no longer the sole option |
+| 6b | command-interception limit | established 2026-09-07 (run `task-m5-005-guards` seq 16, PR #284) — every command-text guard rejected | N/A | Neither — command semantics are not reachable at all from `event.input.command`; only identity (§6) or hook-given structure (§2) are usable rungs; see `ADR-0007`'s 2026-09-07 amendment for the resulting enforcement-rung split |
 | 7a | concurrency | **FAIL** (silent `rc=0` death, N≥3 in this environment) | Weakens it — a "verify ran and settled" claim is not provable from `rc=0` alone under load | N/A |
 | 7b | model substitution | Gap confirmed | Weakens it — `executor-identity/v1.model` can silently misreport the true executing model | N/A |
 
@@ -469,10 +588,18 @@ not derived.
   `task`-tool subagents of one shared watchtower session was not something
   I could safely probe on my own live seat process without risking my own
   delivery; §6/§8's "session-wide, not per-agent" conclusion holds either
-  way, but which topology orc-werk actually uses changes whether giving
-  verify a stricter `bash.patterns` overlay is a one-line dispatch change
-  or requires a hook. `TASK-M5-004`/`TASK-M5-005` should confirm this
-  directly against the actual dispatch call site.
+  way. This topology question does not reopen `bash.patterns` as a
+  per-role enforcement fallback: even in the separate-process topology, a
+  stricter overlay applied via that process's `--config` is still a
+  coarse, session-wide setting on the process it is applied to, not a
+  hook that can condition on `session_init.agent` (§6 Correction) — and,
+  like every mechanism examined in §1 Correction and §6b, it decides by
+  matching command text, so it is defeated by the same shell-escaping
+  bound regardless of which topology orc-werk uses. `TASK-M5-004`/
+  `TASK-M5-005` should still confirm the actual dispatch topology against
+  the real call site, but for reasons unrelated to enforcement (e.g.
+  per-process resource limits), not to unlock `bash.patterns` as a
+  per-role guard.
 
 ## Not covered
 
