@@ -576,17 +576,21 @@ class OmpScaffoldTest(unittest.TestCase):
         self.assertIn("omp agents/ship.md: replaced (--force)", output)
 
     def test_ship_and_verify_scaffold_defaults_are_different_model_families(self):
-        # ADR-0007's V7 ruling: verify must run a model family different
-        # from ship's -- a model-diversity risk control against
+        # ADR-0007's V7 ruling: verify must run model families entirely
+        # disjoint from ship's -- a model-diversity risk control against
         # self-review-by-construction. Pinned on the actual frontmatter
-        # `model:` field: a future edit that collapses the scaffold
-        # defaults to a same-family ship/verify pairing MUST fail this.
-        ship_family = _model_families(_frontmatter_model(omp_scaffold_agent_text("ship")))[0]
-        verify_families = _model_families(_frontmatter_model(omp_scaffold_agent_text("verify")))
-        self.assertNotIn(
-            ship_family, verify_families,
-            f"verify's model families {verify_families} must exclude ship's family "
-            f"{ship_family!r} per ADR-0007's V7 ruling",
+        # `model:` field, comparing EVERY resolution-preference entry on
+        # each side (not just ship's first): a future edit that adds a
+        # second ship preference overlapping any verify family must fail
+        # this just as surely as collapsing to a single same-family pin.
+        ship_families = set(_model_families(_frontmatter_model(omp_scaffold_agent_text("ship"))))
+        verify_families = set(_model_families(_frontmatter_model(omp_scaffold_agent_text("verify"))))
+        overlap = ship_families & verify_families
+        self.assertFalse(
+            overlap,
+            f"ship's model families {sorted(ship_families)} and verify's "
+            f"{sorted(verify_families)} must be disjoint per ADR-0007's V7 ruling "
+            f"(overlap: {sorted(overlap)})",
         )
 
 
@@ -673,7 +677,12 @@ _ADOPTER_SUBSTITUTIONS: dict[str, list[tuple[str, str, str]]] = {
             "google-antigravity/gpt-oss-120b",
             "# TEMPLATE (orc onboard --omp): every entry below is a non-Anthropic family, since\n"
             "# this scaffold's ship seat (.omp/agents/ship.md) templates as anthropic/* -- a\n"
-            "# model-diversity risk control (independent verdict, different failure modes).\n"
+            "# model-diversity risk control against self-review-by-construction (ADR-0007's V7\n"
+            "# ruling -- canonical to the orc-werk repository/package, cited here for context\n"
+            "# only). That repository/package's own seat-reliability incident log\n"
+            "# (docs/delivery/seat-reliability.md, same repository/package, same context-only\n"
+            "# citation) records real spawn-time rejections when this pairing was violated in\n"
+            "# practice -- keep an equivalent record in your own repo if you want the signal.\n"
             "# Order is resolution preference only: a spawn-time usage-limit/quota error on\n"
             "# entry 1 is not guaranteed to fall through to entry 2 unless your harness's own\n"
             "# retry/fallback configuration names it explicitly -- put the model with quota\n"
@@ -681,7 +690,9 @@ _ADOPTER_SUBSTITUTIONS: dict[str, list[tuple[str, str, str]]] = {
             "# do not add a Claude-family fallback here while ship runs on anthropic/*.\n"
             "model: google-antigravity/gemini-3.8-flash:high, openai-codex/gpt-5.6-sol:high, "
             "google-antigravity/gpt-oss-120b",
-            "adopter-facing model-pin disclaimer; orc-werk's own operational incident note "
+            "adopter-facing model-pin disclaimer plus ADR-0007's V7 ruling and this repository's "
+            "own seat-reliability incident log, both cited context-only per the ADR-0005 convention "
+            "in config.yml's substitution below; orc-werk's own operational incident note "
             "(2026-09-06 usage_limit_reached) is not an adopter's history",
         ),
         (

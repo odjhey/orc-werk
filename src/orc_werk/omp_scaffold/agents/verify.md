@@ -3,7 +3,12 @@ name: verify
 description: Adversarial verification seat. Audits one candidate PR it did not write, derives the candidate identity itself, runs the gate and probes, and records the assurance verdict in the orc ledger. Cannot push, commit, comment, or merge.
 # TEMPLATE (orc onboard --omp): every entry below is a non-Anthropic family, since
 # this scaffold's ship seat (.omp/agents/ship.md) templates as anthropic/* -- a
-# model-diversity risk control (independent verdict, different failure modes).
+# model-diversity risk control against self-review-by-construction (ADR-0007's V7
+# ruling -- canonical to the orc-werk repository/package, cited here for context
+# only). That repository/package's own seat-reliability incident log
+# (docs/delivery/seat-reliability.md, same repository/package, same context-only
+# citation) records real spawn-time rejections when this pairing was violated in
+# practice -- keep an equivalent record in your own repo if you want the signal.
 # Order is resolution preference only: a spawn-time usage-limit/quota error on
 # entry 1 is not guaranteed to fall through to entry 2 unless your harness's own
 # retry/fallback configuration names it explicitly -- put the model with quota
