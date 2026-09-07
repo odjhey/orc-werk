@@ -3,7 +3,7 @@ id: REPORT-2026-09-07-OMP-CAPABILITY-TEST
 type: report
 status: current
 authority: informative
-description: Direct, freshly-run probes of the installed OMP v18.1.12 harness against nother-guide's five-point capability test (ADR-0007, TASK-M5-001) — hook-based tool denial, worktree fencing, strict schema rejection, task.maxRuntimeMs, transcript durability — plus the role-identity probe (answered "no" here; corrected 2026-09-07 by run task-m5-005 seq 16 / PR #284 — role IS reachable via ctx.sessionManager.getBranch()/getEntries(), see §6 Correction), a further command-interception-limit finding (established 2026-09-07 by run task-m5-005-guards seq 16 / PR #284 — command semantics, unlike role identity, are not reachable from a tool_call hook at all; see §6b), and two unplanned findings (silent concurrency death, unrequested model-family substitution) that TASK-M5-004/TASK-M5-005 must account for.
+description: Direct, freshly-run probes of the installed OMP v18.1.12 harness against nother-guide's five-point capability test (ADR-0007, TASK-M5-001) — hook-based tool denial, worktree fencing, strict schema rejection, task.maxRuntimeMs, transcript durability — plus the role-identity probe (answered "no" here; corrected 2026-09-07 by run task-m5-005 seq 16 / PR #284 — role IS reachable via ctx.sessionManager.getBranch()/getEntries(), see §6 Correction), a further command-interception-limit finding (established 2026-09-07 by run task-m5-005-guards seq 16 / PR #284 — command semantics, unlike role identity, are not reachable from a tool_call hook at all; see §6b), two unplanned findings (silent concurrency death, unrequested model-family substitution) that TASK-M5-004/TASK-M5-005 must account for, and a final 2026-09-07 addendum (§9, operator ruling) recording that the one remaining guard shape (structural worktree fencing) was also defeated, across two further escape classes and nine total rejections, and that TASK-M5-005's tool_call hook is abandoned — see ADR-0007's 2026-09-07 hook-retirement amendment.
 ---
 
 # OMP v18.1.12 capability test — TASK-M5-001
@@ -131,7 +131,13 @@ mechanisms probed above decide by matching the *text* of
 no shell-escaped variant of the push command was ever sent to either one
 in this session. `task-m5-005-guards` seq 16 supplies the concrete
 counterexample against an equivalently-shaped literal-token guard
-(`.omp/extensions/orc-seat.ts:633-636`, matching only the literal tokens
+(the rejected candidate's `.omp/extensions/orc-seat.ts:633-636` at commit
+`3e576ee51f10b69` — `task-m5-005-guards` attempt 1, `gh-pr:284`; that
+commit never reached any preserved branch tip and is not on `master`, but
+the object is still present and the citation resolves against it
+directly — `git show 3e576ee51f10b69:.omp/extensions/orc-seat.ts | sed -n
+'633,636p'`; see also `ADR-0007`'s 2026-09-07 hook-retirement amendment),
+matching only the literal tokens
 `git`/`push`): a live `g\it push origin +master` returned exit 0, no
 denial, and advanced a disposable remote's `master` — the shell strips
 the backslash before exec, so the command that ran contained `git push`
@@ -405,7 +411,10 @@ structural field, not a text match against system-prompt prose. (The root
 session's own `task` tool_call has no `session_init` entry at all; only a
 `task`-spawned subagent session carries one — consistent with, not
 contradicting, the root/subagent session-file shape difference
-`TASK-M5-005`'s shipped `.omp/extensions/orc-seat.ts` already keys off.)
+`TASK-M5-005`'s candidate `.omp/extensions/orc-seat.ts` — on branch
+`task-m5-005-orc-seat-hook`, closed unmerged at final head `69e4829`,
+never landed on `master`; see `ADR-0007`'s 2026-09-07 hook-retirement
+amendment — keyed off.)
 
 **Corrected answer: yes, with a caveat.** A `tool_call` hook (or any
 extension) *can* learn which named agent role is running its own session,
@@ -568,7 +577,7 @@ not derived.
 | # | Point | Result | `V7` (verify family ≠ ship family) verifiable? | Per-role deny: hook or `tools`/prompt fallback? |
 |---|---|---|---|---|
 | 1 | git push denial | narrowed, 2026-09-07: PASS only for the literal, unescaped probe command (2026-09-06) — not enforcement of the rule; both mechanisms are command-text guards defeated by the same bound as row 6b (issue #290, #296; see §1 Correction) | N/A | Neither — same command-text bound as row 6b; the actual enforcement surface is rung 2 (server-side branch protection, `ADR-0007`'s 2026-09-07 amendment) |
-| 2 | worktree fence | PASS (fencing mechanism); premise corrected (no OMP auto-worktree) | N/A | Hook only — the worktree path is not an OMP-tracked field a `tools:`-level rule could reference |
+| 2 | worktree fence | PASS (fencing mechanism) for the guard 4 shape tested 2026-09-06; premise corrected (no OMP auto-worktree). **Superseded 2026-09-07 — see §9: the shipped guard 4 was itself defeated by path-canonicalization and scheme-adjudication escapes; no hook rung survives.** | N/A | Neither, finally — §9 reassigns this rung to ship's own worktree protocol plus after-the-fact ledger/PR audit |
 | 3 | strict schema rejection | PASS | Strengthens it — `ship.md`/`verify.md`'s `output:` schemas are enforced by OMP itself, not model good behavior | Neither needed; already structural |
 | 4 | `maxRuntimeMs` timeout | PASS | Strengthens it — a stuck seat's process is actually killed, and `history://` still gives the auditor a transcript | N/A |
 | 5 | transcript durability | PASS (note the `--export` path-vs-id nuance) | Strengthens it — a settled seat's evidence outlives its process | N/A |
@@ -576,6 +585,81 @@ not derived.
 | 6b | command-interception limit | established 2026-09-07 (run `task-m5-005-guards` seq 16, PR #284) — every command-text guard rejected | N/A | Neither — command semantics are not reachable at all from `event.input.command`; only identity (§6) or hook-given structure (§2) are usable rungs; see `ADR-0007`'s 2026-09-07 amendment for the resulting enforcement-rung split |
 | 7a | concurrency | **FAIL** (silent `rc=0` death, N≥3 in this environment) | Weakens it — a "verify ran and settled" claim is not provable from `rc=0` alone under load | N/A |
 | 7b | model substitution | Gap confirmed | Weakens it — `executor-identity/v1.model` can silently misreport the true executing model | N/A |
+
+## 9. Final answer (2026-09-07 addendum, operator ruling): the `tool_call` hook is tested to exhaustion and abandoned
+
+Point 1 of the card asks whether a hook can soundly deny a rule
+(`git push`, `gh pr merge`, tampering outside a worktree). §1's original
+PASS, §1's same-day Correction, and §6b's command-interception limit
+already walked that answer back for every guard that decided on command
+*text*. This addendum states the answer this report's own evidence
+converges on for the one guard that didn't — guard 4, the cwd-derived
+worktree fence (§2), the sole guard the 2026-09-07
+`docs-hook-capability-limit` `ADR-0007` amendment still credited with a
+working hook rung — and closes the question.
+
+**Guard 4 was also defeated, twice more, after this report's §2 was
+written.** `task-m5-005-guards` (attempts 2–3) and `task-m5-005-sensor`
+(attempts 1–3) kept re-delivering the fence against a fresh, adversarial
+verify seat, and every re-delivery was rejected on the fence's own
+mechanism, never on an unrelated regression:
+
+- Symlinks compared by `path.resolve` string, not `realpath`
+  (`task-m5-005-guards` attempt 2, `head:c11601cb`): a live ship subagent
+  wrote and edited *through* a symlink into a sibling worktree.
+- A path reader that dropped everything after the first colon and
+  skipped any path containing `://` (same rejection): non-symlink
+  traversal via a colon-bearing relative path.
+- An unrecognized `ssh://` scheme with no local path for the fence to
+  compare at all, and a hardlink whose in-worktree name shares an inode
+  with a file outside the worktree — `realpath` of the in-worktree name
+  *is* the in-worktree name, so nothing about the alias is visible from
+  inside (`task-m5-005-guards` attempt 3, `head:ef093a31`, issues #296,
+  #297).
+- A case-insensitive `local://` scheme match against a harness that
+  treats the prefix case-sensitively, and an unscoped `conflict://<id>`
+  ALLOWed without inspecting the registered marker's `absolutePath` —
+  both landed a real `WriteTool.execute` outside the seat worktree
+  (`task-m5-005-sensor` attempt 3, `head:69e482988736bb48ed9fb3e3301a8ab694a4cdfd`,
+  issue #298 — introduced by the fix for the ssh/hardlink class directly
+  above it).
+
+**The pattern, stated once:** every fix responded to a real, reproduced
+escape by teaching the guard more of the harness's own path-resolution
+semantics — symlink resolution, scheme recognition, colon handling,
+case normalization — and every fix's own reimplementation diverged from
+the harness's *actual* resolution semantics somewhere the fix's own
+author didn't anticipate. This is not a series of unrelated bugs to be
+patched one at a time; it is the same structural gap identified in
+§6b restated for paths instead of commands: a `tool_call` hook is handed
+`event.input.path` as an unresolved string, never the harness's own
+post-resolution decision about what file a `write`/`edit` will actually
+touch, so a guard that decides on that string is always one unmodeled
+harness behavior away from a fresh divergence. Closing a divergence by
+adding more string-classification logic to the guard cannot converge,
+because the source of every divergence is the same one: the guard is
+outside the harness, reimplementing what only the harness itself can
+decide correctly.
+
+**Final answer: no.** A `tool_call` hook does not soundly enforce any of
+the five rules `TASK-M5-005` set out to encode, including the one
+(structural, cwd-derived fencing) that looked most tractable after this
+report's original §2. Three independent verify seats, across three
+delivery runs and nine rejected attempts, found three independent
+divergence classes — command text (#290), path canonicalization (#296,
+#297), and scheme adjudication (#298, introduced by the fix for the
+prior class) — and `TASK-M5-005`'s branch (`task-m5-005-orc-seat-hook`,
+`gh-pr:284`) was closed unmerged at final head
+`69e482988736bb48ed9fb3e3301a8ab694a4cdfd` without a fourth attempt.
+`.omp/extensions/orc-seat.ts` never reached `master` and will not.
+`ADR-0007`'s 2026-09-07 hook-retirement amendment reassigns every rule
+this card was scoped to encode to the rung that actually holds it: agent
+`tools:` restriction, GitHub branch protection on `master` (live-verified
+there, cited to an instant), or — honestly, where no enforcement rung
+exists at all — policy plus the after-the-fact ledger/PR audit that is
+precisely how every one of the nine rejections above was caught in the
+first place. This is the report's own answer to the capability question
+it was opened to test, not a deferral to a future amendment.
 
 ## Ambiguities encountered
 

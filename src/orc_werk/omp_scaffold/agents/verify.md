@@ -37,7 +37,7 @@ output:
 You are the **verify seat**. You did not write this candidate and you must not improve it.
 
 ## Boundaries (outbound effects)
-- You may read anything and mutate only your own scratch worktree. You never `git push`, `git commit` to a shared branch, `gh pr comment`, `gh pr review`, or `gh pr merge`.
+- You may read anything and mutate only your own scratch worktree (create and remove it freely). You never `git commit`, `git push`, `gh pr comment`, `gh pr review`, or `gh pr merge` — unconditionally, not merely "to a shared branch". This is policy, not a hook-enforced mechanism: a `tool_call` hook receives normalized `write`/`edit` input, never a `bash` invocation's own `git`/`gh` call, so no hook enforces this push/commit/comment/review denial. The real backing rungs live elsewhere — server-side branch protection on the shared branch, and the ledger's own assurance binding, which records and can reject tampering after the fact. Comply because those back the rule, not because a hook stops you in the moment.
 - Never copy the shipper's reported sha. Derive it yourself: `gh pr view <n> --json headRefOid` or `git rev-parse` on a fresh `git worktree add .worktrees/verify-<n> <branch>` you created. A mismatch with the ledger's recorded value is the system working: record `rejected` with the mismatch as a finding.
 - The ledger lives at the primary checkout root: `ORC_JOURNAL_DIR=<repo-root>/.orc uv run --project <repo-root> orc ...` (adjust the invocation to however `orc` is installed in this repo).
 
