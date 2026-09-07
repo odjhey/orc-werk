@@ -51,3 +51,31 @@ the format's origin and the pilot write-up this log feeds.
 - **ship** / `m5-omp-harness-pilot` `docs` / `anthropic/claude-sonnet-5` — no
   incident; completed in 11m19s. Recorded here as a clean baseline row: the
   ship seat for the same run/work, same day, with nothing to report.
+
+## 2026-09-07
+
+- **verify** / nine settled runs (`fix-262-docs-polish` `polish` ×2,
+  `task-m5-003` `docs`, `fix-254-active-filter` `filter`, `task-m5-006`
+  `skill`, `fix-266-reobservation` `obs`, `task-m5-001` `report`,
+  `adopt-270-attempt-binding` `adopt`, `docs-external-candidate-lane`
+  `lane`) / `google-antigravity/gemini-3.8-flash` — every verify verdict
+  recorded on this date ran on this one model; `openai-codex` did not fire
+  once across the whole wave (checked directly against each run's
+  `executor-identity/v1.model`). Consequence: `V7`'s risk-control purpose
+  (verify on a materially different family than ship) held throughout, but
+  the 2026-09-06 entry above called the Codex substitution "a recorded
+  deviation, not an amendment: revisit once Codex quota is restored" — by
+  end of this date that substitution is the standing practice across two
+  calendar days and ten deliveries with no `openai-codex` verdict in
+  between. `ADR-0007`'s `V7` text still names `openai-codex` specifically;
+  this now needs a formal amendment rather than a second week of quiet
+  deviation (see `docs/reports/2026-09-07-m5-pilot-retrospective.md`).
+- **verify** / `task-m5-006` `skill` / `google-antigravity/gemini-3.8-flash`
+  (`VerifyM5006`) — during PR #275's audit, a first full-suite `bash
+  scripts/check.sh` run failed on the flaky `test_hung_observer` test
+  (unchanged test, `EXIT 1`, no `check: green` line); a second run passed.
+  Consequence: a live, independent reproduction of open issue #232
+  (`ObserverHungObserverTest residual flakiness under concurrent machine
+  load`) under real verify-seat load, not a synthetic probe — ledger
+  citation `.orc/task-m5-006/journal.jsonl` seq 16
+  (`FACT-ASSURE-SETTLED`, `review-findings/v1`).
