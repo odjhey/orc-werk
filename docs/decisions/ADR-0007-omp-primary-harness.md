@@ -628,20 +628,31 @@ found three independent divergences, in order:
    *wasn't* text-matching a command — the structural, cwd-derived
    worktree fence (rung 1 above) — was defeated on the harness's own
    path-resolution surface instead: symlinks compared by `path.resolve`
-   string without `realpath` (`orc-seat.ts:153-177`, a live ship subagent
-   wrote and edited through a symlink into a sibling worktree), a path
-   reader that dropped everything after the first colon and skipped any
-   path containing `://` (`orc-seat.ts:123-129`), an unrecognized `ssh://`
-   scheme with no local path at all for the fence to compare
-   (`orc-seat.ts:189-220`/`:317-323`; `read ssh://` targets a configured
-   host, never a filesystem path, and zero candidates resolved to ALLOW
-   by default), case-insensitive filesystem handling, and a hardlink
-   whose name sits inside the seat worktree but whose inode is shared
-   with a file outside it — `realpath` of the in-worktree name resolves
-   to the in-worktree name, because a hardlink has no "outside" path to
-   discover from the inside (`orc-seat.ts:284-304`; `os.link` fixture,
-   `same_inode_before=true`, `nlink=2`, a write through the inside name
-   changed the outside sibling's content).
+   string without `realpath` (`orc-seat.ts:153-177` at head `c11601c`,
+   `task-m5-005-guards` seq 26; a live ship subagent wrote and edited
+   through a symlink into a sibling worktree), a path reader that
+   dropped everything after the first colon and skipped any path
+   containing `://` (`orc-seat.ts:123-129`, same head `c11601c` and
+   `task-m5-005-guards` seq 26), an unrecognized `ssh://` scheme with no
+   local path at all for the fence to compare (`orc-seat.ts:189-220`/
+   `:317-323` at head `ef093a3`, `task-m5-005-guards` seq 36; `read
+   ssh://` targets a configured host, never a filesystem path, and zero
+   candidates resolved to ALLOW by default), case-insensitive filesystem
+   handling, and a hardlink whose name sits inside the seat worktree but
+   whose inode is shared with a file outside it — `realpath` of the
+   in-worktree name resolves to the in-worktree name, because a hardlink
+   has no "outside" path to discover from the inside
+   (`orc-seat.ts:284-304` at head `ef093a3`, `task-m5-005-guards` seq 36;
+   `os.link` fixture, `same_inode_before=true`, `nlink=2`, a write
+   through the inside name changed the outside sibling's content).
+   **Every citation in this item is bound to the head it was actually
+   observed at, not to the branch's final head `69e4829`** —
+   `orc-seat.ts` had several distinct heads across this run's three
+   attempts and the file changed between them, so the same line range
+   read different content at different heads; the PR body publishes the
+   exact `git show <head>:.omp/extensions/orc-seat.ts | sed -n
+   '<range>p'` loop that proves each citation above resolves against the
+   head named beside it.
 3. **Scheme adjudication (issue #298), introduced by the fix for class
    2.** Closing the `://`-path-dropping bug (class 2) required adding a
    scheme classifier — and the classifier itself shipped two new
@@ -671,12 +682,31 @@ with no residual hook rung:
 
 - **Tool restriction (agent frontmatter).** `.omp/agents/verify.md:8`
   grants `tools: read, bash, grep, glob, hub` — no `write`/`edit`. This
-  is what actually keeps a verify seat from tampering with repository
-  files; it was never the hook's job for that half of the boundary. It
-  does **not** cover `git push`/`git commit`/`gh pr merge`, because
-  `bash` remains in verify's tool list (verify needs it to run
-  `scripts/check.sh` and throwaway probes) — those commands are reachable
-  through `bash` and stopped by the next rung, not by tool restriction.
+  rung does exactly one thing: it removes the `write`/`edit` *tools*
+  themselves, so a verify seat cannot invoke them directly. **It does
+  not keep a verify seat from mutating the filesystem in general**,
+  because `bash` remains in verify's tool list (verify needs it to run
+  `scripts/check.sh` and throwaway probes) and `bash` is
+  Turing-complete — withholding two named tools does not close a
+  general-purpose shell. This was live-disproved against a prior draft
+  of this very amendment: a real verify seat, in its own scratch
+  worktree, ran `touch verify-bash-mutation.probe` through `bash` and
+  the file was created — a `tool_call` hook never fires for a `bash`
+  invocation's own filesystem effects, only for `write`/`edit` tool
+  calls, so there is no rung of any kind on that path. `git
+  push`/`git commit`/`gh pr merge` are equally reachable through
+  `bash`, and — corrected here — they are **not** "stopped by the next
+  rung": GitHub branch protection (next bullet) stops a push from
+  *landing on `master`*, and only on `master`; it does not exist for
+  any other ref and does not stop the push, commit, or write from being
+  *attempted*. The honest scope of tool restriction is: it forecloses
+  `write`/`edit` as tools, nothing more. The general boundary against a
+  verify seat's own `bash`-mediated mutation is policy plus
+  after-the-fact ledger/PR audit — stated without qualification in the
+  "honest answer" bullet below; this bullet previously claimed
+  otherwise and contradicted that bullet, and is corrected here to
+  agree with it instead (finding against the prior candidate,
+  `hook-retire-decision` assurance 1).
 - **GitHub branch protection on `master`.** The actual backstop against
   "no direct write to a shared branch," including from an admin
   identity. Read back live for this amendment (`gh api
@@ -701,6 +731,19 @@ with no residual hook rung:
   GitHub identity (`gh api user` → `login: odjhey`), a fact unchanged
   since the prior amendment. Branch protection is real enforcement of
   "no direct write lands," not of "verify specifically never pushes."
+  **Scope check, re-verified live for this amendment at a fresh
+  instant (not reused from the prior review's reading):** this
+  configuration exists for `master` only. `gh api
+  repos/odjhey/orc-werk/branches/hook-retire-decision/protection` —
+  this very PR's own ship branch, an arbitrary non-`master` ref —
+  returned `404 Branch not protected` at `2026-09-07T11:19:34Z` GMT
+  (response `Date` header), confirmed against the `master` reading
+  above re-read at the same sitting at `2026-09-07T11:19:33Z` GMT
+  (`gh api repos/odjhey/orc-werk/branches/master/protection`, `Date`
+  header). Branch protection cannot stop a `git commit`, a filesystem
+  write, or a `git push` to any ref other than `master` — a verify
+  seat's own scratch worktree, and any push it might attempt to a
+  non-`master` ref, sit entirely outside this rung's reach.
 - **The honest answer for "the verify seat specifically may not
   push/commit/comment/review/merge": policy plus after-the-fact audit,
   with no enforcement rung.** `.omp/agents/verify.md`'s and
