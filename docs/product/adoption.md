@@ -153,12 +153,19 @@ mirror of this repository's own pilot default and instructing the operator
 to substitute a model actually available in their account, because an
 adopter's available model families will differ from orc-werk's own. The
 `verify.md` template's comment additionally names `ADR-0007`'s `V7`
-ruling — ship and verify must run different model families — as a
-requirement to preserve when swapping pins in, not an incidental detail;
-this repository's own seat-reliability log
-(`docs/delivery/seat-reliability.md`) records real spawn-time rejections
-when that pairing was violated in practice, which is exactly the failure
-mode a silent, unexamined pin would reproduce for a fresh adopter.
+ruling — ship and verify must run different model families, because a
+verify seat sharing the ship seat's model family cannot render an
+independent, adversarial verdict — as a requirement to preserve when
+swapping pins in, not an incidental detail. This repository's own
+seat-reliability log (`docs/delivery/seat-reliability.md`) records
+something narrower and still worth an adopter's attention: real
+spawn-time model unavailability, not a rejection caused by violating that
+pairing — two verify spawns died at a usage-limit error there because OMP
+does not fall through a frontmatter model list to a later entry on a
+spawn-time usage-limit error. The lesson the log actually supports is the
+one the template comment repeats: pick models your own account can
+reach before first use, not that an unexamined pin would reproduce a
+pairing-violation rejection the log has never recorded.
 
 **Idempotency and pre-existing files.** Each of the five files follows the
 identical never-clobber/`--force` discipline already documented above for

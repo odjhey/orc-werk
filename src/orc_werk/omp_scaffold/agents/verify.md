@@ -5,15 +5,18 @@ description: Adversarial verification seat. Audits one candidate PR it did not w
 # this scaffold's ship seat (.omp/agents/ship.md) templates as anthropic/* -- a
 # model-diversity risk control against self-review-by-construction (ADR-0007's V7
 # ruling -- canonical to the orc-werk repository/package, cited here for context
-# only). That repository/package's own seat-reliability incident log
-# (docs/delivery/seat-reliability.md, same repository/package, same context-only
-# citation) records real spawn-time rejections when this pairing was violated in
-# practice -- keep an equivalent record in your own repo if you want the signal.
-# Order is resolution preference only: a spawn-time usage-limit/quota error on
-# entry 1 is not guaranteed to fall through to entry 2 unless your harness's own
-# retry/fallback configuration names it explicitly -- put the model with quota
-# first. Pick models actually available in your own account before first use;
-# do not add a Claude-family fallback here while ship runs on anthropic/*.
+# only): a verify seat sharing the ship seat's model family cannot render an
+# independent, adversarial verdict, regardless of whether that pairing has ever
+# produced an observed rejection. That repository/package's own seat-reliability
+# incident log (docs/delivery/seat-reliability.md, same repository/package, same
+# context-only citation) records something narrower: real spawn-time model
+# unavailability, not a pairing-violation rejection -- two verify spawns died at
+# a usage-limit error because OMP does not fall through a frontmatter model list
+# to a later entry on a spawn-time usage-limit error. Order is resolution
+# preference only: unless your harness's own retry/fallback configuration names
+# a model explicitly, put the model with quota first. Pick models actually
+# available in your own account before first use; do not add a Claude-family
+# fallback here while ship runs on anthropic/*.
 model: google-antigravity/gemini-3.8-flash:high, openai-codex/gpt-5.6-sol:high, google-antigravity/gpt-oss-120b
 tools: read, bash, grep, glob, hub
 autoloadSkills: orc-ledger
