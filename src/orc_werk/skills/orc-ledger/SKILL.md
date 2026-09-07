@@ -1,6 +1,6 @@
 ---
 name: orc-ledger
-version: 5
+version: 6
 description: Onboard to and operate within a repository whose delivery is tracked by an orc ledger (an .orc/ directory of run journals). Use when a session starts work in such a repo, when the user mentions orc runs, the ledger, dispatch, pending runs, settlements, or verdicts, or before recording anything into a run.
 ---
 
@@ -60,6 +60,17 @@ here so a fresh session needs no other file:
   `--evidence-ref` so the ledger shows *why*.
 - Exit codes: 0 all accepted · 1 blocked · 2 error · 3 pending (your seat's
   work may be done at exit 3 — read the output, not just the code).
+- **OMP realizes these seats as agent definitions**: `.omp/agents/scout.md`
+  (read-only reconnaissance; never edits, writes, commits, or records to the
+  ledger), `.omp/agents/ship.md` (the implementation seat above: owns one
+  worktree, one branch, one PR; records the execution settlement; never
+  merges and never records a verdict), and `.omp/agents/verify.md` (the
+  adversarial verification seat: derives the candidate's identity itself and
+  records the verdict; cannot push, commit, comment, or merge). **V7**:
+  `verify.md`'s model list carries only non-Anthropic-family models — ship
+  runs on `anthropic/*` — so no Claude-family fallback is ever added there,
+  keeping the seat auditing a candidate a different model family than the
+  one that shipped it.
 
 ## 4. Recording mechanics
 
