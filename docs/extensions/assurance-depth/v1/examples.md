@@ -12,16 +12,27 @@ description: assurance-depth/v1 examples across verdicts and depths.
 **Status: draft proposal** (see `EXT-ASSURANCE-DEPTH-V1`).
 
 `assurance-depth/v1` is not yet emitted by any orc code path, so no real
-`FACT-ASSURE-SETTLED` carries it. The envelope shape below — `verdict`,
-`evidence_refs`, and a sibling-extension `extensions` map — is not invented:
-it matches a real recorded settlement, `.orc/docs-pstack-assurance-depth/journal.jsonl`
-seq 16 (`assurance_id: assure-a49662c47f9b7001`, this extension's own
-proposal PR #261, `verdict: accepted`, `evidence_refs: ["gh-pr:261",
-"head:578c5f0..."]`, sibling `executor-identity/v1` and `review-findings/v1`
-payloads). Every PR number, sha, and `assurance-depth/v1` payload below is a
-synthetic placeholder, not a real observation — this repo's discipline is to
-never fabricate a recorded observation, so no real merged PR is credited
-with a depth it never actually recorded.
+`FACT-ASSURE-SETTLED` carries it. The shape below — `verdict`,
+`evidence_refs`, and a sibling `extensions` map holding the payload — makes
+no claim of reproducing any single recorded envelope's nesting; it is the
+same sibling-`extensions` transport shape `schema.md`'s own canonical
+transport example already labels illustrative and synthetic.
+
+The real settlement this extension traces its motivation to,
+`.orc/docs-pstack-assurance-depth/journal.jsonl` seq 16, is a
+`PORT-JOURNAL` envelope, not this flat shape: `verdict` and `evidence_refs`
+live under a `data` key, and `extensions` is a sibling of `data`, not of
+`verdict`. It carries no `assurance-depth/v1` payload. Its scalars remain
+real and accurate where cited: `assurance_id: assure-a49662c47f9b7001`,
+this extension's own proposal PR #261, `verdict: accepted`,
+`evidence_refs: ["gh-pr:261", "head:578c5f0..."]`, sibling
+`executor-identity/v1` and `review-findings/v1` payloads — quoted here only
+to ground those scalars, not to assert a shape match.
+
+Every PR number, sha, and `assurance-depth/v1` payload below is a synthetic
+placeholder, not a real observation — this repo's discipline is to never
+fabricate a recorded observation, so no real merged PR is credited with a
+depth it never actually recorded.
 
 ## Accepted after exercising the real surface
 
