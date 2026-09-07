@@ -51,7 +51,7 @@ fresh against the installed `omp/18.1.12` and recorded a real pass/fail per
 | `outputSchema` + `schemaMode: strict` rejects a result missing a required field | **HELD** — `schema_violation` / `"verdict: is required"`, independent of model cooperation (a hook forcibly stripped the field to make this true regardless of model behavior) | report §3 |
 | `task.maxRuntimeMs` stops a task; descendant dies; `history://` survives | **HELD** — process actually killed (marker file never created), `history://timeoutProbe` readable post-abort | report §4 |
 | A transcript survives a fresh process / "after a reboot" | **HELD**, with a footgun noted: `--export` needs the real `.jsonl` path, not a bare session id, or it silently creates an empty session instead of erroring | report §5 |
-| (open probe) Can a hook learn which named role — `ship`/`verify`/`scout` — is running? | **NO** — confirmed twice independently; `ctx`'s only own-enumerable key is `ui`; no `role`/`agentName` field exists on `event` or `ctx`; the only proxy is string-matching the agent's own system-prompt prose, which `TASK-M5-004`'s wording is free to change | report §6 |
+| (open probe) Can a hook learn which named role — `ship`/`verify`/`scout` — is running? | **NO**, on `event`/top-level `ctx` alone — confirmed twice independently; `ctx`'s only own-enumerable key is `ui`; no `role`/`agentName` field exists on `event` or `ctx` itself. **Superseded**: the report's own generalization from that probe — that a hook therefore cannot branch on role at all — was wrong; `ctx.sessionManager.getEntries()` reaches a `session_init.agent` field the executor writes at spawn time. See below and report §6 Correction. | report §6 |
 
 Two findings the five-point test did not ask for, but which land squarely on
 this milestone's own risk register:
@@ -78,16 +78,27 @@ this milestone's own risk register:
 level. The one that did not hold as *written* was a premise inside the
 `TASK-M5-001` task card itself (not `ADR-0007`), and the report corrected it
 rather than silently building around it — exactly the discipline
-`nother-guide`'s `harness-capabilities.md` asks for. The still-open
-consequence is `TASK-M5-005` (the actual `.omp/extensions/orc-seat.ts` hook):
-its per-role rules (deny push from verify, fence writes to ship's own
-worktree) cannot branch on a structural role field — they must be encoded
-per-agent (`tools:`/`output:`/system prompt, already how `ship.md`/`verify.md`
-restrict `write`/`edit` today) or as session-wide rules, per report §6/§8.
+`nother-guide`'s `harness-capabilities.md` asks for. The report's own
+generalization on its sixth, open probe did not survive, though: the
+probe of `event`/top-level `ctx` — no `role`/`agentName` field there — was
+and remains accurate, but the conclusion drawn from it, that a hook
+therefore *cannot* branch on a structural role field, was wrong.
+`task-m5-005`/`hook` seq 16 rejected that conclusion at
+`2026-09-07T02:38:07Z` after driving a real hook through
+`ctx.sessionManager.getEntries()` and reading the running session's own
+`session_init.agent` field (written by OMP's own task executor as
+`agent: agent.name` at spawn time); `fix-capability-role-finding`/`correct`
+seq 16 accepted the fix into the capability report itself
+(`docs/reports/2026-09-07-omp-capability-test.md` §6 Correction), landing
+as `gh-pr:286`, merge commit `c7beea5`, `2026-09-07T02:58:02Z` — before
+this candidate's own commit at `03:16:48Z`. So `TASK-M5-005`'s per-role
+rules *can* branch on a structural role field after all — whether the
+card's own shipped hook does so correctly is a separate, still-live
+question, tracked below.
 `TASK-M5-005` was still `EXECUTING` (not yet `ACCEPTED`) in the ledger at the
 time of this write-up (`orc --limit 0`: `task-m5-005: states=EXECUTING:1
-flags=pending`) — this consequence is a design constraint for that card, not
-something this write-up can confirm was built correctly. Re-checked for
+flags=pending`) — whether it was built correctly (including this
+role-aware branching) is not something this write-up can confirm. Re-checked for
 this correction at `2026-09-07T03:11:37Z`, `task-m5-005`/`hook` had since
 advanced to `ASSURING`, attempt 2, awaiting its first of two required
 assurance verdicts (`orc status task-m5-005`) — still not `ACCEPTED`, so
@@ -284,11 +295,26 @@ returns **zero** rows. This claim needs no denominator and does not grow
 the way the settled-verdict count above does: it either stays zero or a
 single counter-example appears, and either way the script above (filtered
 on `model` instead of counted) reproduces it directly, at any cutoff,
-forever. This — every settled verify verdict in the ledger having run on a
-materially different model family than the ship seat it audited, with zero
-observed exceptions — is the durable finding the `V7` argument below rests
-on. The settled-verdict totals above are corroborating detail, not the
-claim itself, and would support the same conclusion whether they read
+forever. But `zero openai-codex` is a narrower claim than "verify always
+ran on a materially different family than ship" — it says nothing about
+Anthropic-on-Anthropic pairings, which the ledger does contain, just not
+while `V7` was in force to forbid them. Scoped to the period `V7` has
+actually been in force — since `ADR-0007` ratified it (`gh-pr:267`, merge
+commit `2c08d39e`, `2026-09-06T09:19:06Z`) — every settled verify verdict
+did run on a model family materially different from the ship seat it
+audited, with zero observed exceptions in that window. Before
+ratification, that is not true and is not claimed here:
+`.orc/core-inconclusive-rerequest-docs/journal.jsonl` records ship model
+`claude-fable-5-1` (seq 10) and verify model `claude-opus` (seq 16), both
+`anthropic`, settled `2026-09-05T09:59:48.750403Z` (`gh-pr:263`, merged
+`2026-09-05T09:59:58Z`) — a full day before `V7` existed to be broken. This
+is the durable finding the `V7` argument below rests on: not "the whole
+ledger, forever" but "since the invariant was ratified, without
+exception" — the scoping plus a named pre-ratification counterexample is
+strictly stronger evidence than the unscoped claim it replaces, because it
+shows the invariant took hold exactly when it was ratified, not before.
+The settled-verdict totals above are corroborating detail, not the claim
+itself, and would support the same conclusion whether they read
 twelve/fourteen, fourteen/sixteen, or higher still by the time anyone
 re-runs them.
 
@@ -349,6 +375,7 @@ seats (`VerifyAdopt270`, `VerifyLaneDoc`) ran in separate sessions from
 
 `ADR-0007`'s Costs section is explicit: "the hook-enforced rules
 (`TASK-M5-005`) are only as strong as OMP's own `tool_call` guard mechanism...
+before any rule is trusted to fire." `TASK-M5-005` (`.omp/extensions/
 orc-seat.ts`) was `EXECUTING`, not `ACCEPTED`, in the ledger throughout every
 run in the table above (`orc --limit 0`), and, as freshly re-checked for
 this correction at `2026-09-07T03:11:37Z`, `master`'s tree still has no
@@ -465,7 +492,15 @@ sibling: a live-ledger-count surprise.
 ## Not covered
 
 - `TASK-M5-005`'s hook guards firing correctly: the card has not shipped as
-  of this write-up (`EXECUTING`, not `ACCEPTED`); nothing here tests it.
+  of this write-up. Re-observed fresh at `2026-09-07T03:28:12Z`
+  (`orc status task-m5-005`): only one rejection (seq 16, `02:38:07Z`) had
+  landed as of the `03:11:37Z` snapshot cited above, which found `hook`
+  `ASSURING` attempt 2; that attempt 2 has since also been rejected
+  (`task-m5-005`/`hook` `FACT-ASSURE-SETTLED` seq 26,
+  `2026-09-07T03:24:46.062117Z`), and the work is now on **attempt 3 of
+  3**, `EXECUTING`, still not `ACCEPTED`. Nothing here tests it, and this
+  is a snapshot, not a standing fact: re-check `orc status task-m5-005`
+  for the current state.
 - A formal amendment to `ADR-0007`'s `V7` wording: this card did not
   perform it (out of `TASK-M5-008`'s own scope) — it was performed by a
   sibling run the same day (`docs-adr0007-v7-amendment`, `gh-pr:283`,
