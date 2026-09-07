@@ -49,7 +49,7 @@ close that every landed PR has a verdict for its current head SHA.
 |---|---|---|
 | Ledger keyed on `(PR, head SHA)`; new SHA voids the row | Candidate fingerprint on every settlement (`INV-007`), non-transferable (`INV-008`), invalidated on change (`INV-010`), verifier derives identity itself (`SCN-013`) | **Already stronger.** Nothing to import. |
 | Worker self-reports, verifier overrides on the same key | Ship seat records `--outcome`; verify seat records `--verdict`; one seat per candidate, no self-assurance (`PLAYBOOK-AGENT-CLI`) | **Already stricter.** Orc forbids what pstack merely overrides. |
-| `--evidence` is mandatory | `evidence_refs` optional; `SHOULD` in the playbook | Playbook-level difference only; not a contract gap. |
+| `--evidence` is mandatory | `evidence_refs` optional; a bare imperative in the playbook ("Record `evidence_refs`"), not `SHOULD` | Playbook-level difference only; not a contract gap. |
 | `verifier-failed` → new fix unit, not a re-verify | `rejected` → `DEC-RETRY` (new Execution, new candidate) or `DEC-BLOCK` | **Equivalent.** `SCN-002`. |
 | `verifier-blocked` → not a pass; re-verify the same unit when the environment heals | `inconclusive` → `DEC-BLOCK` → terminal `BLOCKED` (`STATE-DELIVERY`); `orc record --verdict` does not accept `inconclusive` | **Ruled.** `ADR-0006`, §4 Q1. |
 | `live-ui-verified` / `unit-test-verified` / `type-check-only` as ordered grades with a per-work floor | No analog. `accepted` is `accepted` whether the verifier ran the thing or read the diff | **Gap. Import as an extension.** §3. |

@@ -23,7 +23,7 @@ AssuranceDepthV1 {
 
 These three names are the complete field set for `assurance-depth/v1`; producers MUST NOT add other fields to a v1 payload.
 
-Canonical transport example:
+Canonical transport example (illustrative and synthetic — see `examples.md`'s grounding note):
 
 ```json
 {
@@ -31,7 +31,7 @@ Canonical transport example:
     "assurance-depth/v1": {
       "depth": "live",
       "surface": "orc CLI against a scratch journal",
-      "derivation_ref": "gh-pr:258#issuecomment-verify-transcript"
+      "derivation_ref": "gh-pr:9001#issuecomment-verify-transcript"
     }
   }
 }
