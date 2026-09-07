@@ -103,12 +103,12 @@ the OMP session/agent identity; `role` from the agent name."
 | Extension field | OMP source | Direct/synthesized |
 |---|---|---|
 | `model` | The model actually serving the request for that agent instance (visible via `/model` or the session's own `model_change` entries) | **Synthesized, agent-supplied.** Nothing mechanically copies this into the `orc record --model` flag; the agent's own body passes it as free text. It commonly diverges from the agent *definition*'s configured default when a retry/fallback chain substituted another model — this is a legitimate, separately-logged event (`docs/delivery/seat-reliability.md`), not a mapping defect. |
-| `session_ref` | The OMP orchestrating session (a human-legible label the agent chooses, e.g. `"omp:watchtower"`, not the raw session-file id) | **Synthesized, agent-supplied.** No hook or extension in this repository's `c7beea5` baseline reads OMP's own session header `id` and injects it; the agent body picks a label at `orc record` time. Distinct seats sharing one orchestrating session (issue #182) still need distinct `seat_ref` values — `session_ref` alone never distinguishes them. |
+| `session_ref` | The OMP orchestrating session (a human-legible label the agent chooses, e.g. `"omp:watchtower"`, not the raw session-file id) | **Synthesized, agent-supplied.** No hook or extension in this repository's `e102e1e` baseline reads OMP's own session header `id` and injects it; the agent body picks a label at `orc record` time. Distinct seats sharing one orchestrating session (issue #182) still need distinct `seat_ref` values — `session_ref` alone never distinguishes them. |
 | `seat_ref` | A per-seat identifier the recording agent chooses, conventionally `<role>-<work_id>-<sha7-of-candidate-head>` | **Synthesized, agent-supplied**, but conventionally stable and reproducible: two record attempts for the same seat/candidate pairing naturally produce the same value without coordination. |
-| `role` | The agent definition's own `name` (`ship`/`verify`) | **Agent-supplied, not mechanically verified by this recording path.** A hook/extension *can* learn the running agent's name structurally (`ctx.sessionManager.getEntries()` → `session_init.agent`, `TASK-M5-001`'s corrected role-identity finding, `capabilities.md`), but nothing in this repository's `c7beea5` baseline wires that read into populating this field automatically — `role` is correct here only because each agent definition's own body is written to always pass its own literal role string to `orc record`. |
+| `role` | The agent definition's own `name` (`ship`/`verify`) | **Agent-supplied, not mechanically verified by this recording path.** A hook/extension *can* learn the running agent's name structurally (`ctx.sessionManager.getEntries()` → `session_init.agent`, `TASK-M5-001`'s corrected role-identity finding, `capabilities.md`), but nothing in this repository's `e102e1e` baseline wires that read into populating this field automatically — `role` is correct here only because each agent definition's own body is written to always pass its own literal role string to `orc record`. |
 
 None of these four fields is read from OMP by any mechanism in this
-repository's `c7beea5` baseline —
+repository's `e102e1e` baseline —
 every one is text the recording agent supplies to `orc record`'s
 `--model`/`--session-ref`/`--seat-ref` flags (or the equivalent
 config-entry `extensions` payload) exactly as `PLAYBOOK-AGENT-CLI` already
@@ -117,7 +117,7 @@ agent follows (its own frontmatter `model:`, a `seat-<role>-<sha7>`
 naming discipline) — never a new mechanical extraction path. A future
 `TASK-M5-005`-style hook that reads OMP's own role/session identity and
 auto-populates these fields would upgrade this row from agent-supplied to
-adapter-derived; no such mechanism exists in this repository's `c7beea5` baseline.
+adapter-derived; no such mechanism exists in this repository's `e102e1e` baseline.
 
 ### Impossible mappings
 

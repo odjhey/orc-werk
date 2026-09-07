@@ -52,7 +52,7 @@ declared as OMP agent definitions rather than re-taught by prose:
 `.omp/agents/scout.md` (recon), `.omp/agents/ship.md` (implementation),
 and `.omp/agents/verify.md` (adversarial audit), configured project-wide
 by `.omp/config.yml`. `.omp/extensions/orc-seat.ts` does not exist in
-this repository's `c7beea5` baseline; `TASK-M5-005` is scoped to add it,
+this repository's `e102e1e` baseline; `TASK-M5-005` is scoped to add it,
 enforcing exactly one guard: a structural, cwd/path-derived fence on
 `edit`/`write` file paths, keeping a ship seat's writes inside its own
 worktree. It will not attempt to block `yield` before a record, deny `gh
@@ -68,7 +68,7 @@ reach `ACCEPTED`/`BLOCKED` through bound assurance — the cancellation
 path is a disclosed, unenforced escape from that rung (issue #293); merge
 authority has no enforcement rung at all — every seat authenticates as
 the same GitHub identity, so it remains seat-discipline prose plus
-after-the-fact ledger detection. At `c7beea5`, before the fence exists,
+after-the-fact ledger detection. At `e102e1e`, before the fence exists,
 all of this is enforced by convention via `.omp/RULES.md` and the seat
 definitions' own prose. `.omp/RULES.md` is the sticky, always-loaded
 statement of these invariants for any OMP session working this

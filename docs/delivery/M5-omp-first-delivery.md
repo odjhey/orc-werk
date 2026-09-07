@@ -173,9 +173,10 @@ work, since both land in the same check.sh/skill surface).
 
 ## Phase 4 — Product follow-through
 
-- `orc onboard` gains an OMP scaffold step: it installs `.omp/agents/*`
-  templates and `.omp/RULES.md` alongside the skill, `PRODUCT-ADOPTION`
-  amended first (contract-first, per `AGENTS.md` rule 4).
+- `orc onboard` gained an OMP scaffold step at `e102e1e` (`TASK-M5-007`,
+  PR #291): `--omp` installs `.omp/agents/*` templates and
+  `.omp/RULES.md` alongside the skill; `PRODUCT-ADOPTION` documents the
+  rung (`docs/product/adoption.md` §"OMP seat scaffold").
 - `docs/delivery/seat-reliability.md` (a rung-4 `nother-guide` artifact)
   records model hangs and rate-limits per seat, appended same-day as they
   occur, starting with this pilot's own run.
@@ -248,7 +249,8 @@ least one subsequent card's delivery data.
 - `scripts/check.sh`'s final line is `check: green. NOT covered:
   <list|none>`.
 - `orc onboard` installs the `.omp/agents/*` scaffold alongside the skill,
-  and `PRODUCT-ADOPTION` documents the new rung.
+  and `PRODUCT-ADOPTION` documents the new rung — satisfied at `e102e1e`
+  (`TASK-M5-007`, PR #291).
 - `docs/delivery/seat-reliability.md` exists and records this pilot's own
   run.
 - `m5-omp-harness-pilot`'s ledger journal shows a `docs` work settled by
