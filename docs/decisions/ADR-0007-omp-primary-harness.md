@@ -213,6 +213,15 @@ be able to install the same `.omp/agents/*` + `.omp/config.yml` pattern
 this ADR ratifies for orc-werk's own use, contract-first (`PRODUCT-ADOPTION`
 amended before the scaffold step is implemented).
 
+**Landed:** `TASK-M5-007` is implemented, not merely planned. It merged to
+`master` at commit `e102e1e` ("TASK-M5-007: orc onboard --omp scaffolds the
+.omp/ seat pattern", PR #291) — a fifth idempotent `orc onboard` step,
+`src/orc_werk/omp_scaffold/`, installs `.omp/agents/{scout,ship,verify}.md`,
+`.omp/config.yml`, and `.omp/RULES.md` from the canonical package origin
+under the same never-clobber/`--force` discipline as the existing steps,
+with `docs/product/adoption.md` amended for the new rung. This is grounded
+in the merged commit, a durable fact that needs no as-of instant.
+
 ### `scripts/watch_pr.py` is kept
 
 Per operator ruling, `scripts/watch_pr.py` is kept unchanged: it encodes

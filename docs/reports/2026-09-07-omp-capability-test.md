@@ -113,12 +113,39 @@ Reason: Blocked by bash pattern: git push*
 
 Origin remote unchanged, confirmed by `git log --oneline` before/after.
 
-**PASS** (both mechanisms). **Consequence:** a blocking hook is *sufficient*
-but not *necessary* for this specific rule — `bash.patterns` is a native,
-hookless config key that denies the same command. It is **not** an
-agent-frontmatter field, though (confirmed against the frontmatter schema —
-see §6), so it can only be scoped per-session/per-process, not per agent
-type inside one shared session.
+**PASS (2026-09-06), for the literal command actually sent — narrow and
+non-adversarial; the generalization below is superseded, see Correction:**
+
+> **Consequence (as originally written):** a blocking hook is *sufficient*
+> but not *necessary* for this specific rule — `bash.patterns` is a
+> native, hookless config key that denies the same command. It is **not**
+> an agent-frontmatter field, though (confirmed against the frontmatter
+> schema — see §6), so it can only be scoped per-session/per-process, not
+> per agent type inside one shared session.
+
+**Correction (2026-09-07, run `task-m5-005-guards` work `guards`,
+`FACT-ASSURE-SETTLED` seq 16, PR #284; issue #290, issue #296):** both
+mechanisms probed above decide by matching the *text* of
+`git push origin master` — the custom hook against a fixed regex,
+`bash.patterns` against a glob — and neither was probed adversarially:
+no shell-escaped variant of the push command was ever sent to either one
+in this session. `task-m5-005-guards` seq 16 supplies the concrete
+counterexample against an equivalently-shaped literal-token guard
+(`.omp/extensions/orc-seat.ts:633-636`, matching only the literal tokens
+`git`/`push`): a live `g\it push origin +master` returned exit 0, no
+denial, and advanced a disposable remote's `master` — the shell strips
+the backslash before exec, so the command that ran contained `git push`
+while the string the guard matched against never did. §6b generalizes
+the mechanism: `event.input.command` is a string, never argv, and "does
+this string invoke X" has no fixed point against a Turing-complete shell
+— that bound applies identically to both mechanisms tested here.
+**Corrected scope:** the PASS above holds only for the exact, unescaped
+command this probe sent; it is not evidence that either mechanism
+enforces the git-push *rule*, and the original "sufficient... for this
+specific rule" framing is withdrawn. The actual enforcement surface for
+"no direct write to a shared branch" is server-side GitHub branch
+protection — see `ADR-0007`'s 2026-09-07 amendment, rung 2 — not a
+`tool_call` hook or `bash.patterns`.
 
 ## 2. Point 2 — write-outside-fence hook (red before green); worktree auto-creation corrected
 
@@ -531,7 +558,7 @@ not derived.
 
 | # | Point | Result | `V7` (verify family ≠ ship family) verifiable? | Per-role deny: hook or `tools`/prompt fallback? |
 |---|---|---|---|---|
-| 1 | git push denial | PASS (hook **and** native `bash.patterns`) | N/A | Either; `bash.patterns` needs no custom code but is session-wide, not per-agent-frontmatter (confirmed absent from the agent frontmatter field list) |
+| 1 | git push denial | narrowed, 2026-09-07: PASS only for the literal, unescaped probe command (2026-09-06) — not enforcement of the rule; both mechanisms are command-text guards defeated by the same bound as row 6b (issue #290, #296; see §1 Correction) | N/A | Neither — same command-text bound as row 6b; the actual enforcement surface is rung 2 (server-side branch protection, `ADR-0007`'s 2026-09-07 amendment) |
 | 2 | worktree fence | PASS (fencing mechanism); premise corrected (no OMP auto-worktree) | N/A | Hook only — the worktree path is not an OMP-tracked field a `tools:`-level rule could reference |
 | 3 | strict schema rejection | PASS | Strengthens it — `ship.md`/`verify.md`'s `output:` schemas are enforced by OMP itself, not model good behavior | Neither needed; already structural |
 | 4 | `maxRuntimeMs` timeout | PASS | Strengthens it — a stuck seat's process is actually killed, and `history://` still gives the auditor a transcript | N/A |
