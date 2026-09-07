@@ -81,8 +81,13 @@ automation.
 
 `docs/delivery/seat-reliability.md`'s append-only log (the first half of
 this card) landed early in `fix-verify-seat-fallback`, and its 2026-09-07
-entries (hook misfires from `TASK-M5-005`'s three run identities, and the
-hook's retirement) are appended in that same log, dated, additive.
+entries (hook misfires from `TASK-M5-005`'s three run identities, each
+naming a seat, run/work id, model, symptom, and consequence per this
+card's own log contract) are appended in that same log, dated, additive.
+The hook's retirement itself is an operator ruling spanning all three run
+identities, not a single seat/run/work/model event the log's own contract
+can name — it is recorded instead in `ADR-0007`'s hook-retirement
+amendment and narrated, with citations, in the pilot write-up's §3.
 
 The pilot write-up (the second half) is delivered as
 `docs/reports/2026-09-07-m5-pilot-retrospective.md`. It declares its own
@@ -96,6 +101,13 @@ traffic and where it needed operator judgment (§2); what the seat-hook
 capability cycle cost and taught (§3, `TASK-M5-005`); the counting lesson
 itself (§4); and which of the eight TASK-M5 cards carry a terminal
 delivery, and on which rungs seat discipline now rests (§5).
+
+The pilot write-up also states, with evidence, whether the `V7`
+model-family pairing surfaced friction (§2, item 4): it did — two
+`openai-codex` verify spawns died at `usage_limit_reached` on 2026-09-06
+and were hand-substituted to `google-antigravity/gemini-3.8-flash`, per
+`docs/delivery/seat-reliability.md`'s 2026-09-06 entries and `ADR-0007`'s
+`V7` amendment.
 
 Both halves of this card are now delivered; nothing in this card's own
 In scope/Acceptance sections above is rewritten — this section is additive.

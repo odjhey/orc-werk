@@ -77,14 +77,3 @@ the format's origin and the pilot write-up this log feeds.
   `ALLOW`. Consequence: rejected; filed as issue #298 (scheme
   adjudication) — the third escape class, introduced by the fix for the
   second.
-- **operator** / `TASK-M5-005` — after three run identities (`task-m5-005`,
-  `task-m5-005-guards`, `task-m5-005-sensor`) each exhausted a three-attempt
-  budget on a new escape class every time (above), the `tool_call` hook
-  rung was retired by operator ruling rather than re-attempted a fourth
-  time. Landed as PR #300 (`hook-retire-decision`) and PR #299
-  (`docs/delivery/M5-omp-first-delivery.md`, `TASK-M5-005`'s and
-  `TASK-M5-008`'s cards, `README.md`, `.omp/agents/verify.md`). Seat
-  discipline now rests on tool restriction, GitHub branch protection, and
-  after-the-fact ledger audit (`docs/reports/2026-09-07-m5-pilot-retrospective.md`
-  §5). No `tool_call`-hook event is expected in this log after this date;
-  the mechanism no longer exists on `master`.
