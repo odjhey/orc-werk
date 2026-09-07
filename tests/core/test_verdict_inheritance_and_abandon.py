@@ -114,6 +114,17 @@ class RejectedThenInheritedTest(unittest.TestCase):
         proj2 = reduce(facts, delivery_run_id=DRID, max_attempts=2)
         self.assertEqual(proj1.to_dict(), proj2.to_dict())
 
+    def test_reobservation_reattributes_candidate_to_the_new_execution(self) -> None:
+        # Issue #266 item (a): the #265 verify audit found the candidates
+        # map kept the FIRST execution's id across a re-observation that
+        # inherits its verdict. `execution_id` is per-Execution identity
+        # (`docs/contracts/ports/candidate-port.md`), so a reader of `orc
+        # show`/`orc-status/v1` must see the CURRENT (e2) execution, not
+        # the stale e1 the candidate first surfaced under.
+        facts = _rejected_then_retried_facts()
+        wp = reduce(facts, delivery_run_id=DRID, max_attempts=5).works["w1"]
+        self.assertEqual(wp.candidates["c1"]["execution_id"], "e2")
+
 
 class AcceptedThenReobservedTest(unittest.TestCase):
     """SCN-009 "accepted-then-reobserved": defensive white-box coverage of

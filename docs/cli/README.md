@@ -688,6 +688,7 @@ orc status demo-run-1 --journal ./.orc --json
     "schema": "orc-status/v1",
     "works": [
         {
+            "assurance_number": 1,
             "attempt": null,
             "attempts": 1,
             "awaiting": null,
@@ -713,7 +714,12 @@ runnable command, e.g. "record the execution outcome for work(s): ...").
 which only ever prints `attempt=N` alongside `awaiting=` for a pending
 Work); `candidate_fingerprint`/`blocked_reason`/`awaiting` are `null`
 when absent, never omitted, so a consumer can destructure a fixed key set
-without a presence check.
+without a presence check. `assurance_number` (issue #266) is
+`INV-021`'s per-Execution assurance index (`0` when none has started for
+the current Execution -- no null variant, unlike the other fields above),
+the same number the text line's pending+`ASSURING` `assurance=N`
+fragment shows, exposed unconditionally here rather than only while
+pending.
 
 ### `orc verdict`
 

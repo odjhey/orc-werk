@@ -116,6 +116,7 @@ class StatusJsonShapeTest(unittest.TestCase):
                         "awaiting": None,
                         "candidate_fingerprint": doc["works"][0]["candidate_fingerprint"],
                         "blocked_reason": None,
+                        "assurance_number": 1,
                     }
                 ],
             )
@@ -166,6 +167,9 @@ class StatusJsonShapeTest(unittest.TestCase):
             self.assertEqual(work["attempt"], 1)
             self.assertEqual(work["attempts"], 1)
             self.assertIsNone(work["candidate_fingerprint"])
+            # Issue #266 item (c): no assurance has started for the
+            # current Execution yet (still EXECUTING).
+            self.assertEqual(work["assurance_number"], 0)
 
             descriptions = [entry["description"] for entry in doc["next"]]
             self.assertIn("record the execution outcome for work(s): work-1", descriptions)
@@ -185,10 +189,58 @@ class StatusJsonShapeTest(unittest.TestCase):
             self.assertEqual(work["blocked_reason"], "retry-budget-exhausted")
             self.assertFalse(work["pending"])
             self.assertIsNone(work["awaiting"])
+            # Issue #266 item (c): a retry-exhausted BLOCKED work never
+            # reached ASSURING on its last attempt.
+            self.assertEqual(work["assurance_number"], 0)
 
             self.assertEqual(len(doc["next"]), 1)
             self.assertEqual(doc["next"][0]["command"], "orc history j53-blocked")
             self.assertIn("BLOCKED", doc["next"][0]["description"])
+
+
+class AssuranceNumberJsonFieldTest(unittest.TestCase):
+    """Issue #266 item (c): `assurance_number` on a Work resting in
+    `ASSURING` mid re-request (`SCN-021`/`ADR-0006`) matches exactly what
+    the text surface's pending `assurance=N` fragment already renders --
+    proven by scripting only ONE assurance verdict for the candidate, so
+    the bounded re-request's SECOND assurance starts but never settles
+    (`ScriptedAssurance`'s `pending=True` mode), resting the Work at
+    ASSURING with two started assurances for the current Execution."""
+
+    def test_assuring_pending_assurance_number_matches_text_fragment(self) -> None:
+        config = {
+            "run_id": "j266-assuring",
+            "attempts": {
+                "work-1": [
+                    {
+                        "outcome": "completed",
+                        "candidate": {"label": "hello"},
+                        "assurances": [{"verdict": "inconclusive"}],
+                    }
+                ]
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            cfg = _write_config(tmp_dir, "assuring-cfg.json", config)
+            dispatch = _run_cli(tmp_dir, "dispatch", "assuring demo", "--config", str(cfg))
+            self.assertEqual(dispatch.returncode, 3, msg=dispatch.stdout + dispatch.stderr)
+
+            result = _run_cli(tmp_dir, "status", "j266-assuring", "--json")
+            self.assertEqual(result.returncode, 3, msg=result.stdout + result.stderr)
+            doc = json.loads(result.stdout)
+            work = doc["works"][0]
+            self.assertEqual(work["state"], "ASSURING")
+            self.assertTrue(work["pending"])
+            self.assertEqual(work["awaiting"], "assurance-verdict")
+            # ADR-0006's bounded re-request already started the SECOND
+            # assurance of this Execution's candidate (its verdict was
+            # never scripted, so it rests pending rather than settling).
+            self.assertEqual(work["assurance_number"], 2)
+
+            text = _run_cli(tmp_dir, "status", "j266-assuring")
+            self.assertEqual(text.returncode, 3)
+            self.assertIn(f"assurance={work['assurance_number']}", text.stdout)
 
 
 class RefsLandingJsonShapeTest(unittest.TestCase):
