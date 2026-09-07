@@ -8,6 +8,16 @@ implements: []
 verifies: []
 ---
 
+> **Note (issue #254, 2026-09-07):** this folded card's worked description
+> of `orc --state active` below is superseded. `--state active` had only
+> ever excluded terminal `ACCEPTED`, so a retry-budget-exhausted `BLOCKED`
+> run sat in the active view forever; the fix makes `--state active`
+> exclude every terminal state (`ACCEPTED`, `CANCELLED`, `BLOCKED`),
+> matching `STATE-DELIVERY`'s full terminal set. See
+> `docs/delivery/M4-cockpit-and-clarity.md` ruling 6's amendment for the
+> current semantic and PR #274 for the change. Retained below as
+> historical record of the original FOLD decision only.
+
 # TASK-M4B-002 — FOLDED into TASK-M4B-001
 
 Design source: `M4-COCKPIT-AND-CLARITY` Phase M4B.

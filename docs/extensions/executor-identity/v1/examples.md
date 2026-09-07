@@ -48,7 +48,7 @@ The verify seat shares the ship seat's `session_ref` but has a distinct `seat_re
 Ship and verify payloads actually recorded by an OMP-run ship/verify pair
 for this repository's own `adopt-270-attempt-binding` run
 (`.orc/adopt-270-attempt-binding/journal.jsonl`, `FACT-EXEC-SETTLED` and
-`FACT-ASSURE-SETTLED`), cited by `docs/adapters/omp/mapping.md`:
+`FACT-ASSURE-SETTLED`):
 
 ```json
 {
