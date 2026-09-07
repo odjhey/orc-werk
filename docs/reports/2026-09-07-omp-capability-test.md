@@ -3,7 +3,7 @@ id: REPORT-2026-09-07-OMP-CAPABILITY-TEST
 type: report
 status: current
 authority: informative
-description: Direct, freshly-run probes of the installed OMP v18.1.12 harness against nother-guide's five-point capability test (ADR-0007, TASK-M5-001) — hook-based tool denial, worktree fencing, strict schema rejection, task.maxRuntimeMs, transcript durability — plus the role-identity open probe and two unplanned findings (silent concurrency death, unrequested model-family substitution) that TASK-M5-004/TASK-M5-005 must account for.
+description: Direct, freshly-run probes of the installed OMP v18.1.12 harness against nother-guide's five-point capability test (ADR-0007, TASK-M5-001) — hook-based tool denial, worktree fencing, strict schema rejection, task.maxRuntimeMs, transcript durability — plus the role-identity probe (answered "no" here; corrected 2026-09-07 by run task-m5-005 seq 16 / PR #284 — role IS reachable via ctx.sessionManager.getBranch()/getEntries(), see §6 Correction) and two unplanned findings (silent concurrency death, unrequested model-family substitution) that TASK-M5-004/TASK-M5-005 must account for.
 ---
 
 # OMP v18.1.12 capability test — TASK-M5-001
@@ -306,41 +306,86 @@ reference remains dereferenceable well after the seat's own process exits).
 
 ## 6. Role-identity open probe
 
-**Answer: no** — a `tool_call` hook cannot learn which named agent role
-(`ship` vs `verify` vs `scout`) is running. Confirmed twice, independently:
-once on a root session's own `bash` tool_call, once wrapping a root
-session's `task` tool_call that spawned the real, bundled `ship` agent
-definition. Both dumps show the same shape:
+**Original finding (2026-09-07, this probe's own session) — superseded, see
+Correction below:**
 
-```json
-{
-  "eventKeys": ["type", "toolName", "toolCallId", "input"],
-  "ctxKeys": ["ui"]
-}
-```
+> **Answer: no** — a `tool_call` hook cannot learn which named agent role
+> (`ship` vs `verify` vs `scout`) is running. Confirmed twice, independently:
+> once on a root session's own `bash` tool_call, once wrapping a root
+> session's `task` tool_call that spawned the real, bundled `ship` agent
+> definition. Both dumps show the same shape:
+>
+> ```json
+> {
+>   "eventKeys": ["type", "toolName", "toolCallId", "input"],
+>   "ctxKeys": ["ui"]
+> }
+> ```
+>
+> `Object.keys(ctx)` on the hook's own-enumerable properties is just
+> `["ui"]` — every other value I could read off `ctx`
+> (`cwd`, `sessionManager.getSessionId()/getSessionFile()`, `model.provider`,
+> `model.id`, `getSystemPrompt()`) came through named accessors, not a
+> `role`/`agentName`/`agentId` field; none exists on `event` or `ctx`. The
+> only observable proxies for role are: `cwd` (matches whatever the caller
+> passed, not agent-type-specific), `sessionId`/`sessionFile` (session
+> identity, not role), and `getSystemPrompt()` text — which *does* differ
+> per agent (the ship/verify/scout `.md` bodies are injected verbatim as
+> system prompt), so a hook *could* infer role by string-matching known
+> phrases from each agent's own prose (e.g. `"You are the **ship seat**"`),
+> but that is a fragile text match against prose that `TASK-M5-004` is free
+> to reword, not a structural identity check.
+>
+> **Recorded fallback (per the card's own acceptance criterion):** per-role
+> deny rules cannot be written as one hook branching on a structural role
+> field. They must either (a) live in each agent's `tools:` list /
+> `output:` schema / system-prompt boundaries (the "policy that survives any
+> harness" rung — already how `ship.md`/`verify.md` restrict `write`/`edit`
+> today), or (b) be applied via a *session-wide* setting (`bash.patterns`,
+> §1) that is symmetric across every agent type sharing that session/config
+> root, since it likewise cannot be scoped per agent type (§7).
 
-`Object.keys(ctx)` on the hook's own-enumerable properties is just
-`["ui"]` — every other value I could read off `ctx`
-(`cwd`, `sessionManager.getSessionId()/getSessionFile()`, `model.provider`,
-`model.id`, `getSystemPrompt()`) came through named accessors, not a
-`role`/`agentName`/`agentId` field; none exists on `event` or `ctx`. The
-only observable proxies for role are: `cwd` (matches whatever the caller
-passed, not agent-type-specific), `sessionId`/`sessionFile` (session
-identity, not role), and `getSystemPrompt()` text — which *does* differ
-per agent (the ship/verify/scout `.md` bodies are injected verbatim as
-system prompt), so a hook *could* infer role by string-matching known
-phrases from each agent's own prose (e.g. `"You are the **ship seat**"`),
-but that is a fragile text match against prose that `TASK-M5-004` is free
-to reword, not a structural identity check.
+**Correction (2026-09-07, run `task-m5-005` work `hook`, assurance seq 16,
+PR #284; reconfirmed independently while correcting this report):** the
+observation above — no `role`/`agentName`/`agentId` field on `event` or
+top-level `ctx` — is accurate and stands. The generalization built on it,
+that role is therefore unreachable and a hook cannot branch on it, is
+**false**. `ctx.sessionManager` (the hook/extension context's documented
+read-only session accessor) exposes `getBranch()`/`getEntries()`, and the
+running session's own `session_init` entry carries an `agent` field the
+executor writes as `agent: agent.name` at spawn time. This probe's own
+`dump2.jsonl` had already listed `getBranch`/`getEntries` among the keys
+walked on `sessionManager` (`smAllCount=99`) — it recorded the accessors'
+*names* but never called either one to read the entries underneath.
 
-**Recorded fallback (per the card's own acceptance criterion):** per-role
-deny rules cannot be written as one hook branching on a structural role
-field. They must either (a) live in each agent's `tools:` list /
-`output:` schema / system-prompt boundaries (the "policy that survives any
-harness" rung — already how `ship.md`/`verify.md` restrict `write`/`edit`
-today), or (b) be applied via a *session-wide* setting (`bash.patterns`,
-§1) that is symmetric across every agent type sharing that session/config
-root, since it likewise cannot be scoped per agent type (§7).
+Reconfirmed fresh while writing this correction: a hook loaded via
+`--hook`, wrapping a root `omp -p --tools task` session that spawned the
+real, unmodified `.omp/agents/ship.md` and `.omp/agents/verify.md`
+definitions via the `task` tool, read `ctx.sessionManager.getEntries()`
+inside each subagent's own `tool_call` events and found exactly one
+`session_init` entry per subagent session: `agent: "ship"` in the
+ship-spawned session, `agent: "verify"` in the verify-spawned session — a
+structural field, not a text match against system-prompt prose. (The root
+session's own `task` tool_call has no `session_init` entry at all; only a
+`task`-spawned subagent session carries one — consistent with, not
+contradicting, the root/subagent session-file shape difference
+`TASK-M5-005`'s shipped `.omp/extensions/orc-seat.ts` already keys off.)
+
+**Corrected answer: yes, with a caveat.** A `tool_call` hook (or any
+extension) *can* learn which named agent role is running its own session,
+via `ctx.sessionManager.getEntries()`/`getBranch()` → the session's own
+`session_init.agent` field. The accessor path is
+`ctx.sessionManager.getEntries().find(e => e.type === "session_init")?.agent`.
+Per-role deny rules ARE implementable as one hook branching on that field,
+contrary to the original finding above; `TASK-M5-005`'s degradation of
+guards 3/4 to role-independent rules was unnecessary. The caveat: `agent`
+is the value the executor recorded for how the session was spawned (which
+agent definition the dispatcher named), not an externally-audited
+assertion — the same self-reported-not-verified caveat §7b already applies
+to `executor-identity/v1.model`. It is nonetheless a structural field read
+off the session's own durable entries, not inference from prose a future
+edit could reword, which is the distinction that matters for
+`TASK-M5-005`'s per-role guards.
 
 ## 7. Two findings the card did not ask for but that change the answer to `TASK-M5-005`
 
@@ -409,7 +454,7 @@ not derived.
 | 3 | strict schema rejection | PASS | Strengthens it — `ship.md`/`verify.md`'s `output:` schemas are enforced by OMP itself, not model good behavior | Neither needed; already structural |
 | 4 | `maxRuntimeMs` timeout | PASS | Strengthens it — a stuck seat's process is actually killed, and `history://` still gives the auditor a transcript | N/A |
 | 5 | transcript durability | PASS (note the `--export` path-vs-id nuance) | Strengthens it — a settled seat's evidence outlives its process | N/A |
-| role-identity | open probe | **No** structural field; text-match-on-prose or session-wide-only fallback | Weakens it — a hook cannot itself confirm "this is really the verify seat and not ship" from the harness alone; that assurance still rests on which agent definition/dispatch the operator actually invoked | `tools:`/prompt rung, or session-wide settings; a single cross-role hook cannot branch on role |
+| role-identity | answered; corrected 2026-09-07 (§6 Correction; run `task-m5-005` seq 16, PR #284) | **Yes** — structural field via `ctx.sessionManager.getEntries()`/`getBranch()` → `session_init.agent` | Strengthens it, with caveat — a hook can structurally read its own session's `session_init.agent` rather than text-matching prose, but that value is executor-set at spawn time (self-reported, like `executor-identity/v1.model` in §7b), not externally audited | Hook can branch directly on `session_init.agent`; the `tools:`/prompt-only fallback is no longer the sole option |
 | 7a | concurrency | **FAIL** (silent `rc=0` death, N≥3 in this environment) | Weakens it — a "verify ran and settled" claim is not provable from `rc=0` alone under load | N/A |
 | 7b | model substitution | Gap confirmed | Weakens it — `executor-identity/v1.model` can silently misreport the true executing model | N/A |
 

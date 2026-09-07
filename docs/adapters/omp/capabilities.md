@@ -44,14 +44,15 @@ below rather than guessing. Amend this table once the report lands.
 | 3. `outputSchema` + `schemaMode: strict` rejects a result missing a required field | OMP's own structured-output validation | pending `TASK-M5-001` |
 | 4. `task.maxRuntimeMs` stops a task and its descendants; `history://` survives | OMP task lifecycle | pending `TASK-M5-001` |
 | 5. A full transcript reads back from `~/.omp/agent/sessions/...jsonl` after a new session and after a reboot | OMP session storage | pending `TASK-M5-001` |
-| Role-identity probe: can a hook/extension learn the running agent's role (name)? | `.omp/extensions/*` hook API | pending `TASK-M5-001` — until answered, `mapping.md`'s `role` field stays agent-supplied, not mechanically derived |
+| Role-identity probe: can a hook/extension learn the running agent's role (name)? | `ctx.sessionManager.getEntries()`/`getBranch()` → `session_init.agent` | **Yes** — corrected 2026-09-07 (`docs/reports/2026-09-07-omp-capability-test.md` §6 Correction; run `task-m5-005` seq 16, PR #284). `TASK-M5-001`'s original probe missed this: it walked `ctx.sessionManager`'s enumerable keys but never called `getEntries()`/`getBranch()`. `mapping.md`'s `role` field can now be read structurally off the running session's own `session_init.agent` entry from within a hook, not only supplied by the operator's dispatch choice. |
 
-A failing point (or a "no" role-identity answer) does not invalidate this
-adapter's documentation: `ADR-0007` and `mapping.md` already state the
-named fallback for each (per-role rules move into agent `tools`/system
-prompt instead of a hook; `role` stays agent-supplied text). This
-document's job is to keep the claimed-vs-evidenced line honest, not to
-assume the fallback is never needed.
+A failing point does not invalidate this adapter's documentation:
+`ADR-0007` and `mapping.md` already state a named fallback for a
+capability that turns out unavailable (per-role rules move into agent
+`tools`/system prompt instead of a hook). The role-identity probe is not
+such a case — its initial "no" was corrected to "yes" above — but this
+document's job remains to keep the claimed-vs-evidenced line honest, not
+to assume every capability holds.
 
 ## Named limitation: the output schema does not prove the ledger write happened
 
