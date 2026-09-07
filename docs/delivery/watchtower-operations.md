@@ -35,6 +35,17 @@ Starting at M1a+ (`M-001`), ship agents and verification scouts also record thei
 7. At integration gates, run a **falsifiability pass**: hand-picked contract-violating mutants applied to a scratch copy; every mutant must turn the suite red, and any survivor becomes a mandatory test addition.
 8. After a major merge, run the concerned slice of `dogfood/` (`DOGFOOD-CORPUS`) via the dogfood checker. Findings route per `DELIVERY-STANCE`: a deterministic, contract-relevant finding becomes an issue and/or a fix PR; a legibility/output-quality finding (FRICTION) becomes an issue or a docs amendment; either way the finding is recorded, never left as an unfiled observation.
 
+## External-candidate lane
+
+A pipeline note for the case the roles above don't cover: a candidate that arrives already-formed, with no ledger run behind it.
+
+- **Not a delivery until the ledger says so.** A PR opened by an external contributor, or produced by an adopter/contributor session outside this project's own dispatch loop, is not a delivery yet no matter how complete it looks on GitHub — the ledger, not GitHub, decides what exists.
+- **Adoption precedes judgment.** Such a candidate is adopted by a ship seat onto a current base, in that seat's own worktree, before anything about it can be judged. The adopting sha is the run's candidate; the proposed sha is recorded verbatim in the run's intent text so the provenance of what actually arrived stays legible.
+- **Auditing spends the seat.** A seat that already audited the proposed sha cannot turn around and sign the adopted one — auditing is itself a use of that seat against that candidate, the same role-separation rule that forbids self-assurance elsewhere in this playbook.
+- **Name the tradeoff, don't mandate a path.** Adopting in place — rebase and force-push onto the contributor's own branch — preserves the PR thread, its issue link, and the contributor's authorship. A fresh PR is the alternative when the branch cannot be written. Pick per case; state which in the run record.
+
+**Specimen.** PR #270 (issue #269) arrived 2026-09-06 with no run behind it; its merge base (`3151a35`, v0.9.0) predates master's `4638f14`, so `gh` reports `CONFLICTING DIRTY` rather than a clean fast-forward. Per the operator decision of 2026-09-07, it was adopted in place onto current master. Compare the ordinary shape of the same class of issue when both ends are ours: issue #244 -> PR #247 was scouted, shipped, and verified entirely by our own seats within one run — no adoption step existed because no external candidate ever did.
+
 ## Task sizing
 
 Tasks are sized by reviewability and decision count, not implementation effort:
