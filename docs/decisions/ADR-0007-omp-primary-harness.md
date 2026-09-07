@@ -416,9 +416,9 @@ may still enforce.
 
 **2. No direct write to a shared branch → server-side GitHub branch
 protection.** Read back from `gh api
-repos/odjhey/orc-werk/branches/master/protection` on 2026-09-07 (an
-as-of-instant reading, not a standing fact — re-run the same call to
-confirm it still holds):
+repos/odjhey/orc-werk/branches/master/protection`, reconfirmed unchanged
+at `2026-09-07T06:44:29Z` (an as-of-instant reading, not a standing fact
+— re-run the same call to confirm it still holds):
 
 ```
 required_status_checks         {'strict': True, 'contexts': ['ci-required'], 'checks': [{'context': 'ci-required', 'app_id': 15368}]}
@@ -441,60 +441,90 @@ rejection: no destructive live probe (an actual direct push) was
 attempted, because with force-push and deletion disabled a junk commit
 that unexpectedly landed could not be cleanly removed.
 
-**3. Record-before-yield → no separate enforcement rung; the orc state
-machine already carries it, with one named exception outside the seat
-protocol.** Verified against `src/orc_werk/core/reducer.py` at this
-amendment's own head: the only path to `STATE_ACCEPTED` folds
-`FACT_CANDIDATE_OBSERVED` (`reducer.py:448-467`, which requires the
-*current* Execution's `outcome == "completed"` — INV-005) into
-`STATE_ASSURING` (`reducer.py:510-513`, `546-549` — the only two rows
-that set it), then `FACT_ASSURE_SETTLED` with `verdict == "accepted"`
-(`reducer.py:594-595`, `620-622`) into `STATE_ACCEPTED`;
-`FACT_CANDIDATE_OBSERVED` itself requires `STATE_EXECUTING`
-(`reducer.py:449`), which is entered only by `FACT_EXEC_STARTED`
-(`reducer.py:368-369`, requires prior `STATE_READY`) and left only by
-`FACT_EXEC_SETTLED` (`reducer.py:406-407`). No fold reaches `ACCEPTED` —
-or, by the identical arithmetic, the seat-triggered path to `BLOCKED` via
-a rejected/inconclusive verdict or an abandoned attempt
-(`reducer.py:623-627`, `641-649`, `680-715`) — without a prior
-`FACT-EXEC-SETTLED`. The operator ruling's blanket form of this claim
-("a work with no FACT-EXEC-SETTLED stays non-terminal and the run cannot
-reach a terminal state") is not exactly true, though: `FACT_WORK_CANCELLED`
-is legal "from any non-terminal state" (`reducer.py:717-726`), including
-`STATE_READY` immediately after `FACT-WORK-READY`, before any Execution
-ever starts. The corrected claim: that one path is
-`Orchestrator.cancel_work`, documented as "Operator-only terminal
-closure" (`src/orc_werk/app/orchestrator.py:857-858`) and reachable only
-via the `orc cancel` CLI verb (`src/orc_werk/cli/main.py:1157-1196`,
-operator identity from `$USER`/`whoami`) — never a verb a ship or verify
-seat's own recording protocol calls (that protocol calls only `orc
-record`; see `docs/cli/README.md` "`orc cancel`", "Operator-only
-terminal closure"). So: within the seat protocol a `tool_call`/`yield`
-hook would ever need to gate, no verb reaches a terminal state without
-`FACT-EXEC-SETTLED` first, and no hook rung is needed for it — the one
-exception is a named, out-of-band human action entirely outside that
-protocol.
+**3. Record-before-yield → enforced structurally for the paths that
+reach `ACCEPTED`/`BLOCKED` through bound assurance; the cancellation
+path is a disclosed, unenforced escape from that rung (issue #293).**
+Verified against `src/orc_werk/core/reducer.py` at this amendment's own
+head: the only path to `STATE_ACCEPTED` folds `FACT_CANDIDATE_OBSERVED`
+(`reducer.py:448-467`, which requires the *current* Execution's
+`outcome == "completed"` — INV-005) into `STATE_ASSURING`
+(`reducer.py:510-513`, `546-549` — the only two rows that set it), then
+`FACT_ASSURE_SETTLED` with `verdict == "accepted"` (`reducer.py:594-595`,
+`620-622`) into `STATE_ACCEPTED`; `FACT_CANDIDATE_OBSERVED` itself
+requires `STATE_EXECUTING` (`reducer.py:449`), which is entered only by
+`FACT_EXEC_STARTED` (`reducer.py:368-369`, requires prior `STATE_READY`)
+and left only by `FACT_EXEC_SETTLED` (`reducer.py:406-407`). No fold
+reaches `ACCEPTED` — or, by the identical arithmetic, the seat-triggered
+path to `BLOCKED` via a rejected/inconclusive verdict or an abandoned
+attempt (`reducer.py:623-627`, `641-649`, `680-715`) — without a prior
+`FACT-EXEC-SETTLED`. **That is the full and correct scope of the claim:
+on the paths gated by bound assurance, no hook rung is needed because
+the state machine already carries it.**
+
+The claim does not extend past that gate, and an independent verify
+seat proved the gap in system code against this run's own head, filed
+as issue #293: `FACT_WORK_CANCELLED` is legal "from any non-terminal
+state" (`reducer.py:717-729`), including `STATE_READY` immediately
+after `FACT-WORK-READY`, before any Execution ever starts, and the `orc
+cancel` CLI verb that fires it (`src/orc_werk/cli/main.py:1157-1196`)
+derives its actor from `$USER`/`whoami` with **no caller-role
+authorization** — nothing in the verb distinguishes an operator's shell
+from a ship or verify seat's own. A targeted real-code probe (`uv run
+python -m unittest
+tests.core.test_scenarios.Scn001HappyPathTest.test_terminal_accepted
+tests.core.test_reducer_transitions.ReservedUnreachableTest.test_fact_work_cancelled_is_reachable
+tests.scenarios.test_cli_cancel.CancelledReportingTest.test_cancelled_is_settled_and_excluded_from_active_index`)
+ran 3 tests OK, including terminal cancellation reaching a settled
+state with no execution outcome recorded at all.
+`Orchestrator.cancel_work` is documented as "Operator-only terminal
+closure" (`src/orc_werk/app/orchestrator.py:857-858`), and a seat's own
+recording protocol calls only `orc record`, never `orc cancel`
+(`docs/cli/README.md` "`orc cancel`", "Operator-only terminal
+closure") — but that is protocol prose describing intended use, not a
+kernel-enforced distinction between an operator and a seat holding the
+same OS identity. Issue #293 leaves open whether cancel-from-any-state
+is intended, whether the record-before-yield rung needs to say
+explicitly that it covers only the assurance-bearing paths, and whether
+caller-role authorization is even meaningful given every seat
+authenticates identically (rung 4 below); none of those questions is
+resolved by this amendment, and no code fix is proposed here.
 
 **4. Merge authority ("only the watchtower may merge") → open residue,
 no enforcement rung, prose plus after-the-fact detection only.**
 `restrictions` above is the one field that binds a push/merge
 restriction to a specific actor, and it is `None`; even populated, it
 keys on GitHub user/team/app identity, not on seat role, and every seat
-in this repository authenticates as the same GitHub identity (`odjhey`)
-— there is no distinct credential per seat to bind to. This is not
-covered by rung 1 (the hook cannot see which role is running the merge
-command any more reliably than it can parse the command itself once
-role inference is reduced to command text — `task-m5-005-guards` seq 16
-guard 3), nor by rung 2 (branch protection restricts *who may write to
-the ref*, not *which agent-role of the one authenticated identity did
-it*). It remains exactly what it was before this amendment:
-`PLAYBOOK-WATCHTOWER`/`PLAYBOOK-AGENT-CLI` prose plus after-the-fact
-ledger/PR-history detection — named here as an unenforced residue rather
-than left uncovered by omission.
+in this repository is currently provisioned with one shared GitHub
+credential rather than a distinct one per seat (`gh api user` →
+`login: odjhey`, reconfirmed at `2026-09-07T06:44:29Z`) — there is no
+seat-scoped identity for a restriction to bind to. This is not covered
+by rung 1, for a different reason than an earlier draft of this
+amendment gave: the hook *can* see which role is running its own
+session — `session_init.agent` is a structural field the session's own
+entries carry, not a text match against prose
+(`docs/reports/2026-09-07-omp-capability-test.md` §6 Correction) — but
+deciding *whether a given command is a merge* is not something the hook
+receives at all. The hook is handed `event.input.command` as one string
+(`readCommand`), never shell argv, the resolved executable, or process
+identity, and the shell defeats any text match against that string:
+`task-m5-005-guards` seq 16 guard 2 landed a live `g\h pr merge 999
+--squash` — the shell strips the backslash before exec — past a hook
+matching the literal token `gh`
+(`docs/reports/2026-09-07-omp-capability-test.md` §6b). **Role is
+visible; the action is not decidable.** A rung-1 hook could deny every
+`bash` call from a given role, but it cannot single out *merge*
+commands from that role without falling back to the same defeated
+command-text matching. Nor is this covered by rung 2 (branch protection
+restricts *who may write to the ref*, not *which agent-role of the one
+authenticated identity did it*). It remains exactly what it was before
+this amendment: `PLAYBOOK-WATCHTOWER`/`PLAYBOOK-AGENT-CLI` prose plus
+after-the-fact ledger/PR-history detection — named here as an
+unenforced residue rather than left uncovered by omission.
 
 The `TASK-M5-005` re-delivery (`task-m5-005-guards`) implementing rung 1
-above is in-flight, not landed, as of this amendment (attempt 2 underway
-per its own journal; PR #284 not yet merged). This amendment does not
+above was still in-flight, not landed, as of `2026-09-07T06:44:29Z`
+(`gh pr view 284 --json state,mergedAt,headRefOid`: `state: OPEN`,
+`mergedAt: null`, head `c11601cb`). This amendment does not
 describe that PR's contents or claim its guards are fixed — only that
 guard 4's mechanism is proven and the other three guards' *design
 target* moves to rungs 2–4 above, per the operator ruling that produced
