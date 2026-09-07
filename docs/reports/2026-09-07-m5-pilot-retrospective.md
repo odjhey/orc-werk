@@ -49,7 +49,7 @@ This is the answer `ADR-0007`'s own hook-retirement amendment (`docs/decisions/A
 
 ## 2. Did seat discipline hold under real seat traffic?
 
-**(terminal)** Eleven M5-related runs reached `ACCEPTED` and are terminal at the anchor; re-deriving this list can only add later-terminalizing runs, never remove or change these eleven:
+**(terminal)** Eleven M5-related runs reached `ACCEPTED` and are terminal at the anchor. The command below is a closed alternation naming exactly these eleven run identities, and each is terminal, so its output cannot change under later settlements at all — not append, not remove, not modify:
 
 ```
 orc --limit 0 | grep -E '^(m5-omp-harness-pilot|fix-verify-seat-fallback|adopt-270-attempt-binding|docs-external-candidate-lane|fix-262-docs-polish|task-m5-003|fix-254-active-filter|task-m5-006|fix-266-reobservation|task-m5-001|chore-verify-followups):'
@@ -142,7 +142,7 @@ Three escape classes, each independently demonstrated live against the installed
 
 > "A `tool_call` hook receives **unresolved arguments**: `event.input.command` is a raw string, never shell argv, the resolved executable, or process identity [...] Soundness for either guard shape requires the harness's **post-resolution** path or command — the actual argv the shell will run, the actual file the write tool will touch after its own scheme/symlink/case handling — and the hook is never handed that. Every attempt to close the gap made the hook re-implement the harness's own resolution semantics from outside the harness, and every divergence between the hook's reimplementation and the harness's real behavior became a fresh escape."
 
-The mechanism was retired, not merely descoped: PR #300 (`hook-retire-decision`, `b787bd5`) landed the ADR-layer retirement, and PR #299 (`docs/delivery/M5-omp-first-delivery.md`, `README.md`, `docs/delivery/task-cards/TASK-M5-005-orc-seat-hook.md`, `docs/delivery/task-cards/TASK-M5-008-seat-reliability-and-pilot-writeup.md`, landed at `692c543`) removed the `.omp/extensions/orc-seat.ts` hook and the seat-hook rung from every card and delivery doc that referenced it, replacing it with the three rungs in §5. What the cycle taught, in one sentence: **a guard that has to independently re-implement a tool's own argument resolution will always be at most one guard-tightening cycle behind that tool**, and issue #298 is the concrete proof — it exists only because the fix for #296/#297 introduced a new resolution path the real tool didn't share.
+The mechanism was retired, not merely descoped, at two separate layers: PR #300 (`hook-retire-decision`, `b787bd5`) landed the ADR-layer retirement, and PR #299 (`692c543`) retired the seat-hook rung across the delivery docs and cards that referenced it — `AGENTS.md`, `docs/delivery/M5-omp-first-delivery.md`, `docs/delivery/task-cards/README.md`, `docs/delivery/task-cards/TASK-M5-004-omp-agents-and-config.md`, `docs/delivery/task-cards/TASK-M5-005-orc-seat-hook.md`, and `docs/delivery/task-cards/TASK-M5-008-seat-reliability-and-pilot-writeup.md` — replacing it with the three rungs in §5. The hook implementation itself never landed on `master`: it lived only on branch `task-m5-005-orc-seat-hook`, closed unmerged as PR #284 with its branch preserved at head `69e4829`. What the cycle taught, in one sentence: **a guard that has to independently re-implement a tool's own argument resolution will always be at most one guard-tightening cycle behind that tool**, and issue #298 is the concrete proof — it exists only because the fix for #296/#297 introduced a new resolution path the real tool didn't share.
 
 ## 4. The counting lesson
 
@@ -214,4 +214,4 @@ None. The task card and `ADR-0007` gave a consistent account; no contract-level 
 
 - `TASK-M5-004`'s own acceptance details (agent definitions, worktree convention) — out of scope for this write-up; see `docs/delivery/task-cards/TASK-M5-004-omp-agents-and-config.md` directly.
 - Issue #293 (per-process rate-limit / usage-limit scoping, deferred, tracked separately from the hook-retirement decision) and issue #288 (operator-abandon vs. retry-exhaustion indistinguishable in the projection) — both open product findings adjacent to this milestone's seat mechanics, neither blocking `TASK-M5-005`'s own closure.
-- Bun-test coverage for `.omp/extensions/*` — `TASK-M5-005`'s own closure already discloses this gap; it does not apply post-retirement since the hook file itself is removed.
+- Bun-test coverage for `.omp/extensions/*` — `TASK-M5-005`'s own closure already discloses this gap; it does not apply post-retirement since the hook file never landed on `master` in the first place (it lived only on the closed-unmerged `task-m5-005-orc-seat-hook` branch, PR #284, preserved at head `69e4829`).
