@@ -200,9 +200,18 @@ $ ls -la .../inside-write.txt
 
 **PASS for the fencing mechanism** (red then green, exactly as required),
 **with a corrected premise**: the fence hook must be told the worktree path
-by some other means (fixed convention, env var, or grep-matching the bash
-`git worktree add` invocation itself); it cannot read it off an OMP-tracked
-field because OMP does not create that worktree.
+by some other means (fixed convention, env var, or a value baked into the
+hook at installation time) — **not** by grep-matching the bash
+`git worktree add` invocation's command text. That alternative is defeated
+by the same bound as §1 Correction and §6b: `event.input.command` is a
+string a hook cannot reliably parse as "this invoked `git worktree add`
+with path P," so a grep-derived trusted path is exactly the command-text
+guard this report's own corrected bound rules out. The fence survives only
+because its known-good path is supplied out-of-band (fixed convention, env
+var, or install-time value) and compared against structural context
+(`ctx.cwd`/the write target), never extracted from parsing a command
+string; it cannot read the path off an OMP-tracked field either, because
+OMP does not create that worktree.
 
 ## 3. Point 3 — `outputSchema` + `schemaMode: strict` rejects a missing required field
 
@@ -579,10 +588,18 @@ not derived.
   `task`-tool subagents of one shared watchtower session was not something
   I could safely probe on my own live seat process without risking my own
   delivery; §6/§8's "session-wide, not per-agent" conclusion holds either
-  way, but which topology orc-werk actually uses changes whether giving
-  verify a stricter `bash.patterns` overlay is a one-line dispatch change
-  or requires a hook. `TASK-M5-004`/`TASK-M5-005` should confirm this
-  directly against the actual dispatch call site.
+  way. This topology question does not reopen `bash.patterns` as a
+  per-role enforcement fallback: even in the separate-process topology, a
+  stricter overlay applied via that process's `--config` is still a
+  coarse, session-wide setting on the process it is applied to, not a
+  hook that can condition on `session_init.agent` (§6 Correction) — and,
+  like every mechanism examined in §1 Correction and §6b, it decides by
+  matching command text, so it is defeated by the same shell-escaping
+  bound regardless of which topology orc-werk uses. `TASK-M5-004`/
+  `TASK-M5-005` should still confirm the actual dispatch topology against
+  the real call site, but for reasons unrelated to enforcement (e.g.
+  per-process resource limits), not to unlock `bash.patterns` as a
+  per-role guard.
 
 ## Not covered
 
