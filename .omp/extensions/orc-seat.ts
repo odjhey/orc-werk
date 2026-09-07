@@ -12,17 +12,54 @@
 // denial, ship worktree fence) that four separate adversarial audits left unmodified,
 // while those same audits repeatedly defeated the other three on their command-text
 // channel until they were deleted outright. But a FIFTH audit (issue #297, ledger
-// `task-m5-005-guards` seq 36, against this same head `ef093a3`) defeated THIS guard
-// too, two further structural ways: a `write`/`edit` whose target carries no local path
-// at all (`ssh://host/<path>`, which the harness tool surface documents as genuinely
-// writable) fell through the old "zero candidates means nothing to check" default and
-// returned ALLOW; and a hardlinked name created inside the seat's own worktree shares
-// an inode with a sibling worktree's file while its OWN `realpath` stays inside --
-// `realpath` resolves symlinks, never hardlinks, so this comparison cannot see that
-// aliasing at all (see the comment at the realpath comparison below). The first defect
-// is fixed below: an unresolvable target now DENIES, never silently ALLOWs. The second
-// is disclosed, not fixed -- sound detection would need an unbounded, racy inode sweep
-// of every sibling worktree on every call, and is not attempted here.
+// `task-m5-005-guards` seq 36, against head `ef093a3`) defeated THIS guard too, two
+// further structural ways: a `write`/`edit` whose target carries no local path at all
+// (`ssh://host/<path>`, which the harness tool surface documents as genuinely writable)
+// fell through the old "zero candidates means nothing to check" default and returned
+// ALLOW; and a hardlinked name created inside the seat's own worktree shares an inode
+// with a sibling worktree's file while its OWN `realpath` stays inside -- `realpath`
+// resolves symlinks, never hardlinks, so this comparison cannot see that aliasing at
+// all (see the comment at the realpath comparison below). The hardlink defect is
+// disclosed, not fixed -- sound detection would need an unbounded, racy inode sweep of
+// every sibling worktree on every call, and is not attempted here.
+//
+// The unresolvable-target defect (issue #297) went through TWO delivered fixes, not
+// one, and the difference matters for future maintainers:
+//
+// - Attempt 1 of this run (`task-m5-005-sensor`, head `623f2cf`) special-cased `ssh` --
+//   the one scheme named in issue #297's own example -- into its own
+//   `UNRESOLVABLE_URI_SCHEMES` table, alongside an `IGNORED_URI_SCHEMES` table of eleven
+//   OTHER recognized schemes (`local`, `memory`, `artifact`, `history`, `agent`, `rule`,
+//   `skill`, `mcp`, `issue`, `pr`, `omp`) that produced zero readings and therefore
+//   ALLOWed unconditionally, on the unverified assumption that the tool surface's own
+//   documentation of them as "never touches a real filesystem" was exhaustive and
+//   permanent. An independent verify seat (ledger `task-m5-005-sensor` seq 16, REJECT
+//   finding 1) reproduced live, via a real `bun run` fixture probe, that all eleven
+//   still returned `paths=[], unresolvable=[], ALLOW` -- the EXACT failure class #297
+//   filed, just not yet closed for eleven of twelve schemes -- and that `write {}`, a
+//   non-string `path`, `edit` with no hashline header, and an empty/blank `path` ALL
+//   ALLOWed too, for the identical reason: each produced zero readings, and zero
+//   readings meant "nothing to check" rather than "nothing this guard could verify is
+//   safe". A scheme table is a blacklist/whitelist of names, and #290's own root-cause
+//   finding about the command-text guards applies here too, one level removed: a table
+//   of known names cannot fail closed against a name nobody has added to it yet.
+// - Attempt 2 (this delivery) replaces BOTH tables with one structural rule that needs
+//   no scheme enumeration at all: a `write`/`edit` call is evaluated by whether it
+//   yields at least one candidate string this guard can actually resolve to a
+//   comparable LOCAL FILESYSTEM path -- never by whether its scheme name appears on a
+//   list. Any `scheme://...`-shaped target (recognized or not, `local://` and `ssh://`
+//   alike) is, by construction, a reference into an address space this guard has no
+//   local path for -- an internal store, an MCP resource, a remote host -- so it never
+//   contributes a path candidate. A blank (empty or all-whitespace) string, a missing
+//   `path` field, a non-string `path`, and an `edit` input with no `[<path>#<TAG>]`
+//   hashline all likewise contribute zero candidates, for the same underlying reason:
+//   there is no local path here to derive. `evaluateWorktreeFenceGuard` denies whenever
+//   the derived candidate set is empty, full stop -- a scheme invented tomorrow, or an
+//   argument shape nobody anticipated, fails closed automatically, without anyone
+//   touching this file. See the `Guard` section and `classifyRaw` below for the
+//   mechanism, and this card's PR body for the over-denial measurement (grepping every
+//   seat definition in this repo for a `write`/`edit` call naming an internal URI as its
+//   target) that backs treating this as a safe default rather than a breaking one.
 //
 // *** Command-text interception was attempted, and abandoned, for the other three ***
 //
@@ -73,15 +110,17 @@
 // accidental violations, live-audited across five attempts: four it blocked
 // sibling-worktree and primary-checkout writes on while permitting a seat's own (see
 // this card's PR body for the live commands and observed denials/allows), and a fifth
-// (#297) that defeated it structurally, addressed above. Its limits, stated plainly: it
-// decides on `ctx.cwd` and the tool call's OWN declared path/edit-target input, resolved
-// to a local filesystem path. It has no visibility into a write that reaches the
-// filesystem through any channel this hook never sees a local path for (a bash-invoked
-// script), it now denies rather than silently permits a target it cannot resolve to a
-// local path at all (`ssh://`, fixed below), and it cannot distinguish a hardlinked name
-// inside the seat's own worktree from the sibling-worktree file it silently aliases
-// (disclosed, not fixed, at the realpath comparison below). Deliberate evasion defeats
-// it; it only ever caught the naive and the accidental.
+// (#297) that defeated it structurally, addressed above (twice: attempt 1 closed it for
+// one named scheme, attempt 2 closes it structurally for every scheme and every
+// zero-reading argument shape). Its limits, stated plainly: it decides on `ctx.cwd` and
+// the tool call's OWN declared path/edit-target input, resolved to a local filesystem
+// path. It has no visibility into a write that reaches the filesystem through any
+// channel this hook never sees a local path for (a bash-invoked script), it denies
+// rather than silently permits any target it cannot derive to a local path at all
+// (fixed structurally below, not by scheme name), and it cannot distinguish a hardlinked
+// name inside the seat's own worktree from the sibling-worktree file it silently
+// aliases (disclosed, not fixed, at the realpath comparison below). Deliberate evasion
+// defeats it; it only ever caught the naive and the accidental.
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import fs from "node:fs";
@@ -144,10 +183,15 @@ export function createOrcSeatState(): OrcSeatState {
 }
 
 // ---------------------------------------------------------------------------------------
-// Guard -- the ship seat's edits stay inside its own `.worktrees/<branch>`
+// Guard (tripwire, not enforcement -- see the file header above) -- the ship seat's
+// edits stay inside its own `.worktrees/<branch>`
 //
 // A literal per-role rule, per ADR-0007: "Ship works in its own worktree; never merges"
-// -> "a hook fences `edit`/`write` to that path". Scoped to `agent === "ship"`
+// -> "a hook fences `edit`/`write` to that path". This section documents that TRIPWIRE,
+// not an enforcement claim: it catches the naive and the accidental case it can see
+// (`ctx.cwd` and the call's own declared path input), and nothing more -- deliberate
+// evasion through a channel this hook has no visibility into is out of scope by
+// construction, per the file header's own disclosure. Scoped to `agent === "ship"`
 // specifically, not "any subagent with write/edit tools" -- today only `ship` declares
 // those tools, but the role check is what the card actually specifies, and it stays
 // correct even if a future subagent type gains write/edit tools without also being
@@ -155,7 +199,7 @@ export function createOrcSeatState(): OrcSeatState {
 //
 // Soundness (issues #296 and #297): this predicate decides on `event.input.path`,
 // structured, normalized input the hook genuinely receives for `write`/`edit` -- never
-// on command text. Four defects were found live and fixed here:
+// on command text. Five defects were found live and fixed here:
 //
 // 1. Symlink escape: a lexical `path.resolve` string comparison never resolves
 //    symlinks, so `write escape-link/x.txt` where `escape-link -> ../outside` compared
@@ -175,11 +219,10 @@ export function createOrcSeatState(): OrcSeatState {
 //    rule ("do not guess which reading is intended: evaluate every plausible
 //    interpretation and block if any resolves outside"), `pathReadings` below returns
 //    BOTH the literal full string and, when a `:` is present, the substring before it --
-//    every candidate is checked, and any one escaping is a block. Only a small, explicit
-//    allowlist of recognized internal-URI schemes (the schemes the `read`/`write` tools
-//    themselves document, e.g. `local://`) is exempted from filesystem comparison at
-//    all; an unrecognized `://`-prefixed string is never assumed to be a safe internal
-//    reference.
+//    every candidate is checked, and any one escaping is a block. A candidate that is
+//    itself `scheme://...`-shaped is never given a filesystem-path reading at all (see
+//    defect 4 below) -- it is opaque to this guard by construction, not exempted by an
+//    allowlist.
 // 3. Case false-denial: on a case-insensitive filesystem (APFS default), a legitimate
 //    own-worktree path reached via different case (e.g. `/users/...` for a worktree
 //    actually mounted at `/Users/...`) was denied as outside, because the old check
@@ -189,16 +232,23 @@ export function createOrcSeatState(): OrcSeatState {
 //    the two real paths this guard compares always agree on case when they name the
 //    same real file -- no separate case-normalization step is needed, attempted, or
 //    assumed to apply globally here.
-// 4. Unresolvable-target ALLOW (issue #297): zero path readings used to mean "nothing
-//    to check" unconditionally -- including for `ssh://`, which the old table listed
-//    alongside `local://` as "never touches the filesystem". True for `local://`;
-//    false for `ssh://`, which the tool surface documents as genuinely writable, to a
-//    REMOTE filesystem this guard has no local path to compare at all. `ssh` now sits
-//    in its own `UNRESOLVABLE_URI_SCHEMES` table below; `extractUnresolvableTargets`
-//    surfaces it separately from `extractCandidatePaths`, and
-//    `evaluateWorktreeFenceGuard` denies on any unresolvable target before it ever
-//    reaches the path comparison -- "cannot resolve this to a local path" is now a
-//    DENY, never a silent ALLOW.
+// 4. Zero-derivable-path ALLOW (issue #297, closed structurally at attempt 2): zero
+//    candidate readings used to mean "nothing to check", unconditionally -- true for a
+//    call this guard genuinely cannot form an opinion about, false for a call whose
+//    target simply isn't a local path at all. `classifyRaw` below never asks "is this
+//    scheme's name on a list" -- it asks "does this string look like a local filesystem
+//    path at all", structurally: a `scheme://...`-shaped string (ANY scheme, not an
+//    enumerated set), a blank string, or a raw-candidate list that is empty to begin
+//    with (a missing `path` field, a non-string `path`, an `edit` with no hashline
+//    header) all produce zero path readings, and `evaluateWorktreeFenceGuard` denies on
+//    zero readings, naming the raw input, before it ever reaches a path comparison.
+//    Adding a scheme to OMP tomorrow needs no edit here: an unrecognized `scheme://...`
+//    was already opaque to this guard before it had a name.
+// 5. Blank/malformed-argument ALLOW (issue #297, attempt 2): `write {}`, a non-string
+//    `path`, an `edit` whose `input` text carries no `[<path>#<TAG>]` header, and an
+//    empty or all-whitespace `path` string each used to produce zero raw candidates and
+//    therefore ALLOW, for the identical reason as (4) -- there is no local path to
+//    derive. These now deny for the same structural reason, not as special cases.
 //
 // Root and target are each resolved independently to one canonical real path, then
 // compared with a single `path.relative` (never a walk comparing inode identity up two
@@ -210,72 +260,40 @@ export function createOrcSeatState(): OrcSeatState {
 
 const WORKTREES_SEGMENT = ".worktrees";
 
-/** Internal-URI schemes the `read`/`write` tools themselves document (their own tool
- * descriptions) as never touching any real filesystem at all -- `local://plan.md` and
- * similar resolve against an internal store, not `fs`, so a `write`/`edit` naming one
- * of these performs no filesystem write anywhere, local or remote, for this guard to
- * compare. These contribute NEITHER a path reading NOR an unresolvable-target one --
- * there is genuinely nothing to check. */
-const IGNORED_URI_SCHEMES: Record<string, true> = {
-  local: true,
-  memory: true,
-  artifact: true,
-  history: true,
-  agent: true,
-  rule: true,
-  skill: true,
-  mcp: true,
-  issue: true,
-  pr: true,
-  omp: true,
-};
-
-/** Internal-URI schemes the tool surface documents as performing a REAL filesystem
- * write this guard cannot resolve to a comparable local path -- today, only
- * `ssh://host/<path>` ("writable with write"), which writes to a remote host's
- * filesystem. Issue #297: `ssh` used to sit in the ignored-schemes table above, so a
- * `write`/`edit` naming it produced zero readings and the old
- * `candidates.length === 0` check at the foot of this file treated "nothing to
- * compare" as ALLOW -- reproduced live as `{"result":"ALLOW"}` against a real
- * `ssh://tiny/tmp/orc-seat-escape.txt` write. A scheme in THIS table is the opposite
- * of ignored: `extractUnresolvableTargets` below surfaces it, and
- * `evaluateWorktreeFenceGuard` denies on it before ever reaching the path-candidate
- * comparison. */
-const UNRESOLVABLE_URI_SCHEMES: Record<string, true> = {
-  ssh: true,
-};
-
 const INTERNAL_URI_SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//;
 
-/** One raw `write`/`edit` path-candidate string, classified as either `"path"`
- * (evaluate as a filesystem path) or `"unresolvable"` (a recognized scheme performing
- * a real write this guard cannot resolve to a local path -- issue #297). A recognized
- * `IGNORED_URI_SCHEMES` scheme produces neither: nothing to check. Any OTHER
- * `scheme://...`-shaped string (e.g. an attacker-chosen `colon://...`) is in neither
- * table and is therefore evaluated as a plain `"path"` candidate -- unlike the prior,
- * unconditional `://` skip issue #296 found bypassable. For a `"path"` reading: the
- * literal string itself, and -- since OMP's own `write`/`edit` accept
- * `archive.ext:inner/path`/`db.sqlite:table` selector syntax -- the substring before
- * its first `:`, when one is present. Never guesses which reading is "the" intended
- * one; the caller checks all of them and blocks if any escapes (issue #296). */
+/** One raw `write`/`edit` path-candidate string, classified `"path"` (evaluate as a
+ * filesystem path) or `"unresolvable"` (this guard cannot derive any local filesystem
+ * path from it -- issue #297). A candidate is `"unresolvable"` when it is blank (empty
+ * or all-whitespace -- there is no leaf name to derive a path from) or shaped like
+ * `scheme://...` for ANY scheme, recognized or not: such a string names an address
+ * space this guard has no local path for (an internal store, an MCP resource, a remote
+ * host, or a scheme nobody has invented yet), by construction, never by membership in
+ * an enumerated table. There is no allowlist of "known-safe" schemes here -- see the
+ * file header's account of why attempt 1's `IGNORED_URI_SCHEMES` table was itself the
+ * defect: a scheme absent from a table is indistinguishable, to a table lookup, from a
+ * scheme that is merely new. A `"path"` reading is the literal string itself, and --
+ * since OMP's own `write`/`edit` accept `archive.ext:inner/path`/`db.sqlite:table`
+ * selector syntax -- the substring before its first `:`, when one is present and
+ * non-empty. Never guesses which reading is "the" intended one; the caller checks all
+ * of them and blocks if any escapes (issue #296). */
 type Reading = { kind: "path" | "unresolvable"; value: string };
 
 function classifyRaw(raw: string): Reading[] {
-  const schemeMatch = INTERNAL_URI_SCHEME_RE.exec(raw);
-  if (schemeMatch) {
-    const scheme = schemeMatch[1].toLowerCase();
-    if (IGNORED_URI_SCHEMES[scheme]) return [];
-    if (UNRESOLVABLE_URI_SCHEMES[scheme]) return [{ kind: "unresolvable", value: raw }];
-  }
+  if (raw.trim() === "") return [{ kind: "unresolvable", value: raw === "" ? "(empty path)" : "(blank path)" }];
+  if (INTERNAL_URI_SCHEME_RE.test(raw)) return [{ kind: "unresolvable", value: raw }];
   const readings = new Set<string>([raw]);
   const colonIdx = raw.indexOf(":");
-  if (colonIdx !== -1) readings.add(raw.slice(0, colonIdx));
+  if (colonIdx > 0) readings.add(raw.slice(0, colonIdx));
   return [...readings].map((value): Reading => ({ kind: "path", value }));
 }
 
 /** Every raw `write`/`edit` path-candidate string this hook genuinely receives for a
  * call, before scheme classification: `write`'s own `path` field, or every hashline
- * header (`[<path>#<TAG>]`) `edit`'s own `input` text carries. */
+ * header (`[<path>#<TAG>]`) `edit`'s own `input` text carries. An empty array here (a
+ * missing/non-string `write` `path`, or an `edit` `input` with no hashline match) is
+ * itself a zero-derivable-path call -- `evaluateWorktreeFenceGuard` denies on it, not
+ * merely on a raw string that turned out unresolvable. */
 function rawCandidates(toolName: string, input: unknown): string[] {
   if (!input || typeof input !== "object") return [];
   if (toolName === "write") {
@@ -292,19 +310,27 @@ function rawCandidates(toolName: string, input: unknown): string[] {
   return [];
 }
 
-/** Every plausible filesystem-path reading (issue #296) of this call's candidates --
- * never an unresolvable one; see `extractUnresolvableTargets` for those. */
+/** Every plausible LOCAL filesystem-path reading (issue #296) of this call's raw
+ * candidates -- never an unresolvable one; see `extractUnresolvableTargets` for those.
+ * An empty result means this call has zero derivable local paths, for any reason:
+ * `evaluateWorktreeFenceGuard` denies whenever this is empty (issue #297). */
 export function extractCandidatePaths(toolName: string, input: unknown): string[] {
-  return rawCandidates(toolName, input)
-    .flatMap(classifyRaw)
-    .filter((r) => r.kind === "path")
-    .map((r) => r.value);
+  return [
+    ...new Set(
+      rawCandidates(toolName, input)
+        .flatMap(classifyRaw)
+        .filter((r) => r.kind === "path")
+        .map((r) => r.value),
+    ),
+  ];
 }
 
-/** Every candidate this call names that performs a real write this guard cannot
- * resolve to a local path to compare (issue #297) -- today, an `ssh://` target.
- * Non-empty here means `evaluateWorktreeFenceGuard` denies before ever reaching the
- * path comparison: unknown is a DENY, never a silent ALLOW. */
+/** Every raw candidate (or a description of a missing one) this call names that this
+ * guard cannot derive to a local path to compare -- an internal-URI-shaped target of
+ * any scheme, or a blank string (issue #297). Does NOT include the case where
+ * `rawCandidates` itself returned nothing at all (a missing/malformed argument shape);
+ * `evaluateWorktreeFenceGuard`'s own deny path names that case separately, since there
+ * is no raw string to report here. */
 export function extractUnresolvableTargets(toolName: string, input: unknown): string[] {
   return rawCandidates(toolName, input)
     .flatMap(classifyRaw)
@@ -395,6 +421,24 @@ function escapesOwnWorktree(root: string | undefined, resolvedTarget: string): b
   return !isInsideOwnWorktree(root, resolvedTarget);
 }
 
+/** A human-readable name for a call that produced zero RAW candidate strings at all --
+ * `write` with no `path` key (or a non-string one), or `edit` whose `input` text
+ * carries no `[<path>#<TAG>]` hashline header. There is no raw target string to quote
+ * in this case (unlike an unresolvable one, which names itself), so this names the
+ * call's own input shape instead, bounded, so the deny reason still says what was
+ * denied and why. */
+function describeMissingTarget(toolName: string, input: unknown): string {
+  let repr: string;
+  try {
+    repr = JSON.stringify(input) ?? String(input);
+  } catch {
+    repr = String(input);
+  }
+  if (repr.length > 200) repr = `${repr.slice(0, 200)}…`;
+  const expected = toolName === "write" ? "no string `path` field" : "no `[<path>#<TAG>]` hashline target";
+  return `${expected} (raw ${toolName} input: ${repr})`;
+}
+
 export function evaluateWorktreeFenceGuard(
   agent: string | undefined,
   toolName: string,
@@ -402,18 +446,20 @@ export function evaluateWorktreeFenceGuard(
   cwd: string,
 ): { block: true; reason: string } | undefined {
   if (agent !== "ship" || (toolName !== "write" && toolName !== "edit")) return undefined;
-  const unresolvable = extractUnresolvableTargets(toolName, input);
-  if (unresolvable.length > 0) {
+  const raw = rawCandidates(toolName, input);
+  const readings = raw.flatMap(classifyRaw);
+  const unresolvable = readings.filter((r) => r.kind === "unresolvable").map((r) => r.value);
+  const candidates = [...new Set(readings.filter((r) => r.kind === "path").map((r) => r.value))];
+  if (candidates.length === 0) {
+    const named = unresolvable.length > 0 ? unresolvable.join(", ") : describeMissingTarget(toolName, input);
     return {
       block: true,
       reason:
-        `orc-seat: ${toolName} targets ${unresolvable.join(", ")}, which this guard cannot resolve to any ` +
-        "local path to compare against this ship seat's own worktree; an unresolvable target is denied, " +
-        "never silently allowed (issue #297).",
+        `orc-seat: ${toolName} names ${named}, which this guard cannot derive to any local filesystem path to ` +
+        "compare against this ship seat's own worktree; a write/edit with zero derivable local paths is denied, " +
+        "never silently allowed (issue #297) -- derivability drives this decision, never an enumerated scheme list.",
     };
   }
-  const candidates = extractCandidatePaths(toolName, input);
-  if (candidates.length === 0) return undefined;
   const root = ownWorktreeRoot(cwd);
   const escaping = candidates.filter((raw) => escapesOwnWorktree(root, path.resolve(cwd, raw)));
   if (escaping.length === 0) return undefined;

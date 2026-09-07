@@ -3,7 +3,7 @@ id: TASK-M5-005
 type: task-card
 status: current
 authority: normative
-description: Author .omp/extensions/orc-seat.ts — tool_call guards enforcing record-before-yield, no-self-merge, verify push/commit/comment denial, and the ship worktree fence — with a red-then-green test proving each guard fires.
+description: Author .omp/extensions/orc-seat.ts — as of Amendments 4-7, a single advisory tripwire (not an enforcement mechanism) fencing the ship seat's write/edit calls to its own .worktrees/<branch>, failing closed on any target with zero derivable local paths (issue #297); record-before-yield, no-self-merge, and verify push/commit/comment/review denial are policy honored by the seat definitions and audited after the fact, not hook-enforced. Red-then-green tests prove the tripwire fires.
 implements:
   - ADR-0007
 verifies: []
@@ -568,3 +568,65 @@ acceptance" bullets, adds to them:**
 This amendment does not reopen guards 1, 2, 3, or 5, and does not change
 `.omp/extensions/orc-seat.ts`'s single-retained-guard scope; guard 4 remains the only
 guard the file implements, now documented as a tripwire rather than a control.
+
+## Amendment 7 — 2026-09-07, run `task-m5-005-sensor`, attempt 2, issue #297 structural fix plus four accuracy corrections (dated, with provenance)
+
+Run `task-m5-005-sensor` (work `sensor`, PR #284 at head `623f2cfeb82b2ed3b1554626cfad597235cab1e8`,
+Amendment 6's own delivery above) was rejected at journal seq 16 with five findings, each reproduced
+against real code by an independent verify seat. This amendment records how attempt 2 closed all five.
+
+1. **Structural fail-closed fix (finding 1).** Amendment 6's own fix closed issue #297's
+   zero-derivable-path ALLOW for exactly one scheme (`ssh`), via an `UNRESOLVABLE_URI_SCHEMES` table
+   holding that one name alongside an `IGNORED_URI_SCHEMES` table of eleven other recognized schemes
+   (`local`, `memory`, `artifact`, `history`, `agent`, `rule`, `skill`, `mcp`, `issue`, `pr`, `omp`) that
+   still ALLOWed unconditionally -- and any call producing zero raw candidates at all (`write {}`, a
+   non-string `path`, `edit` with no hashline header, a blank `path`) fell through the same old default.
+   Reproduced live via a real `bun run` fixture probe: all eleven non-`ssh` schemes, plus those four
+   malformed shapes, returned ALLOW. `.omp/extensions/orc-seat.ts` now decides by DERIVABILITY, never by
+   scheme-name lookup: a `write`/`edit` call is denied whenever it yields zero candidates this guard can
+   resolve to a comparable local filesystem path, for any reason -- both scheme tables are deleted
+   outright, so a scheme invented tomorrow fails closed automatically. See that file's own header and
+   `Guard` section for the mechanism.
+2. **Executable red-then-green (finding 2).** Attempt 1's swap target, `git show
+   ef093a318ee7b1121b71c77b062a3a0f6a002b20:.omp/extensions/orc-seat.ts`, predates this file's own
+   `extractUnresolvableTargets` export and never loaded under the test file that imports it -- a swap
+   that proves nothing. The correct "pre-change" baseline for THIS delivery's own fix is this run's own
+   attempt 1, head `623f2cf`, which already exports every symbol the test file imports (it always has --
+   the test file's imports were never the problem; the swap TARGET was). Swapping it in and running
+   `bun test ./.omp/extensions/__tests__/orc-seat.test.ts` now produces a genuine red run (22 pass, 16
+   fail -- exactly the sixteen new assertions this attempt added: eleven non-`ssh` schemes plus five
+   malformed-argument shapes); restoring this attempt's own source produces a genuine green run (38
+   pass, 0 fail). See this PR's body for both raw command outputs.
+3. **`verify.md` pair declared in scope (finding 3).** Amendment 6's delivery modified both
+   `.omp/agents/verify.md` and `src/orc_werk/omp_scaffold/agents/verify.md` (one line each, kept in
+   sync) while its own PR body claimed the pair unchanged -- false, reproduced via `git diff
+   --name-status`. The edit itself is correct and is kept: it reframes the verify seat's
+   push/commit/comment/review boundary from an ambiguous "to a shared branch" qualifier to its actual
+   unconditional scope, and states plainly that this is POLICY, not a hook-enforced mechanism -- a
+   direct, necessary consequence of Amendment 4 deleting the hook guard (guard 3) that the old wording's
+   framing implied still existed. This amendment records the pair as in-scope, not untouched, and why.
+   `PackagedScaffoldDriftTest.test_verify_matches_live_seat_modulo_allowlist` continues to pass
+   unmodified with no allowlist change (`git diff --exit-code eea2319..HEAD --
+   tests/scenarios/test_cli_onboard.py` is clean).
+4. **Enforcement inventory re-derived and misclassification fixed (finding 4).** Re-running this card's
+   own `awk` enumeration command against the final diff found different counts than Amendment 6's PR
+   body claimed, and that PR body did not publish the full per-line output it asserted -- both corrected
+   in this attempt's PR body (the full per-line table, from a fresh run at this attempt's own head, is
+   there, not reproduced here per this card's own convention, e.g. Amendment 6's `:502-505` above). Two
+   further corrections: this card's own frontmatter `description` (`:6`) said the hook "enforces" four
+   rules -- LIVE, undated, normative text, not historical -- corrected above (this amendment) to
+   describe the single advisory tripwire Amendments 4-6 actually left; and `.omp/extensions/orc-seat.ts`'s
+   `Guard` section (the "ship seat's edits stay inside its own `.worktrees/<branch>`" heading) stated the
+   fence rule without repeating the tripwire qualifier at that specific location -- it now does, in the
+   same paragraph, citing the file's own header.
+5. **Verify seat tool-list claim corrected (finding 5).** Amendment 6's PR body claimed the verify
+   seat's tool list "grants no bash/gh write access" -- false: `.omp/agents/verify.md`'s `tools:`
+   frontmatter has always granted `bash` (unchanged by this card or this run). The real boundary,
+   unaffected by this correction, is policy stated in `verify.md`'s own body plus after-the-fact
+   ledger/PR-history audit -- never a withheld tool; this attempt's PR body states that correctly. This
+   card's own Guard 2/Guard 5 split (Amendment 6, `:516-528` above) was already correct and needed no
+   change; only the prior attempt's PR body had bundled them, corrected there.
+
+This amendment does not reopen guards 1, 2, 3, or 5, and does not change
+`.omp/extensions/orc-seat.ts`'s single-retained-guard scope; guard 4 remains the only guard the file
+implements, now fixed to fail closed on derivability rather than an enumerated scheme list.

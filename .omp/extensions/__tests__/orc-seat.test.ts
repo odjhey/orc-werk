@@ -33,6 +33,24 @@
 // -- exactly the shape a real `ctx.sessionManager` returns (confirmed against real
 // session transcript files; see the block comment at the top of `../orc-seat.ts` and
 // this card's PR body for the live citation).
+//
+// This file imports ONLY the four symbols `../orc-seat.ts` has exported since before
+// this card's own attempt 1 (`evaluateWorktreeFenceGuard`, `extractCandidatePaths`,
+// `extractUnresolvableTargets`, the default `orcSeat` factory) -- never an internal
+// helper (`classifyRaw`, `rawCandidates`, the removed scheme tables). This is what
+// makes the swap below EXECUTABLE: this exact test file's module load succeeds against
+// either revision, so the swap proves a real assertion-level diff, never a module-load
+// crash standing in for one (ledger `task-m5-005-sensor` seq 16, REJECT finding 2 --
+// the prior attempt's swap target, `git show ef093a3:...`, predates
+// `extractUnresolvableTargets`'s introduction entirely and was never loadable; the
+// correct "pre-change" baseline for THIS delivery's own fix is this run's own attempt 1,
+// head `623f2cf`, which already exports all four symbols this file uses). Reproduce
+// the swap yourself:
+//
+//   git show 623f2cf:.omp/extensions/orc-seat.ts | sponge .omp/extensions/orc-seat.ts
+//   bun test ./.omp/extensions/__tests__/orc-seat.test.ts   # RED: see this card's PR body for the exact counts
+//   git checkout HEAD -- .omp/extensions/orc-seat.ts        # or: git show <this commit>:... | sponge ...
+//   bun test ./.omp/extensions/__tests__/orc-seat.test.ts   # GREEN: see this card's PR body for the exact counts
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -168,7 +186,7 @@ describe("worktree fence: the ship seat's write/edit fence (own worktree, not an
     expect(evaluateWorktreeFenceGuard("verify", "write", { path: "/tmp/outside.txt" }, "/repo/.worktrees/x")).toBeUndefined();
   });
 
-  test("a write with an internal-URL path (never a filesystem escape) is ignored", () => {
+  test("extractCandidatePaths never treats an internal-URI-shaped target as a filesystem path", () => {
     expect(extractCandidatePaths("write", { path: "local://plan.md" })).toEqual([]);
   });
 
@@ -229,13 +247,15 @@ describe("worktree fence soundness (issue #296): symlinks, colon/scheme selector
     expect(result).toEqual({ block: true, reason: expect.stringContaining("own worktree") });
   });
 
-  test("RED-then-GREEN — a path containing an unrecognized `scheme://` is still evaluated as a filesystem path", () => {
+  test("RED-then-GREEN — a path whose full string is not scheme-shaped (leading `./`) is still evaluated as a filesystem path", () => {
     const { shipCwd } = makeShipWorktree("task-x");
     // The pre-#296 extractor skipped any candidate containing `://` outright
     // (`raw.includes("://")`), so this candidate produced zero readings and the guard
-    // never even ran a comparison. `colon` is not a recognized internal-URI scheme
-    // (`local://`, `memory://`, ...), so the fixed extractor still evaluates it and
-    // finds the literal reading resolves to the `.worktrees` sibling `outside-probe`.
+    // never even ran a comparison. `INTERNAL_URI_SCHEME_RE` is anchored at the string's
+    // START (`^scheme://`); this raw string starts with `./`, not a scheme, so it is
+    // never classified `"unresolvable"` at all -- it is an ordinary (if odd-looking)
+    // filesystem path, and the fixed extractor still evaluates it and finds the literal
+    // reading resolves to the `.worktrees` sibling `outside-probe`.
     const result = evaluateWorktreeFenceGuard(
       "ship",
       "write",
@@ -263,19 +283,25 @@ describe("worktree fence soundness (issue #296): symlinks, colon/scheme selector
 });
 
 // ---------------------------------------------------------------------------------------
-// Fail-closed on unresolvable targets (issue #297): the sole surviving guard's own
-// "zero path candidates means nothing to check" default silently turned into ALLOW for
-// a `write`/`edit` target this guard genuinely cannot resolve to a local path -- proven
-// live against `ssh://tiny/tmp/orc-seat-escape.txt` (`{"result":"ALLOW"}`), which the
-// harness tool surface documents as a real, writable remote target. Each test below
-// FAILS against the pre-#297 implementation (`git show
-// ef093a318ee7b1121b71c77b062a3a0f6a002b20:.omp/extensions/orc-seat.ts`, this card's own
-// prior delivery, where `evaluateWorktreeFenceGuard("ship", "write", { path:
-// "ssh://tiny/tmp/orc-seat-escape.txt" }, shipCwd)` returns `undefined` -- verified live
-// before this change) and PASSES against the fixed one below.
+// Fail-closed on zero derivable local paths (issue #297): the sole surviving guard's own
+// "zero path candidates means nothing to check" default silently turned into ALLOW for a
+// `write`/`edit` target this guard genuinely cannot resolve to a local path. Attempt 1 of
+// this run (head `623f2cf`) closed this for `ssh://` alone, via an `UNRESOLVABLE_URI_
+// SCHEMES` table holding exactly that one name, while an `IGNORED_URI_SCHEMES` table of
+// eleven OTHER recognized schemes -- and any zero-raw-candidate call at all (`write {}`,
+// a non-string `path`, `edit` with no hashline, a blank `path`) -- still fell through to
+// ALLOW: reproduced live by an independent verify seat (ledger `task-m5-005-sensor` seq
+// 16, REJECT finding 1) via a real `bun run` fixture probe. This delivery (attempt 2)
+// replaces both tables with one structural rule in `classifyRaw`/`evaluateWorktreeFence
+// Guard`: a call is denied whenever it yields zero candidates this guard can derive to a
+// LOCAL filesystem path, regardless of why -- no scheme name is ever consulted against a
+// list. Each RED-then-GREEN pair below FAILS against attempt 1's implementation (`git
+// show 623f2cf:.omp/extensions/orc-seat.ts`, this run's own prior, rejected delivery --
+// see this file's header for the exact swap command and this card's PR body for both
+// raw run outputs) and PASSES against the fixed one below.
 // ---------------------------------------------------------------------------------------
 
-describe("worktree fence fail-closed on unresolvable targets (issue #297)", () => {
+describe("worktree fence fail-closed on zero derivable local paths (issue #297, attempt 2: derivability, not a scheme list)", () => {
   function makeShipWorktree(branch: string): { shipCwd: string } {
     const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "orc-seat-unresolvable-")));
     const shipCwd = path.join(tmpRoot, "repo", ".worktrees", branch);
@@ -285,32 +311,15 @@ describe("worktree fence fail-closed on unresolvable targets (issue #297)", () =
 
   test("RED-then-GREEN — an ssh:// write target (no local path to compare) is denied, not silently allowed", () => {
     const { shipCwd } = makeShipWorktree("task-x");
-    // Pre-fix: `ssh` sat in the same scheme table as `local://`, so `pathReadings`
-    // returned zero readings and the guard's own `candidates.length === 0` check
-    // treated "nothing to compare" as ALLOW. `ssh://` genuinely writes to a REAL
-    // (remote) filesystem target this guard has no local path to compare, unlike
-    // `local://`'s own internal, never-touches-disk store -- so zero readings must not
-    // mean "nothing to check" here.
-    const result = evaluateWorktreeFenceGuard(
-      "ship",
-      "write",
-      { path: "ssh://tiny/tmp/orc-seat-escape.txt" },
-      shipCwd,
-    );
-    expect(result).toEqual({
-      block: true,
-      reason: expect.stringContaining("ssh://tiny/tmp/orc-seat-escape.txt"),
-    });
+    const result = evaluateWorktreeFenceGuard("ship", "write", { path: "ssh://tiny/tmp/orc-seat-escape.txt" }, shipCwd);
+    expect(result).toEqual({ block: true, reason: expect.stringContaining("ssh://tiny/tmp/orc-seat-escape.txt") });
   });
 
   test("RED-then-GREEN — an ssh:// edit target named in the hashline header is denied, not silently allowed", () => {
     const { shipCwd } = makeShipWorktree("task-x");
     const input = { input: "[ssh://tiny/tmp/orc-seat-escape.txt#A1B2]\nPUT 1.=1:\n+x\n" };
     const result = evaluateWorktreeFenceGuard("ship", "edit", input, shipCwd);
-    expect(result).toEqual({
-      block: true,
-      reason: expect.stringContaining("ssh://tiny/tmp/orc-seat-escape.txt"),
-    });
+    expect(result).toEqual({ block: true, reason: expect.stringContaining("ssh://tiny/tmp/orc-seat-escape.txt") });
   });
 
   test("extractUnresolvableTargets surfaces the ssh:// candidate; extractCandidatePaths does not", () => {
@@ -319,17 +328,85 @@ describe("worktree fence fail-closed on unresolvable targets (issue #297)", () =
     expect(extractCandidatePaths("write", input)).toEqual([]);
   });
 
-  test("ALLOWED — a recognized never-touches-disk internal URL (local://) is still ignored, not denied as unresolvable", () => {
-    const input = { path: "local://plan.md" };
-    expect(extractUnresolvableTargets("write", input)).toEqual([]);
-    expect(extractCandidatePaths("write", input)).toEqual([]);
-    const { shipCwd } = makeShipWorktree("task-x");
-    expect(evaluateWorktreeFenceGuard("ship", "write", input, shipCwd)).toBeUndefined();
-  });
-
   test("ALLOWED — the seat's own genuinely-inside write is unaffected by the fail-closed check", () => {
     const { shipCwd } = makeShipWorktree("task-x");
     const result = evaluateWorktreeFenceGuard("ship", "write", { path: "inside.txt" }, shipCwd);
+    expect(result).toBeUndefined();
+  });
+
+  // Every internal-URI scheme this repo's own `read`/`write`/`edit` tool surface
+  // documents (`omp://internal-schemes.md`-adjacent tool descriptions: `local://`,
+  // `memory://`, `artifact://`, `history://`, `agent://`, `rule://`, `skill://`,
+  // `mcp://`, `issue://`, `pr://`, `omp://`) plus `ssh://` -- twelve in total, matching
+  // this card's own required coverage list. Attempt 1 ALLOWed the first eleven of these
+  // unconditionally (`IGNORED_URI_SCHEMES`); this loop proves none of the twelve is
+  // special-cased any more, `local://` included -- reversing attempt 1's own assumption
+  // that "documented as never touching a real filesystem" meant "safe to skip checking".
+  const TWELVE_SCHEMES = [
+    "local",
+    "memory",
+    "artifact",
+    "history",
+    "agent",
+    "rule",
+    "skill",
+    "mcp",
+    "issue",
+    "pr",
+    "omp",
+    "ssh",
+  ] as const;
+
+  for (const scheme of TWELVE_SCHEMES) {
+    test(`RED-then-GREEN — a write targeting \`${scheme}://...\` is denied for zero derivable local paths, not silently allowed`, () => {
+      const { shipCwd } = makeShipWorktree(`task-scheme-${scheme}`);
+      const target = `${scheme}://probe/target.txt`;
+      const result = evaluateWorktreeFenceGuard("ship", "write", { path: target }, shipCwd);
+      expect(result).toEqual({ block: true, reason: expect.stringContaining(target) });
+      expect(extractUnresolvableTargets("write", { path: target })).toEqual([target]);
+      expect(extractCandidatePaths("write", { path: target })).toEqual([]);
+    });
+  }
+
+  // Malformed/missing-argument shapes: attempt 1 ALLOWed each of these too, for the
+  // identical underlying reason as the eleven schemes above -- `rawCandidates` (or its
+  // downstream classification) produced zero readings, and zero readings meant ALLOW.
+  test("RED-then-GREEN — write with an empty object (no `path` field at all) is denied, not silently allowed", () => {
+    const { shipCwd } = makeShipWorktree("task-malformed-empty-object");
+    const result = evaluateWorktreeFenceGuard("ship", "write", {}, shipCwd);
+    expect(result).toEqual({ block: true, reason: expect.stringContaining("no string `path` field") });
+  });
+
+  test("RED-then-GREEN — write with a non-string `path` is denied, not silently allowed", () => {
+    const { shipCwd } = makeShipWorktree("task-malformed-non-string");
+    const result = evaluateWorktreeFenceGuard("ship", "write", { path: 42 }, shipCwd);
+    expect(result).toEqual({ block: true, reason: expect.stringContaining("no string `path` field") });
+  });
+
+  test("RED-then-GREEN — edit whose `input` text carries no `[<path>#<TAG>]` hashline header is denied, not silently allowed", () => {
+    const { shipCwd } = makeShipWorktree("task-malformed-no-hashline");
+    const result = evaluateWorktreeFenceGuard("ship", "edit", { input: "PUT 1.=1:\n+x\n" }, shipCwd);
+    expect(result).toEqual({ block: true, reason: expect.stringContaining("no `[<path>#<TAG>]` hashline target") });
+  });
+
+  test("RED-then-GREEN — an empty-string `path` is denied, not silently allowed", () => {
+    const { shipCwd } = makeShipWorktree("task-malformed-empty-string");
+    const result = evaluateWorktreeFenceGuard("ship", "write", { path: "" }, shipCwd);
+    expect(result).toEqual({ block: true, reason: expect.stringContaining("(empty path)") });
+  });
+
+  test("RED-then-GREEN — a whitespace-only `path` is denied, not silently allowed", () => {
+    const { shipCwd } = makeShipWorktree("task-malformed-whitespace");
+    const result = evaluateWorktreeFenceGuard("ship", "write", { path: "   " }, shipCwd);
+    expect(result).toEqual({ block: true, reason: expect.stringContaining("(blank path)") });
+  });
+
+  test("ALLOWED — a non-blank path merely containing whitespace padding is an ordinary candidate, not denied as blank", () => {
+    // Guards against the blank check above being too eager: only a string that is
+    // EMPTY OR ENTIRELY whitespace (`.trim() === ""`) is treated as blank. A path with
+    // real, non-whitespace content is unaffected, even with leading/trailing padding.
+    const { shipCwd } = makeShipWorktree("task-whitespace-padding-ok");
+    const result = evaluateWorktreeFenceGuard("ship", "write", { path: "  inside.txt" }, shipCwd);
     expect(result).toBeUndefined();
   });
 });
