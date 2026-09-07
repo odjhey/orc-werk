@@ -25,7 +25,7 @@ or actually stops a task's descendants on timeout.
 
 ## Outcome
 
-A dated report at `docs/reports/2026-09-xx-omp-capability-test.md`
+A dated report at `docs/reports/2026-09-07-omp-capability-test.md`
 recording, for each of the five capability-test points: the OMP version,
 models/backends used, the exact permission/tool configuration, the exact
 command run, the observed result (pass/fail, quoted output or transcript
@@ -59,7 +59,7 @@ this card).
 
 ## Acceptance
 
-- The report exists at `docs/reports/2026-09-xx-omp-capability-test.md`
+- The report exists at `docs/reports/2026-09-07-omp-capability-test.md`
   with all five points recorded pass/fail against the real installed OMP
   version, each with the exact command and observed output or transcript
   path cited.
