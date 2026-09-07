@@ -89,7 +89,7 @@ shipped yet.
 
 Eleven runs carry ledger evidence for this question: the pilot itself, its
 same-day follow-up, two external-candidate-lane adoptions, and the
-2026-09-07 wave of six further deliveries (one still in flight).
+2026-09-07 wave of seven further deliveries, all now settled.
 
 | Run (PR) | Ship model / session | Verify model / session | Verdict (attempts) |
 |---|---|---|---|
@@ -103,7 +103,7 @@ same-day follow-up, two external-candidate-lane adoptions, and the
 | `task-m5-006` (#275) | `anthropic/claude-sonnet-5` / `ShipM5006` | `google-antigravity/gemini-3.8-flash` / `VerifyM5006` | accepted (1) |
 | `fix-266-reobservation` (#276) | `claude-sonnet-5` / `ShipFix266` | `google-antigravity/gemini-3.8-flash` / `VerifyFix266` | accepted (1) |
 | `task-m5-001` (#277) | `anthropic/claude-sonnet-5:medium` / `ShipM5001` | `google-antigravity/gemini-3.8-flash` / `VerifyM5001` | accepted (1) |
-| `chore-verify-followups` (#278) | not yet settled | not yet settled | **pending** |
+| `chore-verify-followups` (#278) | `anthropic/claude-sonnet-5` / `ShipCleanup` | `google-antigravity/gemini-3.8-flash` / `VerifyCleanup` | accepted (1) |
 
 (Citation for each row: `.orc/<run>/journal.jsonl` `FACT-EXEC-SETTLED` /
 `FACT-ASSURE-SETTLED` `extensions."executor-identity/v1"`, seq 10/16 for
@@ -134,7 +134,7 @@ match on `openai-codex` returns nothing). Ship ran on the `anthropic` family
 (or, for the two external-candidate-lane adoptions, on `xai-oauth/grok-4.6`
 via the watchtower's own session — see below). So `V7`'s actual risk-control
 purpose — verify on a materially different model family than ship, so a
-shared failure mode can't slip both seats — held for every one of these ten
+shared failure mode can't slip both seats — held for every one of these eleven
 settled deliveries.
 
 But `ADR-0007`'s `V7` ruling is not written as "any non-Anthropic family": it
@@ -147,10 +147,11 @@ dying at `usage_limit_reached` within the pilot's own run, and
 `.omp/agents/verify.md`'s `model:` list was reordered same-day to lead with
 `google-antigravity/gemini-3.8-flash` — logged there as "a recorded
 deviation, not an amendment: revisit once Codex quota is restored." It was
-not revisited: the entire 2026-09-07 wave (nine further settled verify
-verdicts) ran on `google-antigravity` with no `openai-codex` fallback ever
-observed firing. A one-day hand substitution has become the standing
-practice across two calendar days and ten deliveries, while `ADR-0007`'s own
+not revisited: within the ten named deliveries this write-up tracks, all ten
+now carry a settled verify verdict — `chore-verify-followups` was the last to
+settle, at `01:37:18Z` — and every one ran on `google-antigravity` with no
+`openai-codex` fallback ever observed firing. A one-day hand substitution has
+become the standing practice across two calendar days and ten deliveries, while `ADR-0007`'s own
 text still names `openai-codex` as the contract-layer pairing. Per
 `AGENTS.md` rule 4 ("update/propose the canonical contract first when
 behavior is ambiguous"), this is no longer a live, time-boxed deviation with
@@ -159,6 +160,40 @@ a trigger — it needs a formal `ADR-0007` amendment recording
 pairing, not a second week of the ledger quietly deviating from its own
 governing decision. This write-up flags it; amending the ADR is out of this
 card's scope and is named under Ambiguities below.
+
+### A live ledger during a live write-up: counts are snapshots, not totals
+
+This section's own settled-verdict counts moved three times while this card
+was in flight — worth recording as a property of auditing a ledger the
+write-up itself contributes to, not an error to average away. Scoped to the
+ten named deliveries in the table above: this write-up's first attempt
+(commit `0584a66`, 2026-09-07T01:47:30Z) said nine settled verify verdicts,
+because it missed that `chore-verify-followups` had already settled
+(`.orc/chore-verify-followups/journal.jsonl` `FACT-ASSURE-SETTLED` seq 16,
+`01:37:18Z` — ten minutes before that commit); the verify seat that rejected
+the attempt recounted correctly to ten. Separately, and outside this scope: a
+whole-ledger join of every run's `FACT-ASSURE-SETTLED` fact against its own
+`times.jsonl` `observed_at` (not limited to the ten named deliveries) finds
+**eleven** settled verify verdicts on 2026-09-07 and **thirteen** across
+2026-09-06/07 combined, as of `2026-09-07T02:07:16Z` (this correction's own
+recount, captured immediately before committing it). The eleventh-for-
+2026-09-07 is `task-m5-002`/`playbook` (`gh-pr:279`,
+`.orc/task-m5-002/journal.jsonl` seq 16, `google-antigravity/gemini-3.8-flash`,
+settled `01:54:14Z`) — a delivery outside this card's own named Sources list,
+which settled after the rejecting verify seat's recount and before this
+correction's. Every count above states its scope (the ten named deliveries,
+or the whole ledger) and its cutoff, because an integer against a ledger
+still being written to is unfalsifiable without both.
+
+What does not move with any of this: across the entire ledger (71 top-level
+`FACT-ASSURE-SETTLED` facts, every run directory, all-time — not just
+2026-09-06/07), zero recorded `openai-codex` as the verify model, checked
+directly against each fact's own `executor-identity/v1.model` (top-level
+facts only; a `DEC-*` entry's `basis` array embeds a duplicate copy of the
+fact it cites, which a naive text search double-counts). Every 2026-09-06/07
+settled verify verdict — all thirteen of them — ran on
+`google-antigravity/gemini-3.8-flash`. That is the fact the `ADR-0007` `V7`
+amendment argument below rests on; the day-count is illustration, not load.
 
 ### The two external-candidate-lane runs are not evidence about `.omp/agents/ship.md`
 
@@ -224,7 +259,7 @@ on which it is, not resolved.
 | `task-m5-006` | 30m46s | 44s | 1 |
 | `fix-266-reobservation` | 36m20s | 47s | 1 |
 | `task-m5-001` | 56m29s | 1m36s | 1 |
-| `chore-verify-followups` | in progress; not yet settled | — | — |
+| `chore-verify-followups` | 20m10s | 1m8s | 1 |
 
 (Computed from each run's `times.jsonl` `observed_at` against
 `FACT-EXEC-STARTED`/`FACT-EXEC-SETTLED`/`FACT-ASSURE-STARTED`/
@@ -246,10 +281,12 @@ together, run sequentially soon after" from "true process concurrency," so
 this is an absence of the failure mode in the recorded outcomes, not a
 retest of §7a.
 
-`chore-verify-followups` (PR #278, open, head `7b0e789288654c5e6ebf0b2ba
-2a888122e089df1`) has a `FACT-EXEC-STARTED` (01:16:00) but no
-`FACT-EXEC-SETTLED` in the ledger as of this write-up — its ship-seat cost
-and its verify outcome are both record-silent for now, not zero.
+`chore-verify-followups` (PR #278, merged, head
+`7b0e789288654c5e6ebf0b2ba2a888122e089df1`) has a real `FACT-EXEC-SETTLED`
+(`01:36:10Z`, seq 10) and `FACT-ASSURE-SETTLED` (`01:37:18Z`, seq 16,
+accepted, `google-antigravity/gemini-3.8-flash`) — ship wall 20m10s
+(`01:16:00`→`01:36:10`), verify wall 1m8s (`01:36:10`→`01:37:18`).
+`gh pr view 278` confirms `mergedAt 2026-09-07T01:40:20Z`.
 
 ## 4. Newly observed reliability events
 
@@ -279,9 +316,6 @@ already logged on 2026-09-06.
 - Whether `claude-sonnet-5` (bare) and `anthropic/claude-sonnet-5` (prefixed)
   recorded across different runs denote the same model is not resolvable
   from the ledger alone.
-- `chore-verify-followups` (PR #278) is still executing at the time of this
-  write-up; its seat traffic and cost are not characterized here because the
-  ledger has no settlement to characterize yet.
 
 ## Not covered
 
@@ -289,8 +323,6 @@ already logged on 2026-09-06.
   of this write-up (`EXECUTING`, not `ACCEPTED`); nothing here tests it.
 - A formal amendment to `ADR-0007`'s `V7` wording: named above as needed, not
   performed by this card.
-- Re-deriving `chore-verify-followups`' (#278) ship/verify identities or cost:
-  its ledger entry is not yet settled.
 - Any run outside the eleven listed above; this write-up does not claim to
   characterize the entire M5 migration, only the pilot and the wave that
   followed it, per this card's own scope.
