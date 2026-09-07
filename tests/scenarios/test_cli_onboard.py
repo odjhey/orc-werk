@@ -53,6 +53,25 @@ def _packaged_skill_version() -> str:
     raise AssertionError("no version line in packaged skill frontmatter")
 
 
+def _frontmatter_model(text: str) -> str:
+    """The `model:` field's raw value out of an OMP agent template's
+    frontmatter fence."""
+    lines = text.splitlines()
+    assert lines[0].strip() == "---"
+    end = lines.index("---", 1)
+    for line in lines[1:end]:
+        if line.startswith("model:"):
+            return line.split(":", 1)[1].strip()
+    raise AssertionError("no model: field in frontmatter")
+
+
+def _model_families(model_field: str) -> list[str]:
+    """Each comma-separated resolution-preference entry's model family --
+    the segment before the first `/` (e.g. "anthropic" out of
+    "anthropic/claude-sonnet-5:medium")."""
+    return [entry.strip().split("/", 1)[0] for entry in model_field.split(",")]
+
+
 def _run_cli(cwd: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     full_env = {"PYTHONPATH": str(SRC)}
     if env:
@@ -556,26 +575,224 @@ class OmpScaffoldTest(unittest.TestCase):
         self.assertEqual(ship_path.read_text(encoding="utf-8"), omp_scaffold_agent_text("ship"))
         self.assertIn("omp agents/ship.md: replaced (--force)", output)
 
-    def test_unknown_agent_template_name_is_rejected(self):
-        with self.assertRaises(ValueError):
-            omp_scaffold_agent_text("watchtower")
+    def test_ship_and_verify_scaffold_defaults_are_different_model_families(self):
+        # ADR-0007's V7 ruling: verify must run a model family different
+        # from ship's -- a model-diversity risk control against
+        # self-review-by-construction. Pinned on the actual frontmatter
+        # `model:` field: a future edit that collapses the scaffold
+        # defaults to a same-family ship/verify pairing MUST fail this.
+        ship_family = _model_families(_frontmatter_model(omp_scaffold_agent_text("ship")))[0]
+        verify_families = _model_families(_frontmatter_model(omp_scaffold_agent_text("verify")))
+        self.assertNotIn(
+            ship_family, verify_families,
+            f"verify's model families {verify_families} must exclude ship's family "
+            f"{ship_family!r} per ADR-0007's V7 ruling",
+        )
 
-    def test_agent_templates_carry_valid_frontmatter_with_a_model_field(self):
-        # Each template must parse as a `name:`/`model:` frontmatter block an
-        # OMP agent definition needs; a fork that drops the model comment or
-        # breaks the fence would fail this.
-        for name in OMP_AGENT_NAMES:
-            text = omp_scaffold_agent_text(name)
-            lines = text.splitlines()
-            self.assertEqual(lines[0].strip(), "---")
-            end = lines.index("---", 1)
-            frontmatter = "\n".join(lines[1:end])
-            self.assertIn(f"name: {name}", frontmatter)
-            self.assertIn("model:", frontmatter)
-            self.assertIn(
-                "TEMPLATE (orc onboard --omp)", frontmatter,
-                "template must tell the adopter to pick their own account's models",
+
+# ---------------------------------------------------------------------------
+# Packaged-scaffold drift (TASK-M5-007 attempt 2): the five packaged
+# resources under src/orc_werk/omp_scaffold/ are an authored copy of this
+# repository's own live .omp/ seat definitions (see omp_scaffold/__init__.py's
+# docstring), not a symlink -- so every difference from the live seat must be
+# either one of the enumerated adopter-facing substitutions below or drift.
+# This is the mechanical signal that catches a protocol/safety edit to a live
+# .omp/agents/*.md seat that never got propagated to the packaged copy.
+# ---------------------------------------------------------------------------
+
+# Each entry: (old snippet from the live .omp/ file, new snippet in the
+# packaged template, reason it's an intentional adopter-facing difference
+# rather than drift). Applied to the live text IN ORDER; the result must
+# equal the packaged text exactly. Extend this table -- never widen a
+# snippet or drop reasoning -- when a new intentional divergence is added.
+_ADOPTER_SUBSTITUTIONS: dict[str, list[tuple[str, str, str]]] = {
+    "agents/scout.md": [
+        (
+            "description: Read-only reconnaissance seat. Maps contracts, proposes decompositions, "
+            "lists ambiguities, and assesses proposals. Cites file:line for every load-bearing claim. "
+            "Writes nothing to the repository.\nmodel: anthropic/claude-opus-5:high",
+            "description: Read-only reconnaissance seat. Maps contracts, proposes decompositions, "
+            "lists ambiguities, and assesses proposals. Cites file:line for every load-bearing claim. "
+            "Writes nothing to the repository.\n"
+            "# TEMPLATE (orc onboard --omp): model: below mirrors orc-werk's own pilot default.\n"
+            "# Scout is read-only reconnaissance, never verdict-bearing, so it may share ship's\n"
+            "# model family; pick any model available in your own account.\n"
+            "model: anthropic/claude-opus-5:high",
+            "adopter-facing model-pin disclaimer (account-specific, out of scope per TASK-M5-007)",
+        ),
+    ],
+    "agents/ship.md": [
+        (
+            "description: Implementation seat. Ships exactly one task card in its own git worktree and "
+            "PR, runs the local gate, records the execution settlement in the orc ledger, never merges, "
+            "never verifies its own work.\nmodel: anthropic/claude-sonnet-5:medium",
+            "description: Implementation seat. Ships exactly one task card in its own git worktree and "
+            "PR, runs the local gate, records the execution settlement in the orc ledger, never merges, "
+            "never verifies its own work.\n"
+            "# TEMPLATE (orc onboard --omp): model: below mirrors orc-werk's own pilot default.\n"
+            "# Pick a model available in your own account for this seat. The verify seat below\n"
+            "# must run a different model family than this one (a model-diversity risk control) --\n"
+            "# confirm a different-family model is actually available before first use.\n"
+            "model: anthropic/claude-sonnet-5:medium",
+            "adopter-facing model-pin disclaimer",
+        ),
+        (
+            "- Work only inside `.worktrees/<branch>` under the repository root. Create it with "
+            "`git worktree add .worktrees/<branch> -b <branch> master`.\n"
+            "- Never merge, never push to `master`, never run `gh pr merge`, never record an assurance "
+            "verdict. Landing is the watchtower's act.\n"
+            "- The ledger lives at the primary checkout root: always run `orc` as "
+            "`ORC_JOURNAL_DIR=<repo-root>/.orc uv run --project <repo-root> orc ...`.",
+            "- Work only inside `.worktrees/<branch>` under the repository root. Create it with "
+            "`git worktree add .worktrees/<branch> -b <branch> <default-branch>`.\n"
+            "- Never merge, never push to the default branch, never run `gh pr merge`, never record an "
+            "assurance verdict. Landing is the watchtower's act.\n"
+            "- The ledger lives at the primary checkout root: always run `orc` as "
+            "`ORC_JOURNAL_DIR=<repo-root>/.orc uv run --project <repo-root> orc ...` (adjust the "
+            "invocation to however `orc` is installed in this repo).",
+            "orc-werk's own default branch name (master) and orc install path are repo-specific, "
+            "not portable to an adopter",
+        ),
+        (
+            "2. Implement. Run `bash scripts/check.sh` in the worktree; it must be green. A skipped or "
+            "narrowed check is a defect, not a pass.",
+            "2. Implement. Run the repository's own check script (e.g. `bash scripts/check.sh`) in the "
+            "worktree; it must be green. A skipped or narrowed check is a defect, not a pass.",
+            "orc-werk's own check.sh path is repo-specific, not portable to an adopter",
+        ),
+    ],
+    "agents/verify.md": [
+        (
+            "# V7: every entry is a non-Anthropic family (ship runs on anthropic/*). Never add a "
+            "Claude-family fallback here.\n"
+            "# Order is resolution preference only; a usage-limit error on entry 1 does NOT fall "
+            "through at spawn\n"
+            "# (observed 2026-09-06: two spawns died at usage_limit_reached on openai-codex). Put the "
+            "model with quota first.\n"
+            "model: google-antigravity/gemini-3.8-flash:high, openai-codex/gpt-5.6-sol:high, "
+            "google-antigravity/gpt-oss-120b",
+            "# TEMPLATE (orc onboard --omp): every entry below is a non-Anthropic family, since\n"
+            "# this scaffold's ship seat (.omp/agents/ship.md) templates as anthropic/* -- a\n"
+            "# model-diversity risk control (independent verdict, different failure modes).\n"
+            "# Order is resolution preference only: a spawn-time usage-limit/quota error on\n"
+            "# entry 1 is not guaranteed to fall through to entry 2 unless your harness's own\n"
+            "# retry/fallback configuration names it explicitly -- put the model with quota\n"
+            "# first. Pick models actually available in your own account before first use;\n"
+            "# do not add a Claude-family fallback here while ship runs on anthropic/*.\n"
+            "model: google-antigravity/gemini-3.8-flash:high, openai-codex/gpt-5.6-sol:high, "
+            "google-antigravity/gpt-oss-120b",
+            "adopter-facing model-pin disclaimer; orc-werk's own operational incident note "
+            "(2026-09-06 usage_limit_reached) is not an adopter's history",
+        ),
+        (
+            "- The ledger lives at the primary checkout root: `ORC_JOURNAL_DIR=<repo-root>/.orc uv run "
+            "--project <repo-root> orc ...`.",
+            "- The ledger lives at the primary checkout root: `ORC_JOURNAL_DIR=<repo-root>/.orc uv run "
+            "--project <repo-root> orc ...` (adjust the invocation to however `orc` is installed in "
+            "this repo).",
+            "orc install path is repo-specific, not portable to an adopter",
+        ),
+        (
+            "1. Fetch the PR into your own worktree at the derived sha. Run `bash scripts/check.sh`. A "
+            "green gate is an input, never the verdict.",
+            "1. Fetch the PR into your own worktree at the derived sha. Run the repository's own check "
+            "script (e.g. `bash scripts/check.sh`). A green gate is an input, never the verdict.",
+            "orc-werk's own check.sh path is repo-specific, not portable to an adopter",
+        ),
+        (
+            "4. Decide: `accepted` only when every acceptance criterion holds at the derived sha; "
+            "`rejected` for any defect on advertised behavior (findings verbatim, they become the next "
+            "brief); `inconclusive` when you could not evaluate (tooling down, timeout, sandbox "
+            "missing) \u2014 never `rejected` for a failure that is yours.",
+            "4. Decide: `accepted` only when every acceptance criterion holds at the derived sha; "
+            "`rejected` for any defect on advertised behavior (findings verbatim, they become the next "
+            "brief); `inconclusive` when you could not evaluate (tooling down, timeout, sandbox "
+            "missing) -- never `rejected` for a failure that is yours.",
+            "ASCII-safe em-dash substitution for the packaged template (no functional difference)",
+        ),
+    ],
+    "config.yml": [
+        (
+            "# Project harness config for orc-werk delivery seats (see .omp/agents/*.md).\n"
+            "# Seats are OMP subagents; the orc ledger stays the durable record (ADR-0005).",
+            "# Project harness config for this repo's delivery seats (see .omp/agents/*.md).\n"
+            "# Seats are OMP subagents; the orc ledger stays the durable record (ADR-0005 --\n"
+            "# canonical to the orc-werk repository/package, cited here for context only).\n"
+            "# TEMPLATE (orc onboard --omp): the values below mirror orc-werk's own pilot\n"
+            "# defaults; tune maxRuntimeMs/maxRecursionDepth to taste, nothing here is\n"
+            "# account-specific.",
+            "orc-werk-specific header rephrased for an adopting repo, plus a TEMPLATE disclaimer",
+        ),
+    ],
+    "RULES.md": [
+        (
+            "# orc-werk seat invariants (sticky; mechanics in `.omp/agents/*.md`)",
+            "# Seat invariants (sticky; mechanics in `.omp/agents/*.md`)",
+            "orc-werk's own name dropped from the title for an adopting repo",
+        ),
+    ],
+}
+
+
+def _apply_adopter_substitutions(live_text: str, resource: str) -> str:
+    """Apply each `_ADOPTER_SUBSTITUTIONS[resource]` entry to `live_text`, in
+    order, and return the transformed result -- the packaged scaffold text
+    this predicts. Each `old` snippet must appear exactly once; if a live
+    `.omp/` seat edit changed or removed the surrounding text, the snippet
+    stops matching and this raises immediately, naming the resource and the
+    substitution that broke."""
+    result = live_text
+    for old, new, reason in _ADOPTER_SUBSTITUTIONS[resource]:
+        count = result.count(old)
+        if count != 1:
+            raise AssertionError(
+                f"packaged-scaffold drift check for {resource!r}: allowlisted substitution "
+                f"({reason}) expected exactly one occurrence of the live snippet below in "
+                f".omp/{resource}, found {count}. The live seat changed in a way this allowlist "
+                f"doesn't cover -- propagate the change to src/orc_werk/omp_scaffold/{resource}, "
+                f"or if this IS a new intended adopter-facing substitution, add it to "
+                f"_ADOPTER_SUBSTITUTIONS in this test.\n--- expected live snippet ---\n{old}"
             )
+        result = result.replace(old, new, 1)
+    return result
+
+
+class PackagedScaffoldDriftTest(unittest.TestCase):
+    """Fails the moment a live `.omp/` seat edit isn't propagated to the
+    packaged scaffold and isn't declared as an intended adopter-facing
+    substitution in `_ADOPTER_SUBSTITUTIONS` -- the mechanical signal
+    `omp_scaffold/__init__.py`'s docstring promises: the two copies may
+    differ, but only in enumerated, reasoned ways."""
+
+    def _assert_matches_allowlist(self, resource: str, live_text: str, packaged_text: str):
+        expected = _apply_adopter_substitutions(live_text, resource)
+        self.assertEqual(
+            expected, packaged_text,
+            f"src/orc_werk/omp_scaffold/{resource} has drifted from .omp/{resource} beyond the "
+            f"substitutions enumerated in _ADOPTER_SUBSTITUTIONS -- update the packaged file to "
+            f"match the live seat, or extend the allowlist if the new difference is an intended "
+            f"adopter-facing one.",
+        )
+
+    def test_scout_matches_live_seat_modulo_allowlist(self):
+        live = (REPO_ROOT / ".omp" / "agents" / "scout.md").read_text(encoding="utf-8")
+        self._assert_matches_allowlist("agents/scout.md", live, omp_scaffold_agent_text("scout"))
+
+    def test_ship_matches_live_seat_modulo_allowlist(self):
+        live = (REPO_ROOT / ".omp" / "agents" / "ship.md").read_text(encoding="utf-8")
+        self._assert_matches_allowlist("agents/ship.md", live, omp_scaffold_agent_text("ship"))
+
+    def test_verify_matches_live_seat_modulo_allowlist(self):
+        live = (REPO_ROOT / ".omp" / "agents" / "verify.md").read_text(encoding="utf-8")
+        self._assert_matches_allowlist("agents/verify.md", live, omp_scaffold_agent_text("verify"))
+
+    def test_config_matches_live_seat_modulo_allowlist(self):
+        live = (REPO_ROOT / ".omp" / "config.yml").read_text(encoding="utf-8")
+        self._assert_matches_allowlist("config.yml", live, omp_scaffold_config_text())
+
+    def test_rules_matches_live_seat_modulo_allowlist(self):
+        live = (REPO_ROOT / ".omp" / "RULES.md").read_text(encoding="utf-8")
+        self._assert_matches_allowlist("RULES.md", live, omp_scaffold_rules_text())
 
 
 # ---------------------------------------------------------------------------

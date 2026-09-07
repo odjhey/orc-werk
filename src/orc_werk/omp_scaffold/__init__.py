@@ -23,16 +23,24 @@ frontmatter pins orc-werk-account-specific model families (`ADR-0007`'s
 `V7` ruling), which must not silently drift onto an adopter who has no
 reason to run the same accounts.
 
-So the templates below are a second, DELIBERATELY independent, authored
-copy of the pilot's agent *shape* (frontmatter fields, tool boundaries,
-protocol steps) -- not a byte-for-byte mirror of whatever this repository's
-own `.omp/agents/*.md` currently pin. Each template's `model:` field
-carries orc-werk's own pilot default (per `TASK-M5-007`'s card: templating
-per-repo model choices is out of scope, so the default ships as-is, same
-as the skill's own operator-modification model) plus a leading frontmatter
-comment telling the adopter to pick models available in their own account
-and keep `ship`/`verify` on different model families before first use --
-so a fresh adopter is told, not silently left to discover a spawn failure.
+So the templates below are an authored copy of the live seats' *shape*
+(frontmatter fields, tool boundaries, protocol steps), generalized in a
+small, enumerated set of places: account-specific `model:` pins get an
+adopter-facing disclaimer comment, and orc-werk-repo-specific text (the
+`master` branch name, `scripts/check.sh`'s path, this repo's own
+incident notes) is reworded to something portable to an unknown adopter.
+
+**The invariant: every other byte matches, and drift is mechanically
+caught.** This is not a fork free to diverge --
+`tests/scenarios/test_cli_onboard.py`'s `PackagedScaffoldDriftTest` diffs
+each file here against its live `.omp/` counterpart and fails the build on
+any difference that is not one of the substitutions enumerated in that
+test's `_ADOPTER_SUBSTITUTIONS` table. A protocol or safety edit to a live
+`.omp/agents/*.md` seat (tool boundaries, recording steps, `RULES.md`'s
+invariants) that is not also propagated here breaks that test, naming the
+file and the substitution that no longer matches -- the fix is to update
+the template to match, or, if the new difference really is an intended
+adopter-facing generalization, to add it to the allowlist.
 """
 
 from __future__ import annotations

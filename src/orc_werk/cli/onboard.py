@@ -49,17 +49,16 @@ steps, each independently idempotent and each reported honestly:
    discipline as the skill: every byte is read from THIS installed
    package (`orc_werk.omp_scaffold`, via `importlib.resources`), never a
    second copy hand-maintained in this module's own source -- see
-   `orc_werk.omp_scaffold`'s docstring for why these templates are a
-   DELIBERATELY independent authored copy of orc-werk's own `.omp/`
-   files, not a symlink to them (unlike the skill's chain): the templated
-   `model:` frontmatter mirrors orc-werk's own pilot default (`ADR-0007`;
-   templating per-repo model choices is out of scope per the task card)
-   but carries a leading comment telling the adopter to pick models
-   available in their own account and keep `ship`/`verify` on different
-   model families before first use, so a fresh adopter is told rather
-   than silently left to discover a spawn failure. With the trigger
-   absent, this step installs nothing and today's onboarding behavior
-   (skill + agents-block only) is unchanged.
+   `orc_werk.omp_scaffold`'s docstring for why these templates are an
+   authored copy of orc-werk's own `.omp/` files, not a symlink to them
+   (unlike the skill's chain): every difference from the live files is
+   drift-checked by `tests/scenarios/test_cli_onboard.py`'s
+   `PackagedScaffoldDriftTest` against an enumerated allowlist (account-
+   specific `model:` pins get an adopter-facing disclaimer; orc-werk-
+   repo-specific phrasing is generalized), so a live seat edit that isn't
+   propagated here breaks the build rather than silently drifting. With
+   the trigger absent, this step installs nothing and today's onboarding
+   behavior (skill + agents-block only) is unchanged.
 6. **install verification** -- honestly reports what resolved: `orc` on
    `$PATH` (`shutil.which`) vs. this interpreter's own ability to import
    `orc_werk` (module form); the journal directory `--journal`/
@@ -157,8 +156,8 @@ OMP_AGENT_NAMES = ("scout", "ship", "verify")
 def omp_scaffold_agent_text(name: str) -> str:
     """One `.omp/agents/<name>.md` template's canonical content, read from
     THIS installed package -- see `orc_werk.omp_scaffold`'s docstring for
-    why this is a deliberately independent authored copy of orc-werk's own
-    `.omp/agents/<name>.md`, not a symlink to it."""
+    why this is an authored copy of orc-werk's own `.omp/agents/<name>.md`
+    (drift-checked by `PackagedScaffoldDriftTest`), not a symlink to it."""
     if name not in OMP_AGENT_NAMES:
         raise ValueError(f"unknown OMP agent template: {name!r}")
     return (
