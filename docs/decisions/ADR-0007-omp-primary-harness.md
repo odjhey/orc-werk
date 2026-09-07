@@ -80,10 +80,10 @@ Option 2.
 | Role definitions (scout/ship/verify) | prose §Roles in `PLAYBOOK-WATCHTOWER` | `.omp/agents/{scout,ship,verify}.md` frontmatter + body |
 | Model/effort per seat | prose §Model and effort selection | agent `model:` field, `thinking-level`, per-item `effort` |
 | Result contract (`VERDICT:`, Ambiguities) | prose in `PLAYBOOK-AGENT-CLI` | agent `output:` JSON schema with `schemaMode: strict`; a missing required field is a failure, not a question |
-| Verify seat cannot push/commit/comment | prose §2/§4 | agent `tools` restriction + a `tool_call` hook blocking `git push`/`git commit`/`gh pr comment`/`gh pr review`/`gh pr merge` |
-| Ship works in its own worktree; never merges | prose Conventions + `AGENTS.md` | ship agent creates `.worktrees/<branch>`; a hook fences `edit`/`write` to that path; the PR stays the externally resolvable candidate |
+| Verify seat cannot push/commit/comment | prose §2/§4 | agent `tools` restriction + a `tool_call` hook blocking `git push`/`git commit`/`gh pr comment`/`gh pr review`/`gh pr merge` — **superseded 2026-09-07, no hook ships; see the "hook rung is retired" amendment below** |
+| Ship works in its own worktree; never merges | prose Conventions + `AGENTS.md` | ship agent creates `.worktrees/<branch>`; a hook fences `edit`/`write` to that path; the PR stays the externally resolvable candidate — **superseded 2026-09-07, no hook ships; see the "hook rung is retired" amendment below** |
 | Dispatch brief | task card + `orc dispatch` intent | unchanged: task card is the tier-1 durable spec; the batch/task brief is the tier-2 brief, no new file |
-| Record before yield | prose | a `tool_call` hook on `yield` blocked until a successful `orc record` was observed in the session |
+| Record before yield | prose | a `tool_call` hook on `yield` blocked until a successful `orc record` was observed in the session — **superseded 2026-09-07, no hook ships; enforced instead by the ledger's own state machine for assurance-bearing paths, see the 2026-09-07 `docs-hook-capability-limit` amendment's rung 3, unaffected by the further hook-retirement amendment below** |
 | Executor identity (`executor-identity/v1`) | hand-typed `--model`/`--session-ref`/`--seat-ref` | model resolved from the agent's own `model:`; `session_ref`/`seat_ref` derived from the OMP session/agent identity; documented in `docs/adapters/omp/` |
 | Evidence / transcript | PR body, `.orc` evidence refs | + `history://<id>`, referenced from the ledger as supplementary, machine-local evidence |
 | Fresh-session orientation | skill §9 prose | unchanged: bare `orc` first; `.omp/RULES.md` carries the sticky seat invariants |
@@ -139,14 +139,22 @@ executor pushing observations in" is exactly the seam that ADR defines.
 This ADR restates it explicitly for the OMP migration so it is not
 mistakenly read as reopened: **no `.omp/extensions/*` hook or OMP task
 mechanism writes to `.orc` directly, ever.** Hooks (`.omp/extensions/
-orc-seat.ts`, `TASK-M5-005`) are sensors only — they may **block** a
-`tool_call` (deny `git push` from the verify role, deny `yield` until a
-successful `orc record` was observed in the session, deny `gh pr merge`
-from any subagent) but they never call `orc record` or edit a journal
-file themselves. Every ledger write remains a seat pushing its own
-observation via `orc record` or a merge-only config edit, exactly as
-`PLAYBOOK-AGENT-CLI` already requires of every executor regardless of
-harness.
+orc-seat.ts`, `TASK-M5-005`) are sensors only — as designed on
+2026-09-06, they were meant to **block** a `tool_call` (deny `git push`
+from the verify role, deny `yield` until a successful `orc record` was
+observed in the session, deny `gh pr merge` from any subagent).
+**Superseded 2026-09-07 — see "Amendment (2026-09-07): the `tool_call`
+hook rung is retired, not merely descoped" below.** None of that
+blocking design ever reached `master`: `TASK-M5-005` was tested to
+exhaustion across three independent escape classes and abandoned;
+`.omp/extensions/orc-seat.ts` never existed on `master` and never will.
+The sentence above is preserved as the belief this ADR held on
+2026-09-06, not a description of current behavior — read it historically.
+What it says about the ledger, though, still holds regardless of the
+hook's fate: nothing calls `orc record` or edits a journal file except a
+seat pushing its own observation via `orc record` or a merge-only config
+edit, exactly as `PLAYBOOK-AGENT-CLI` already requires of every executor
+regardless of harness.
 
 ### `V7` ruling: verify runs on a different model family than ship
 
@@ -235,9 +243,14 @@ The one-dispatcher-per-run convention (`PLAYBOOK-AGENT-CLI`) remains
 `CONTRACT-STORAGE-CONCURRENCY`'s existing framing: it is process
 discipline agents follow, not a correctness precondition the storage
 layer depends on. Moving the rule's enforcement surface from prose to an
-OMP hook (`TASK-M5-005`) does not change this — the hook enforces the same
-seat-semantics rule at a stronger rung; the storage layer's own safety
-under concurrent dispatch is unaffected either way.
+OMP hook (`TASK-M5-005`) was designed not to change this — the hook was
+meant to enforce the same seat-semantics rule at a stronger rung.
+**Superseded 2026-09-07: no hook ships (see the "hook rung is retired"
+amendment below), so this rule stays exactly where it started — process
+discipline in prose (`PLAYBOOK-AGENT-CLI`), unenforced by anything but a
+seat's own compliance.** The storage layer's own safety under concurrent
+dispatch is unaffected either way, with or without the hook, which is
+the one part of this note that never depended on `TASK-M5-005` landing.
 
 ## Consequences
 
@@ -246,7 +259,12 @@ Positive:
 - Seat discipline that was previously enforced only by an agent reading
   and complying with prose is now enforced, where OMP's capability test
   (`TASK-M5-001`) confirms it, at a stronger rung: a schema rejection, a
-  blocking hook, or an unrepresentable state, per `I2`.
+  blocking hook, or an unrepresentable state, per `I2`. **Superseded
+  2026-09-07 — see the "hook rung is retired" amendment below:**
+  `TASK-M5-001` went on to confirm the opposite of "a blocking hook" for
+  every rule a hook was designed to carry; what holds today is two rungs
+  of the three named here, not three — this bullet is left as written to
+  show what the ADR believed on 2026-09-06.
 - `PLAYBOOK-WATCHTOWER` and `PLAYBOOK-AGENT-CLI` shrink to the parts that
   remain genuinely harness-independent policy (roles, invariants,
   recording mechanics), with OMP-specific mechanics moved to
@@ -270,7 +288,13 @@ Costs:
 - The hook-enforced rules (`TASK-M5-005`) are only as strong as OMP's own
   `tool_call` guard mechanism; `TASK-M5-001`'s capability test is the
   gate that must pass, with a red-then-green proof (`V2`), before any rule
-  is trusted to fire.
+  is trusted to fire. **Resolved 2026-09-07: the gate did not pass.**
+  `TASK-M5-001`'s report (§9 addendum) and this ADR's "hook rung is
+  retired" amendment below record the gate's actual outcome — every rule
+  `TASK-M5-005` set out to carry on a hook was defeated, across three
+  escape classes and nine rejections, and no rule from it is trusted to
+  fire because none ships. This bullet's conditional is settled, not
+  still open.
 
 Not decided here: whether `.claude/` glue is ever retired (a future
 decision, gated on Claude Code no longer being a harness in use); OMP
@@ -542,3 +566,237 @@ this amendment.
 The original operator ruling and M5 mapping above are left as written: a
 historical record of what was decided and designed before this bound was
 established, not rewritten to read as though it always said this.
+
+## Amendment (2026-09-07, operator ruling): the `tool_call` hook rung is retired, not merely descoped
+
+**This does not reopen the design.** The 2026-09-07 `docs-hook-capability-limit`
+amendment above already narrowed `TASK-M5-005` to one surviving guard
+(rung 1: the cwd-derived worktree fence) and reassigned the other three
+to rungs 2–4. This amendment records what happened to that one surviving
+guard, and closes the question `TASK-M5-005` was opened to answer.
+
+**Status: no `tool_call` hook rung exists, anywhere in this repository,
+for any of the rules this ADR originally assigned to one.**
+`.omp/extensions/orc-seat.ts` never existed on `master` — it was written,
+rewritten, and rejected entirely on branch `task-m5-005-orc-seat-hook`,
+across three delivery runs (`task-m5-005` work `hook`, `task-m5-005-guards`
+work `guards`, `task-m5-005-sensor` work `sensor`), each run exhausting
+its 3-attempt budget and settling `BLOCKED`, `blocked_reason:
+retry-budget-exhausted` (`orc` portfolio, read fresh for this amendment).
+Counting `FACT-ASSURE-SETTLED` records with `verdict: rejected` across
+those three run journals only (`task-m5-005-guards-r2`, a `CANCELLED`,
+attempts=1 sibling run, is excluded — it was withdrawn, not rejected on
+the merits) gives **9** — three per run, one per attempt, zero accepted —
+as of this amendment (a durable, re-countable fact: `orc history <run>
+--limit 0`, `grep -c '"id":"FACT-ASSURE-SETTLED"'`, filtered to
+`"verdict":"rejected"`, summed across the three run ids). The PR every
+one of those attempts shipped against, `gh-pr:284`, was closed unmerged;
+its final head, `69e482988736bb48ed9fb3e3301a8ab694a4cdfd`, is preserved
+on the `task-m5-005-orc-seat-hook` branch ref for citation, not on
+`master`, and never will be.
+
+**Canonical reason.** A `tool_call` hook receives **unresolved
+arguments**: `event.input.command` is a raw string, never shell argv,
+the resolved executable, or process identity (established 2026-09-07,
+`task-m5-005-guards` seq 16, and restated in the amendment above);
+`event.input.path` is likewise an unresolved target string, not the
+harness's own post-resolution filesystem decision. Soundness for either
+guard shape requires the harness's **post-resolution** path or command —
+the actual argv the shell will run, the actual file the write tool will
+touch after its own scheme/symlink/case handling — and the hook is never
+handed that. Every attempt to close the gap made the hook re-implement
+the harness's own resolution semantics from outside the harness, and
+every divergence between the hook's reimplementation and the harness's
+real behavior became a fresh escape. Three independent verify seats
+found three independent divergences, in order:
+
+1. **Command text (issue #290).** The shell is Turing-complete; no text
+   predicate against `event.input.command` establishes which program
+   runs, with what argv, or to what effect. `task-m5-005` and
+   `task-m5-005-guards` reproduced this against every guard that decided
+   on command text: `g\it push origin +master` and `g\h pr merge 999
+   --squash` (backslash stripped by the shell before exec, never by the
+   guard's tokenizer), a command-local `PATH=<probe-bin>:...` redirecting
+   what `orc` resolves to without the hook ever observing the
+   reassignment, and text that merely *mentions* `orc record` (`echo
+   fake-orc-record --command "orc record ..."`, `true || orc record ...`)
+   satisfying a guard that never checked the command actually ran. Four
+   of the original five guards were descoped from the hook entirely on
+   2026-09-07 for exactly this reason (the amendment above, rungs 2–4);
+   this class is fully closed, not merely narrowed.
+2. **Path canonicalization (issues #296, #297).** The one guard that
+   *wasn't* text-matching a command — the structural, cwd-derived
+   worktree fence (rung 1 above) — was defeated on the harness's own
+   path-resolution surface instead: symlinks compared by `path.resolve`
+   string without `realpath` (`orc-seat.ts:153-177` at head `c11601c`,
+   `task-m5-005-guards` seq 26; a live ship subagent wrote and edited
+   through a symlink into a sibling worktree), a path reader that
+   dropped everything after the first colon and skipped any path
+   containing `://` (`orc-seat.ts:123-129`, same head `c11601c` and
+   `task-m5-005-guards` seq 26), an unrecognized `ssh://` scheme with no
+   local path at all for the fence to compare (`orc-seat.ts:189-220`/
+   `:317-323` at head `ef093a3`, `task-m5-005-guards` seq 36; `read
+   ssh://` targets a configured host, never a filesystem path, and zero
+   candidates resolved to ALLOW by default), case-insensitive filesystem
+   handling, and a hardlink whose name sits inside the seat worktree but
+   whose inode is shared with a file outside it — `realpath` of the
+   in-worktree name resolves to the in-worktree name, because a hardlink
+   has no "outside" path to discover from the inside
+   (`orc-seat.ts:284-304` at head `ef093a3`, `task-m5-005-guards` seq 36;
+   `os.link` fixture, `same_inode_before=true`, `nlink=2`, a write
+   through the inside name changed the outside sibling's content).
+   **Every citation in this item is bound to the head it was actually
+   observed at, not to the branch's final head `69e4829`** —
+   `orc-seat.ts` had several distinct heads across this run's three
+   attempts and the file changed between them, so the same line range
+   read different content at different heads; the PR body publishes the
+   exact `git show <head>:.omp/extensions/orc-seat.ts | sed -n
+   '<range>p'` loop that proves each citation above resolves against the
+   head named beside it.
+3. **Scheme adjudication (issue #298), introduced by the fix for class
+   2.** Closing the `://`-path-dropping bug (class 2) required adding a
+   scheme classifier — and the classifier itself shipped two new
+   escapes, both reproduced with a real `WriteTool.execute` at the
+   branch's final head `69e482988736bb48ed9fb3e3301a8ab694a4cdfd`: a
+   case-insensitive `local://` match (`LOCAL_SCHEME_RE = /^local:\/\//i`)
+   against a harness that treats the `local:` prefix case-sensitively
+   (`write.ts:1215-1217`) and falls through to resolving anything else —
+   `Local://../../sibling/hit.txt` and `LOCAL://../../sibling/hit.txt`
+   both ALLOWed by the guard and both landed outside the seat worktree —
+   and an unscoped `conflict://<id>` ALLOWed without ever inspecting the
+   registered marker's `absolutePath`, so a `conflict://1` backed by a
+   file outside the worktree (or in a sibling worktree) wrote there too.
+   Both are `task-m5-005-sensor` seq 37 findings 1–2, the run's third and
+   final rejection, the one that closed the branch. **The pattern across
+   all three classes is the same one, restated**: fixing a divergence
+   discovered by re-implementing more of the harness's resolution logic
+   produces a new divergence from the harness's *actual* resolution
+   logic, because the hook is structurally never given that logic to
+   begin with — it is hearsay from a place with no access to the
+   ground truth.
+
+**Rung reassignment (final).** Every rule this ADR's Decision or the
+2026-09-07 `docs-hook-capability-limit` amendment assigned, in whole or
+in part, to a `tool_call` hook now rests on one of these three rungs,
+with no residual hook rung:
+
+- **Tool restriction (agent frontmatter).** `.omp/agents/verify.md:8`
+  grants `tools: read, bash, grep, glob, hub` — no `write`/`edit`. This
+  rung does exactly one thing: it removes the `write`/`edit` *tools*
+  themselves, so a verify seat cannot invoke them directly. **It does
+  not keep a verify seat from mutating the filesystem in general**,
+  because `bash` remains in verify's tool list (verify needs it to run
+  `scripts/check.sh` and throwaway probes) and `bash` is
+  Turing-complete — withholding two named tools does not close a
+  general-purpose shell. This was live-disproved against a prior draft
+  of this very amendment: a real verify seat, in its own scratch
+  worktree, ran `touch verify-bash-mutation.probe` through `bash` and
+  the file was created — a `tool_call` hook never fires for a `bash`
+  invocation's own filesystem effects, only for `write`/`edit` tool
+  calls, so there is no rung of any kind on that path. `git
+  push`/`git commit`/`gh pr merge` are equally reachable through
+  `bash`, and — corrected here — they are **not** "stopped by the next
+  rung": GitHub branch protection (next bullet) stops a push from
+  *landing on `master`*, and only on `master`; it does not exist for
+  any other ref and does not stop the push, commit, or write from being
+  *attempted*. The honest scope of tool restriction is: it forecloses
+  `write`/`edit` as tools, nothing more. The general boundary against a
+  verify seat's own `bash`-mediated mutation is policy plus
+  after-the-fact ledger/PR audit — stated without qualification in the
+  "honest answer" bullet below; this bullet previously claimed
+  otherwise and contradicted that bullet, and is corrected here to
+  agree with it instead (finding against the prior candidate,
+  `hook-retire-decision` assurance 1).
+- **GitHub branch protection on `master`.** The actual backstop against
+  "no direct write to a shared branch," including from an admin
+  identity. Read back live for this amendment (`gh api
+  repos/odjhey/orc-werk/branches/master/protection`, confirmed at
+  `2026-09-07T10:48:44Z` GMT, per the response's own `Date` header —
+  re-run the same call to confirm it still holds, this is an as-of
+  reading, not a standing fact):
+  `required_status_checks: {strict: true, contexts: ["ci-required"]}`,
+  `enforce_admins: {enabled: true}`,
+  `required_pull_request_reviews: {required_approving_review_count: 0,
+  dismiss_stale_reviews: false, require_code_owner_reviews: false,
+  require_last_push_approval: false}`, `allow_force_pushes: {enabled:
+  false}`, `allow_deletions: {enabled: false}`, `required_linear_history:
+  {enabled: false}`, `lock_branch: {enabled: false}`. No `restrictions`
+  key is present in the response (no push-actor allowlist configured) —
+  unchanged from the prior amendment's reading. **What this does and does
+  not do, stated precisely so as not to overstate it a second time:** it
+  blocks every identity, including the repo admin, from writing directly
+  to `master` outside a PR whose `ci-required` check has passed against
+  an up-to-date branch. It does **not** distinguish *which seat role*
+  pushed — every seat in this repository authenticates as the same
+  GitHub identity (`gh api user` → `login: odjhey`), a fact unchanged
+  since the prior amendment. Branch protection is real enforcement of
+  "no direct write lands," not of "verify specifically never pushes."
+  **Scope check, re-verified live for this amendment at a fresh
+  instant (not reused from the prior review's reading):** this
+  configuration exists for `master` only. `gh api
+  repos/odjhey/orc-werk/branches/hook-retire-decision/protection` —
+  this very PR's own ship branch, an arbitrary non-`master` ref —
+  returned `404 Branch not protected` at `2026-09-07T11:19:34Z` GMT
+  (response `Date` header), confirmed against the `master` reading
+  above re-read at the same sitting at `2026-09-07T11:19:33Z` GMT
+  (`gh api repos/odjhey/orc-werk/branches/master/protection`, `Date`
+  header). Branch protection cannot stop a `git commit`, a filesystem
+  write, or a `git push` to any ref other than `master` — a verify
+  seat's own scratch worktree, and any push it might attempt to a
+  non-`master` ref, sit entirely outside this rung's reach.
+- **The honest answer for "the verify seat specifically may not
+  push/commit/comment/review/merge": policy plus after-the-fact audit,
+  with no enforcement rung.** `.omp/agents/verify.md`'s and
+  `src/orc_werk/omp_scaffold/agents/verify.md`'s own boundary text (both
+  amended alongside this ADR, carried forward from the closed branch's
+  one accurate line) now says this directly: a `tool_call` hook sees
+  normalized `write`/`edit` input, never a `bash` call's own `git`/`gh`
+  invocation, so nothing stops a verify seat from *attempting* one of
+  these; only convention (this ADR, `verify.md`'s own prose) says it
+  must not, branch protection stops a resulting `git push`/merge from
+  *landing*, and the orc ledger's own assurance binding — an
+  independently-derived candidate identity, cross-checked against what
+  the seat reported — is the audit trail every escape class above was
+  actually caught on. This is not a euphemism for "unenforced": it is
+  the accurate description of where the guarantee actually lives, per
+  the same discipline this amendment applies to every other rule below.
+- **Worktree fence (ship stays in its own worktree; a write outside it
+  is visible after the fact).** No hook now — guard 4, the one guard the
+  prior amendment left standing, was the one this amendment retires
+  (escape classes 2 and 3 above). It rests on ship's own protocol
+  (`ship.md` §Boundaries: `git worktree add .worktrees/<branch> -b
+  <branch> master`, unchanged prose discipline) plus after-the-fact
+  ledger/PR audit — literally the mechanism that caught all three escape
+  classes: a verify seat, in its own separately-derived worktree,
+  re-running the guard against real on-disk fixtures and recording a
+  `rejected` `FACT-ASSURE-SETTLED` finding. The orc journal is not a
+  fallback description here; it is where the actual detection happened,
+  nine times, across three runs.
+- **Record-before-yield.** Unaffected by this amendment. Still rung 3 of
+  the 2026-09-07 `docs-hook-capability-limit` amendment above: the
+  ledger's own state machine, not a hook, already makes every path to
+  `ACCEPTED`/`BLOCKED` through bound assurance pass through a prior
+  `FACT-EXEC-SETTLED` (`reducer.py`, cited there); the cancellation-path
+  gap (issue #293) is likewise unaffected and remains open.
+- **Merge authority ("only the watchtower may merge").** Unaffected.
+  Still rung 4 of the prior amendment: open residue, prose
+  (`PLAYBOOK-WATCHTOWER`/`PLAYBOOK-AGENT-CLI`) plus after-the-fact
+  ledger/PR-history detection, no enforcement rung — `restrictions` is
+  still absent from branch protection and every seat still shares one
+  GitHub identity, so nothing has changed here since 2026-09-07's earlier
+  reading.
+
+**What this means for `TASK-M5-005`.** The card does not get a fourth
+attempt. It closes with a negative result: the capability question — can
+a `tool_call` hook enforce any of these five rules soundly — was
+answered by exhaustion across three escape classes and nine independent
+rejections, and the answer is durable precisely because it was tested to
+the point of diminishing, then negative, returns rather than assumed.
+`docs/reports/2026-09-07-omp-capability-test.md` carries the same answer
+at the evidence layer; `docs/delivery/task-cards/TASK-M5-005-orc-seat-hook.md`
+records the card's own closure.
+
+The original operator ruling, the M5 mapping table, and the prior
+2026-09-07 amendment above are all left as written: a historical record
+of what was believed and designed before this exhaustion completed, not
+rewritten to read as though it always said this.
