@@ -47,6 +47,8 @@ Research sources explain where ideas came from; they never override current Orc 
 - `superseded`: retained history; must link to replacement
 - `archived`: historical/reference only
 
+A `current` document MAY embed a `draft` subsection or list entry — a single conformance requirement, scenario listing, or paragraph documenting a proposed-but-not-yet-binding extension — rather than only ever being whole-document draft. When it does, the containing document MUST mark that subsection or entry inline, at the point where it appears (a heading suffix such as `*(draft)*`, or an explicit sentence stating it is proposed and not yet binding), so a reader learns the item is non-normative without following a cross-reference to the child document's own frontmatter. A parent document's summary or intro sentence (for example, an index's overview line) MUST NOT read as an unqualified requirement over content the same document lists as draft.
+
 ## Authority
 
 - `normative`: defines required behavior

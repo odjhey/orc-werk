@@ -8,7 +8,7 @@ description: Golden end-to-end executable specifications.
 
 # Golden scenarios
 
-The pure core must pass these scenarios with scripted/in-memory adapters before real provider integration begins.
+The pure core must pass these scenarios with scripted/in-memory adapters before real provider integration begins. An entry tagged **(draft)** below documents a proposed requirement for an extension that is not yet `current` (`DOCS-ROOT` status rules); it does not bind until that extension is promoted.
 
 1. [`SCN-001`](SCN-001-happy-path.md) happy path
 2. [`SCN-002`](SCN-002-assurance-retry.md) assurance rejection and retry
