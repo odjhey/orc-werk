@@ -61,6 +61,7 @@ description: Flat documentation index.
 - [zxro](adapters/zxro/README.md)
 - [Git candidate](adapters/git/README.md)
 - [Command assurance](adapters/command/README.md)
+- [OMP (delivery harness)](adapters/omp/README.md)
 - [ACP/acpx](adapters/acp/README.md) (superseded — removed, historical reference only, ADR-0005)
 - [no-mistakes](adapters/no-mistakes/README.md) (superseded — removed, historical reference only, ADR-0005)
 
