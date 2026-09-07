@@ -453,3 +453,118 @@ its correction rather than erasing it.
 
 This amendment does not reopen guards 1, 2, 3, or 5, and does not change
 `.omp/extensions/orc-seat.ts`'s single-guard scope; it corrects prose only.
+
+## Amendment 6 — 2026-09-07, run `task-m5-005-sensor`, issue #297, reframed as an advisory sensor (dated, with provenance)
+
+Run `task-m5-005-guards` (work `guards`, PR #284 at head `ef093a318ee7b1121b71c77b062a3a0f6a002b20`,
+Amendment 4/5's own delivery above) reached `retry-budget-exhausted`. Its final audit
+(ledger `task-m5-005-guards` seq 36, filed as issue #297) defeated guard 4 — the sole
+surviving guard Amendment 4 (`:359-362`) had described as having "passed every audit
+across all four attempts, including the fourth's" — two further structural ways at that
+same head: a `write`/`edit` target carrying no local path at all (`ssh://host/<path>`,
+reproduced live as `{"result":"ALLOW"}`) fell through the old
+"zero-candidates-means-nothing-to-check" default; and a name hardlinked inside the
+seat's own worktree shares an inode with a sibling worktree's file while its own
+`realpath` stays inside, invisible to the symlink-only resolution `isInsideOwnWorktree`
+performs. Taken with the already-established command-channel defeat (issue #290, and
+issue #296's unified root-cause finding), the capability question this card's own first
+step (the "role-identity finding" amendment above) originally set out to answer is now
+settled in full, on both channels a `tool_call` hook can receive input on: **no OMP
+`tool_call` hook can soundly enforce a seat rule.**
+
+The operator ruled (recorded on this run): descope to what is actually enforceable.
+Guard 4 is KEPT, for its real, demonstrated value — a tripwire that catches naive and
+accidental violations, proven red-then-green (21 tests as of this amendment, up from
+16) — but every sentence claiming it *enforces*, *guarantees*, *prevents*, or
+*restricts* a seat rule is removed from `.omp/extensions/orc-seat.ts` and from this
+card. This is a reframing, not a further guard deletion: nothing is cut from the file
+that was not already disclosed as unsound.
+
+**What changed in `.omp/extensions/orc-seat.ts` (see that file's own header and inline
+comments for the full account; summarized here):**
+
+1. **Fail-closed on unresolvable targets.** A `write`/`edit` target this guard cannot
+   resolve to any local path (today: `ssh://`, moved out of the scheme table that also
+   holds genuinely-never-touches-disk schemes like `local://`, into its own
+   `UNRESOLVABLE_URI_SCHEMES` table) is now DENIED, citing the unresolvable input by
+   name, before the guard ever reaches its path comparison. Previously, zero
+   candidates meant nothing to check, which meant ALLOW.
+2. **Hardlink aliasing: disclosed, not fixed.** The realpath-comparison site
+   (`realOf`'s own doc comment) now states plainly that `fs.realpathSync` resolves
+   symlinks, never hardlinks, that a hardlinked inside name therefore passes this guard
+   while aliasing a sibling worktree's inode, and that sound detection would require an
+   unbounded, racy sweep of every file in every sibling worktree — not attempted here,
+   per the operator's ruling against that approach.
+3. **Every enforcement claim removed.** The file's header, previously titled "What this
+   hook enforces", now opens "What this hook does... DETECTS AND BLOCKS THE NAIVE,
+   ACCIDENTAL CASE", names issue #297's two defeats explicitly, and states outright:
+   "It is a TRIPWIRE, not a control, and no sentence in this file is a
+   soundness/enforcement claim." The enumeration command used to find every candidate
+   sentence, and its per-line classification, are in this PR's body (not reproduced
+   here, since the PR body is the durable record a re-run of that exact command can be
+   checked against; this card only records the outcome).
+
+**Superseding `:366-369` only** (Amendment 4's "What moves where" bullet on push/merge
+restriction, guards 2/3/5) — the third REJECT on this run's own final audit, verbatim:
+that bullet assigns all three guards, as one bundle, to "server-side GitHub branch
+protection", present tense, without saying which of the three the rung actually
+carries. It does not carry all three. As of a `gh api
+repos/odjhey/orc-werk/branches/master/protection --jq '[.restrictions,
+.required_pull_request_reviews.required_approving_review_count]'` read-back at
+`2026-09-07T08:04:54Z` (`[null, 0]`), per guard:
+
+- **Guard 5** (no subagent, in any role, pushes directly to `master`/`main`): branch
+  protection genuinely carries this. It blocks ANY identity — including every
+  subagent's shared credential — from an unreviewed direct push to the protected
+  branch. This is the one guard of the three `:366-369` correctly assigned.
+- **Guard 2** (no subagent runs `gh pr merge`): NOT carried by branch protection today.
+  `required_approving_review_count` reads `0` in the same read-back, so GitHub does not
+  reject an unreviewed `gh pr merge` call from a subagent's shared credential at merge
+  time — nothing server-side stops it. (Raising that count, with only the
+  watchtower/operator identity able to approve, would close this specific gap; it is
+  not configured as of this amendment, and that is a mutable, re-checkable fact, not a
+  standing one — re-run the `gh api` call above before relying on this bullet.) Absent
+  that configuration, this rule is policy — stated in `ship.md` — audited after the
+  fact via the ledger and PR history, never enforced in the moment.
+- **Guard 3** (verify cannot push/commit/comment/review, unconditionally, not merely to
+  a shared branch): branch protection carries none of this. `git commit` never reaches
+  a remote; `gh pr comment`/`gh pr review` never touch a protected git ref; branch
+  protection has no opinion on either. Its "push" component overlaps guard 5's coverage
+  only when the push targets the protected branch specifically — a `verify` seat
+  pushing to some other, unprotected branch is not stopped by branch protection at all.
+  This rule, in full, is policy — stated as an unconditional boundary in
+  `.omp/agents/verify.md` — plus after-the-fact ledger/PR-history audit; nothing
+  server-side enforces it.
+
+`:366-369`'s original text is left as written above for provenance, per this card's own
+established convention (Amendment 4, `:375-377`); read it as the pre-#297,
+bundled-not-per-guard version of this rung assignment, not as a live claim.
+
+**Also correcting `:359-362`** ("Guard 4... passed every audit across all four
+attempts, including the fourth's"): true when written; incomplete now. A fifth audit
+(issue #297, above) defeated guard 4 too. `.omp/extensions/orc-seat.ts`'s own header
+states this plainly as of this amendment.
+
+**Also correcting `:387`** ("The file's own header states plainly what it enforces"):
+the header no longer uses "enforces" for guard 4 at all, per this amendment's own
+change — it states plainly what the guard detects and blocks, and states, in the same
+breath, both the fixed (`ssh://`/unresolvable-target fail-closed) and disclosed-but-not-
+fixed (hardlink aliasing) defeats issue #297 found.
+
+**Reduced acceptance, this amendment — supersedes none of Amendment 4's "Reduced
+acceptance" bullets, adds to them:**
+
+- An unresolvable `write`/`edit` target is denied, citing the input by name, never
+  silently allowed.
+- The hardlink limitation is disclosed in-source at the realpath comparison site,
+  citing issue #297.
+- No sentence in `.omp/extensions/orc-seat.ts` or this card claims the retained guard
+  enforces, guarantees, prevents, or restricts a seat rule; it is documented,
+  in-source and here, as a tripwire against naive and accidental violations.
+- Guards 2, 3, and 5's actual enforcing rung (branch protection for guard 5 only;
+  policy plus after-the-fact ledger/PR-history audit for guards 2 and 3) is stated per
+  guard, not bundled.
+
+This amendment does not reopen guards 1, 2, 3, or 5, and does not change
+`.omp/extensions/orc-seat.ts`'s single-retained-guard scope; guard 4 remains the only
+guard the file implements, now documented as a tripwire rather than a control.

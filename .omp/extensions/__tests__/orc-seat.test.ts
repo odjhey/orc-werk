@@ -39,7 +39,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import orcSeat, { evaluateWorktreeFenceGuard, extractCandidatePaths } from "../orc-seat.ts";
+import orcSeat, { evaluateWorktreeFenceGuard, extractCandidatePaths, extractUnresolvableTargets } from "../orc-seat.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<{ block: true; reason: string } | undefined>;
 
@@ -258,6 +258,78 @@ describe("worktree fence soundness (issue #296): symlinks, colon/scheme selector
       throw new Error("fixture assumption failed: this filesystem is not case-insensitive as expected");
     }
     const result = evaluateWorktreeFenceGuard("ship", "write", { path: path.join(lowercased, "inside.txt") }, shipCwd);
+    expect(result).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Fail-closed on unresolvable targets (issue #297): the sole surviving guard's own
+// "zero path candidates means nothing to check" default silently turned into ALLOW for
+// a `write`/`edit` target this guard genuinely cannot resolve to a local path -- proven
+// live against `ssh://tiny/tmp/orc-seat-escape.txt` (`{"result":"ALLOW"}`), which the
+// harness tool surface documents as a real, writable remote target. Each test below
+// FAILS against the pre-#297 implementation (`git show
+// ef093a318ee7b1121b71c77b062a3a0f6a002b20:.omp/extensions/orc-seat.ts`, this card's own
+// prior delivery, where `evaluateWorktreeFenceGuard("ship", "write", { path:
+// "ssh://tiny/tmp/orc-seat-escape.txt" }, shipCwd)` returns `undefined` -- verified live
+// before this change) and PASSES against the fixed one below.
+// ---------------------------------------------------------------------------------------
+
+describe("worktree fence fail-closed on unresolvable targets (issue #297)", () => {
+  function makeShipWorktree(branch: string): { shipCwd: string } {
+    const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "orc-seat-unresolvable-")));
+    const shipCwd = path.join(tmpRoot, "repo", ".worktrees", branch);
+    fs.mkdirSync(shipCwd, { recursive: true });
+    return { shipCwd };
+  }
+
+  test("RED-then-GREEN — an ssh:// write target (no local path to compare) is denied, not silently allowed", () => {
+    const { shipCwd } = makeShipWorktree("task-x");
+    // Pre-fix: `ssh` sat in the same scheme table as `local://`, so `pathReadings`
+    // returned zero readings and the guard's own `candidates.length === 0` check
+    // treated "nothing to compare" as ALLOW. `ssh://` genuinely writes to a REAL
+    // (remote) filesystem target this guard has no local path to compare, unlike
+    // `local://`'s own internal, never-touches-disk store -- so zero readings must not
+    // mean "nothing to check" here.
+    const result = evaluateWorktreeFenceGuard(
+      "ship",
+      "write",
+      { path: "ssh://tiny/tmp/orc-seat-escape.txt" },
+      shipCwd,
+    );
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringContaining("ssh://tiny/tmp/orc-seat-escape.txt"),
+    });
+  });
+
+  test("RED-then-GREEN — an ssh:// edit target named in the hashline header is denied, not silently allowed", () => {
+    const { shipCwd } = makeShipWorktree("task-x");
+    const input = { input: "[ssh://tiny/tmp/orc-seat-escape.txt#A1B2]\nPUT 1.=1:\n+x\n" };
+    const result = evaluateWorktreeFenceGuard("ship", "edit", input, shipCwd);
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringContaining("ssh://tiny/tmp/orc-seat-escape.txt"),
+    });
+  });
+
+  test("extractUnresolvableTargets surfaces the ssh:// candidate; extractCandidatePaths does not", () => {
+    const input = { path: "ssh://tiny/tmp/orc-seat-escape.txt" };
+    expect(extractUnresolvableTargets("write", input)).toEqual(["ssh://tiny/tmp/orc-seat-escape.txt"]);
+    expect(extractCandidatePaths("write", input)).toEqual([]);
+  });
+
+  test("ALLOWED — a recognized never-touches-disk internal URL (local://) is still ignored, not denied as unresolvable", () => {
+    const input = { path: "local://plan.md" };
+    expect(extractUnresolvableTargets("write", input)).toEqual([]);
+    expect(extractCandidatePaths("write", input)).toEqual([]);
+    const { shipCwd } = makeShipWorktree("task-x");
+    expect(evaluateWorktreeFenceGuard("ship", "write", input, shipCwd)).toBeUndefined();
+  });
+
+  test("ALLOWED — the seat's own genuinely-inside write is unaffected by the fail-closed check", () => {
+    const { shipCwd } = makeShipWorktree("task-x");
+    const result = evaluateWorktreeFenceGuard("ship", "write", { path: "inside.txt" }, shipCwd);
     expect(result).toBeUndefined();
   });
 });

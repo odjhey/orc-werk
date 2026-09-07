@@ -1,12 +1,28 @@
 // TASK-M5-005 -- .omp/extensions/orc-seat.ts
 //
-// What this hook enforces, and only this: a `ship` seat's `write`/`edit` tool calls stay
-// inside its OWN `.worktrees/<branch>` directory -- never a sibling seat's worktree,
-// never the primary checkout. This is the sole guard, of ADR-0007's original four-guard
-// design (record-before-yield, no subagent `gh pr merge`, verify push/commit/comment/
-// review denial, ship worktree fence), that survived four adversarial audit attempts
-// unmodified: it decides on `ctx.cwd`, structural context this hook genuinely receives,
-// never on the text of a command.
+// What this hook does, and only this: on a `ship` seat's `write`/`edit` tool calls, it
+// DETECTS AND BLOCKS THE NAIVE, ACCIDENTAL CASE -- a declared path/edit-target that
+// lexically- or symlink-resolves outside its OWN `.worktrees/<branch>` directory, or a
+// target this guard cannot resolve to any local path at all (issue #297; see below). It
+// is a TRIPWIRE, not a control, and no sentence in this file is a soundness/enforcement
+// claim: it decides on `ctx.cwd` and the tool call's OWN declared path input --
+// structural context this hook genuinely receives, never the text of a command -- and
+// it was, for that reason, the one guard of ADR-0007's original four-guard design
+// (record-before-yield, no subagent `gh pr merge`, verify push/commit/comment/review
+// denial, ship worktree fence) that four separate adversarial audits left unmodified,
+// while those same audits repeatedly defeated the other three on their command-text
+// channel until they were deleted outright. But a FIFTH audit (issue #297, ledger
+// `task-m5-005-guards` seq 36, against this same head `ef093a3`) defeated THIS guard
+// too, two further structural ways: a `write`/`edit` whose target carries no local path
+// at all (`ssh://host/<path>`, which the harness tool surface documents as genuinely
+// writable) fell through the old "zero candidates means nothing to check" default and
+// returned ALLOW; and a hardlinked name created inside the seat's own worktree shares
+// an inode with a sibling worktree's file while its OWN `realpath` stays inside --
+// `realpath` resolves symlinks, never hardlinks, so this comparison cannot see that
+// aliasing at all (see the comment at the realpath comparison below). The first defect
+// is fixed below: an unresolvable target now DENIES, never silently ALLOWs. The second
+// is disclosed, not fixed -- sound detection would need an unbounded, racy inode sweep
+// of every sibling worktree on every call, and is not attempted here.
 //
 // *** Command-text interception was attempted, and abandoned, for the other three ***
 //
@@ -24,41 +40,48 @@
 // "Does this command string invoke X" is not decidable from the string alone -- the
 // shell has `&&`, `||`, `;`, quoting, backslash-escaped binary names, `uv run`
 // wrapping, and `PATH` manipulation, and every patch closing one of those re-opened
-// another.
+// another. Issue #297 (above) completed this capability finding on the OTHER channel
+// too: no OMP `tool_call` hook can soundly enforce a seat rule, full stop.
 //
 // Per the operator's 2026-09-07 descope ruling (recorded on this task card, citing run
 // `task-m5-005-guards` seq 16 and issue #290), this hook does not re-attempt any of the
-// four. The controls move to where the structural information they need actually lives,
-// outside a `tool_call` hook's reach:
+// four removed guards. They are POLICY, not mechanism -- honored by the seat
+// definitions (`ship.md`/`verify.md`) and audited after the fact via the ledger/PR
+// history, never by this hook or by any other `tool_call` hook. Where a rung genuinely
+// does hold:
 //
-// - Push/merge restriction: as of a 2026-09-07 read-back of `gh api
-//   repos/odjhey/orc-werk/branches/master/protection --jq '[.restrictions,
-//   .required_pull_request_reviews.required_approving_review_count]'`
-//   (`[null, 0]`), server-side GitHub branch protection blocks any identity
-//   from writing directly to `master` -- but it cannot enforce a SEAT-scoped
-//   rule (no subagent `gh pr merge`; verify cannot push/commit/comment/
-//   review) at all: `restrictions` is the one field that binds a push/merge
-//   restriction to a specific actor, it reads `null` here, and even
-//   populated it keys on GitHub user/team/app identity, never on the
-//   agent-role of the one shared credential every seat in this repo
-//   authenticates as. Per `ADR-0007`'s dated amendment (PR #292, rung 4),
-//   that per-seat restriction is an open, unenforced residue -- prose
-//   (`ship.md`/`verify.md`) plus after-the-fact ledger/PR-history
-//   detection, never this hook and never branch protection. Re-run the
-//   `gh api` call above before relying on this paragraph; it is a
+// - Push/merge restriction (guards 2, 3, 5 in this card's original numbering): as of a
+//   2026-09-07 read-back of `gh api repos/odjhey/orc-werk/branches/master/protection
+//   --jq '[.restrictions, .required_pull_request_reviews.required_approving_review_count]'`
+//   (`[null, 0]`), server-side GitHub branch protection genuinely stops any identity
+//   from writing directly to `master` -- a real, BRANCH-scoped rung. It does not, and
+//   cannot, carry a SEAT-scoped rule (e.g. "verify specifically may not push") at all:
+//   `restrictions` is the one field that binds a push/merge restriction to a specific
+//   actor, it reads `null` here, and even populated it keys on GitHub user/team/app
+//   identity, never on the agent-role of the one shared credential every seat in this
+//   repo authenticates as. That per-seat restriction has no enforcing rung at all: it is
+//   policy (`ship.md`/`verify.md`) plus after-the-fact ledger/PR-history audit, nothing
+//   else. Re-run the `gh api` call above before relying on this paragraph; it is a
 //   configuration read-back, not a standing fact.
-// - Record-before-yield needs no hook at all: the orc state machine already enforces it
-//   structurally -- a work with no recorded `FACT-EXEC-SETTLED` stays non-terminal and
-//   the run cannot reach a terminal state, independent of anything a session's own tool
-//   calls do or don't do.
+// - Record-before-yield needs no hook at all: the orc state machine itself is the
+//   genuinely enforcing rung here -- a work with no recorded `FACT-EXEC-SETTLED` stays
+//   non-terminal and the run cannot reach a terminal state, independent of anything a
+//   session's own tool calls do or don't do. This is a kernel/state-machine property,
+//   not a `tool_call`-hook claim, so issue #297's finding does not touch it.
 //
-// What remains below -- the worktree fence -- was verified live across all four attempts
-// to deny sibling-worktree and primary-checkout writes while permitting a seat's own
-// (see this card's PR body for the live commands and observed denials/allows). Its own
-// limit, stated plainly: it decides on `ctx.cwd` and the tool call's OWN declared
-// path/edit-target input. It has no visibility into a write that reaches the filesystem
-// through any channel this hook never sees a path for (for example a bash-invoked
-// script, as opposed to the `write`/`edit` tools themselves).
+// What remains below -- the worktree fence -- is a tripwire against naive and
+// accidental violations, live-audited across five attempts: four it blocked
+// sibling-worktree and primary-checkout writes on while permitting a seat's own (see
+// this card's PR body for the live commands and observed denials/allows), and a fifth
+// (#297) that defeated it structurally, addressed above. Its limits, stated plainly: it
+// decides on `ctx.cwd` and the tool call's OWN declared path/edit-target input, resolved
+// to a local filesystem path. It has no visibility into a write that reaches the
+// filesystem through any channel this hook never sees a local path for (a bash-invoked
+// script), it now denies rather than silently permits a target it cannot resolve to a
+// local path at all (`ssh://`, fixed below), and it cannot distinguish a hardlinked name
+// inside the seat's own worktree from the sibling-worktree file it silently aliases
+// (disclosed, not fixed, at the realpath comparison below). Deliberate evasion defeats
+// it; it only ever caught the naive and the accidental.
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import fs from "node:fs";
@@ -130,10 +153,9 @@ export function createOrcSeatState(): OrcSeatState {
 // correct even if a future subagent type gains write/edit tools without also being
 // meant to hold this invariant.
 //
-// Soundness (issue #296): this predicate decides on `event.input.path`, structured,
-// normalized input the hook genuinely receives for `write`/`edit` -- never on command
-// text. Three defects were found live and fixed here, all in HOW that path is compared,
-// never in the decision to compare it at all:
+// Soundness (issues #296 and #297): this predicate decides on `event.input.path`,
+// structured, normalized input the hook genuinely receives for `write`/`edit` -- never
+// on command text. Four defects were found live and fixed here:
 //
 // 1. Symlink escape: a lexical `path.resolve` string comparison never resolves
 //    symlinks, so `write escape-link/x.txt` where `escape-link -> ../outside` compared
@@ -167,6 +189,16 @@ export function createOrcSeatState(): OrcSeatState {
 //    the two real paths this guard compares always agree on case when they name the
 //    same real file -- no separate case-normalization step is needed, attempted, or
 //    assumed to apply globally here.
+// 4. Unresolvable-target ALLOW (issue #297): zero path readings used to mean "nothing
+//    to check" unconditionally -- including for `ssh://`, which the old table listed
+//    alongside `local://` as "never touches the filesystem". True for `local://`;
+//    false for `ssh://`, which the tool surface documents as genuinely writable, to a
+//    REMOTE filesystem this guard has no local path to compare at all. `ssh` now sits
+//    in its own `UNRESOLVABLE_URI_SCHEMES` table below; `extractUnresolvableTargets`
+//    surfaces it separately from `extractCandidatePaths`, and
+//    `evaluateWorktreeFenceGuard` denies on any unresolvable target before it ever
+//    reaches the path comparison -- "cannot resolve this to a local path" is now a
+//    DENY, never a silent ALLOW.
 //
 // Root and target are each resolved independently to one canonical real path, then
 // compared with a single `path.relative` (never a walk comparing inode identity up two
@@ -179,13 +211,12 @@ export function createOrcSeatState(): OrcSeatState {
 const WORKTREES_SEGMENT = ".worktrees";
 
 /** Internal-URI schemes the `read`/`write` tools themselves document (their own tool
- * descriptions) as never denoting a real filesystem path -- `local://plan.md` and
- * similar resolve against an internal store, not `fs`, so they are the one class of
- * `:`-containing candidate this guard does not evaluate as a filesystem path. Any OTHER
- * `scheme://...`-shaped string (e.g. an attacker-chosen `colon://...`) is NOT in this
- * table and therefore IS evaluated -- unlike the prior, unconditional `://` skip issue
- * #296 found bypassable. */
-const INTERNAL_URI_SCHEMES: Record<string, true> = {
+ * descriptions) as never touching any real filesystem at all -- `local://plan.md` and
+ * similar resolve against an internal store, not `fs`, so a `write`/`edit` naming one
+ * of these performs no filesystem write anywhere, local or remote, for this guard to
+ * compare. These contribute NEITHER a path reading NOR an unresolvable-target one --
+ * there is genuinely nothing to check. */
+const IGNORED_URI_SCHEMES: Record<string, true> = {
   local: true,
   memory: true,
   artifact: true,
@@ -196,45 +227,89 @@ const INTERNAL_URI_SCHEMES: Record<string, true> = {
   mcp: true,
   issue: true,
   pr: true,
-  ssh: true,
   omp: true,
+};
+
+/** Internal-URI schemes the tool surface documents as performing a REAL filesystem
+ * write this guard cannot resolve to a comparable local path -- today, only
+ * `ssh://host/<path>` ("writable with write"), which writes to a remote host's
+ * filesystem. Issue #297: `ssh` used to sit in the ignored-schemes table above, so a
+ * `write`/`edit` naming it produced zero readings and the old
+ * `candidates.length === 0` check at the foot of this file treated "nothing to
+ * compare" as ALLOW -- reproduced live as `{"result":"ALLOW"}` against a real
+ * `ssh://tiny/tmp/orc-seat-escape.txt` write. A scheme in THIS table is the opposite
+ * of ignored: `extractUnresolvableTargets` below surfaces it, and
+ * `evaluateWorktreeFenceGuard` denies on it before ever reaching the path-candidate
+ * comparison. */
+const UNRESOLVABLE_URI_SCHEMES: Record<string, true> = {
+  ssh: true,
 };
 
 const INTERNAL_URI_SCHEME_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//;
 
-/** Every plausible filesystem-path reading of a raw `write`/`edit` path candidate
- * (issue #296): the literal string itself, and -- since OMP's own `write`/`edit` accept
- * `archive.ext:inner/path` and `db.sqlite:table` selector syntax -- the substring before
- * its first `:`, when one is present. Never guesses which reading is "the" intended one;
- * the caller checks all of them and blocks if any escapes. Recognized internal-URI
- * schemes (`local://`, ...) are the one exemption: they never touch the filesystem, so
- * they contribute no reading at all. */
-function pathReadings(raw: string): string[] {
+/** One raw `write`/`edit` path-candidate string, classified as either `"path"`
+ * (evaluate as a filesystem path) or `"unresolvable"` (a recognized scheme performing
+ * a real write this guard cannot resolve to a local path -- issue #297). A recognized
+ * `IGNORED_URI_SCHEMES` scheme produces neither: nothing to check. Any OTHER
+ * `scheme://...`-shaped string (e.g. an attacker-chosen `colon://...`) is in neither
+ * table and is therefore evaluated as a plain `"path"` candidate -- unlike the prior,
+ * unconditional `://` skip issue #296 found bypassable. For a `"path"` reading: the
+ * literal string itself, and -- since OMP's own `write`/`edit` accept
+ * `archive.ext:inner/path`/`db.sqlite:table` selector syntax -- the substring before
+ * its first `:`, when one is present. Never guesses which reading is "the" intended
+ * one; the caller checks all of them and blocks if any escapes (issue #296). */
+type Reading = { kind: "path" | "unresolvable"; value: string };
+
+function classifyRaw(raw: string): Reading[] {
   const schemeMatch = INTERNAL_URI_SCHEME_RE.exec(raw);
-  if (schemeMatch && INTERNAL_URI_SCHEMES[schemeMatch[1].toLowerCase()]) return [];
+  if (schemeMatch) {
+    const scheme = schemeMatch[1].toLowerCase();
+    if (IGNORED_URI_SCHEMES[scheme]) return [];
+    if (UNRESOLVABLE_URI_SCHEMES[scheme]) return [{ kind: "unresolvable", value: raw }];
+  }
   const readings = new Set<string>([raw]);
   const colonIdx = raw.indexOf(":");
   if (colonIdx !== -1) readings.add(raw.slice(0, colonIdx));
-  return [...readings];
+  return [...readings].map((value): Reading => ({ kind: "path", value }));
 }
 
-export function extractCandidatePaths(toolName: string, input: unknown): string[] {
+/** Every raw `write`/`edit` path-candidate string this hook genuinely receives for a
+ * call, before scheme classification: `write`'s own `path` field, or every hashline
+ * header (`[<path>#<TAG>]`) `edit`'s own `input` text carries. */
+function rawCandidates(toolName: string, input: unknown): string[] {
   if (!input || typeof input !== "object") return [];
   if (toolName === "write") {
     if (!("path" in input)) return [];
     const raw = (input as Record<string, unknown>).path;
-    if (typeof raw !== "string") return [];
-    return pathReadings(raw);
+    return typeof raw === "string" ? [raw] : [];
   }
   if (toolName === "edit") {
     if (!("input" in input)) return [];
     const raw = (input as Record<string, unknown>).input;
     if (typeof raw !== "string") return [];
-    return [...raw.matchAll(/\[([^\]#\n]+)#[0-9A-Fa-f]{4}\]/g)]
-      .map((match) => match[1])
-      .flatMap((candidate) => pathReadings(candidate));
+    return [...raw.matchAll(/\[([^\]#\n]+)#[0-9A-Fa-f]{4}\]/g)].map((match) => match[1]);
   }
   return [];
+}
+
+/** Every plausible filesystem-path reading (issue #296) of this call's candidates --
+ * never an unresolvable one; see `extractUnresolvableTargets` for those. */
+export function extractCandidatePaths(toolName: string, input: unknown): string[] {
+  return rawCandidates(toolName, input)
+    .flatMap(classifyRaw)
+    .filter((r) => r.kind === "path")
+    .map((r) => r.value);
+}
+
+/** Every candidate this call names that performs a real write this guard cannot
+ * resolve to a local path to compare (issue #297) -- today, an `ssh://` target.
+ * Non-empty here means `evaluateWorktreeFenceGuard` denies before ever reaching the
+ * path comparison: unknown is a DENY, never a silent ALLOW. */
+export function extractUnresolvableTargets(toolName: string, input: unknown): string[] {
+  return rawCandidates(toolName, input)
+    .flatMap(classifyRaw)
+    .filter((r) => r.kind === "unresolvable")
+    .map((r) => r.value);
 }
 
 /** The seat's OWN worktree root, derived from its own `cwd` -- never merely "some path
@@ -280,7 +355,20 @@ function nearestExistingAncestor(p: string): string {
  * ancestor at all beyond the filesystem root (a fabricated path, e.g. in a unit test
  * that never touches disk), `fs.realpathSync` of that root is the root itself, so this
  * degrades to returning `p` unchanged -- the exact pre-#296 lexical string, preserving
- * every decision this guard already made correctly. */
+ * every decision this guard already made correctly.
+ *
+ * Disclosed limitation (issue #297), NOT fixed here: `fs.realpathSync` resolves
+ * SYMLINKS, never HARDLINKS. A name hardlinked inside the seat's own worktree that
+ * shares an inode with a file in a sibling worktree resolves, via this function, to a
+ * real path that stays INSIDE the seat's own worktree -- a hardlink has no separate
+ * "canonical" target name the way a symlink does, so this comparison cannot see the
+ * aliasing at all. Reproduced live: `os.link(<sibling worktree>/outside.txt, <own
+ * worktree>/alias.txt)` gave `nlink=2` with both names sharing one inode; this guard
+ * ALLOWed a write to the inside name (`alias.txt`); that write changed the sibling
+ * file's own content. Sound detection would require stat-ing every file in every
+ * sibling worktree and comparing inodes on every call -- unbounded, and racy (a
+ * hardlink can be created between the sweep and the write) -- so it is not attempted.
+ * This is a genuine, disclosed gap in the tripwire, not a claim that it is closed. */
 function realOf(p: string): string {
   const existing = nearestExistingAncestor(p);
   const real = fs.realpathSync(existing);
@@ -314,6 +402,16 @@ export function evaluateWorktreeFenceGuard(
   cwd: string,
 ): { block: true; reason: string } | undefined {
   if (agent !== "ship" || (toolName !== "write" && toolName !== "edit")) return undefined;
+  const unresolvable = extractUnresolvableTargets(toolName, input);
+  if (unresolvable.length > 0) {
+    return {
+      block: true,
+      reason:
+        `orc-seat: ${toolName} targets ${unresolvable.join(", ")}, which this guard cannot resolve to any ` +
+        "local path to compare against this ship seat's own worktree; an unresolvable target is denied, " +
+        "never silently allowed (issue #297).",
+    };
+  }
   const candidates = extractCandidatePaths(toolName, input);
   if (candidates.length === 0) return undefined;
   const root = ownWorktreeRoot(cwd);
