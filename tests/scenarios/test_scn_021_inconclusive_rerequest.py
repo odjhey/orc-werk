@@ -420,6 +420,52 @@ class LegacyJournalTest(unittest.TestCase):
         self.assertEqual(create_work["data"]["max_assurance_attempts"], 2)
         self.assertEqual(journaled_max_assurance_attempts(history), 2)
 
+    def test_legacy_run_refuses_a_differing_explicit_budget_naming_1(self) -> None:
+        # Issue #266 item (b): confirms the ADR-0006 audit's finding is
+        # the intended ruling, not an oversight -- SCN-008 R2 ("changing a
+        # live run's budget after creation is explicitly OUT OF SCOPE...
+        # a possible future operator feature, not provided here") applies
+        # to `max_assurance_attempts` exactly as it does to `max_attempts`
+        # (ADR-0006's own line 49), so a legacy run (no journaled
+        # `max_assurance_attempts` at all) refuses a differing EXPLICIT
+        # request naming the legacy fallback (`1`), never silently
+        # granting a wider budget -- driven through the real CLI against
+        # an on-disk journal, not a corpus citation.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            journal = JSONLJournal(tmp_dir / ".orc")
+            self._legacy_journal(journal)
+
+            refused = _run_cli(
+                tmp_dir,
+                "dispatch",
+                "--run-id",
+                self.RUN_ID,
+                "--journal",
+                "./.orc",
+                "--max-assurance-attempts",
+                "2",
+            )
+            self.assertEqual(refused.returncode, 2, msg=refused.stdout + refused.stderr)
+            payload = json.loads(refused.stderr)
+            self.assertEqual(payload["error"], "ERR-VALIDATION")
+            self.assertEqual(payload["details"]["journaled_max_assurance_attempts"], 1)
+            self.assertEqual(payload["details"]["requested_max_assurance_attempts"], 2)
+
+            # An explicit value MATCHING the legacy fallback is a no-op,
+            # never a refusal -- the run is already terminal (BLOCKED).
+            agreeing = _run_cli(
+                tmp_dir,
+                "dispatch",
+                "--run-id",
+                self.RUN_ID,
+                "--journal",
+                "./.orc",
+                "--max-assurance-attempts",
+                "1",
+            )
+            self.assertEqual(agreeing.returncode, 1, msg=agreeing.stdout + agreeing.stderr)
+
 
 class MatchOrRefuseTest(unittest.TestCase):
     """SCN-021 item 12: an explicit later `max_assurance_attempts` that
@@ -573,6 +619,15 @@ class InconclusiveOnlyReObservationTest(unittest.TestCase):
             outcome.effects[0].idempotency_key,
             f"{DRID}|{WORK_ID}|2|{FX_START_ASSURANCE}|fp-1",
         )
+
+    def test_item_13_reobservation_reattributes_candidate_to_the_new_execution(self) -> None:
+        # Issue #266 item (a): STATE-DELIVERY item 11's re-observation
+        # branch (ADR-0006) is the sibling of item 8's inheritance branch
+        # -- both must re-attribute the re-observed candidate to the
+        # CURRENT (e2) execution, not the stale e1 it first surfaced
+        # under, for the same `orc show`/`orc-status/v1` reader reason.
+        wp = self._fold()
+        self.assertEqual(wp.candidates["c1"]["execution_id"], "e2")
 
     def test_inconclusive_is_never_inherited(self) -> None:
         # STATE-DELIVERY item 8 as amended: the Work does NOT go straight

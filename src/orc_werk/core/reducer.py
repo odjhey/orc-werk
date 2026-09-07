@@ -273,13 +273,24 @@ def _inherit_verdict(
     candidate_id: str,
     inherited: Mapping[str, object],
     *,
+    execution_id: str,
     max_attempts: int,
 ) -> WorkProjection:
     """Fold a re-observed candidate's inherited verdict (STATE-DELIVERY
     item 8) exactly as the FACT-ASSURE-SETTLED branch would have for a
     fresh settlement carrying the same verdict -- except no new Fact is
     journaled (INV-003: no fabricated assurance evidence) and the basis
-    cited for whatever DEC-* follows is the *prior* settlement Fact."""
+    cited for whatever DEC-* follows is the *prior* settlement Fact.
+
+    Issue #266 item (a): `candidates[candidate_id]["execution_id"]` is
+    updated to this re-observing Execution. The candidate's identity
+    (fingerprint, INV-006) is unchanged -- only the same-fingerprint
+    Execution attributed to it moves forward -- so this is still a
+    mechanical fold (INV-011, no Decision), never a fresh assurance
+    (INV-003). Leaving it at the first-observed Execution forever would
+    misattribute the candidate to a superseded attempt in `orc show` and
+    in the real `CommandAssurance` input document, which forwards
+    `Candidate.execution_id` verbatim to the verifier."""
     verdict = inherited["verdict"]
     if verdict == "accepted":
         next_state = STATE_ACCEPTED
@@ -291,9 +302,12 @@ def _inherit_verdict(
         # `_settled_assurance_for_candidate` never selects it and the
         # re-observation takes the fresh-`ASSURING` path instead.
         raise validation_error(f"unknown inherited assurance verdict: {verdict!r}")
+    candidates = dict(projection.candidates)
+    candidates[candidate_id] = {**candidates[candidate_id], "execution_id": execution_id}
     return replace_projection(
         projection,
         state=next_state,
+        candidates=candidates,
         current_candidate_id=candidate_id,
         trigger_facts=(inherited["settled_fact"],),
     )
@@ -472,7 +486,7 @@ def apply_fact(
             )
             if inherited is not None:
                 return _inherit_verdict(
-                    projection, candidate_id, inherited, max_attempts=max_attempts
+                    projection, candidate_id, inherited, execution_id=execution_id, max_attempts=max_attempts
                 )
             if incoming_fp == prior_fp and _inconclusive_only_settlements(projection, candidate_id):
                 # STATE-DELIVERY item 11's amendment to items 8/9
@@ -486,10 +500,16 @@ def apply_fact(
                 # path is SCN-021's abandon route: assurance 1 inconclusive
                 # -> re-request -> assurance 2 never settles -> operator
                 # `--abandon-work` -> READY -> this Execution re-produces
-                # the identical candidate.
+                # the identical candidate. Issue #266 item (a): re-attribute
+                # the candidate to this observing Execution, matching
+                # `_inherit_verdict`'s same fix -- fingerprint (identity)
+                # is unchanged, only Execution provenance moves forward.
+                candidates = dict(projection.candidates)
+                candidates[candidate_id] = {**candidates[candidate_id], "execution_id": execution_id}
                 return replace_projection(
                     projection,
                     state=STATE_ASSURING,
+                    candidates=candidates,
                     current_candidate_id=candidate_id,
                     assurance_started_for_current=False,
                     trigger_facts=(current_entry["settled_fact"], fact.to_dict()),

@@ -27,6 +27,17 @@ journal.
   surface is justified when the shape already has one obvious,
   discoverable code-adjacent home, and `docs/cli/README.md` is already the
   canonical per-command reference every other flag is documented from.
+- **Additive compatibility within one version** (issue #266 item c):
+  adding a new always-present key to an existing object (e.g.
+  `assurance_number` below) is a non-breaking change to `orc-status/v1`
+  and does NOT bump the `"schema"` string -- an existing consumer that
+  destructures only the keys it already knows about is unaffected by an
+  extra one appearing (`json.dumps(..., sort_keys=True)`'s stable key
+  ORDER is alphabetical and was never a consumer-facing guarantee about
+  which keys exist). Removing, renaming, or changing the MEANING of an
+  existing key is the only change class that requires a new `v2` schema
+  string, minted alongside the old one exactly as `orc_werk.cli.config`
+  would version a breaking config-shape change.
 - **Content = what the text surface already knows, structured** (never a
   parallel derivation): every field here is read from the same
   `DeliveryProjection`/journal `history` the text renderers
@@ -69,7 +80,8 @@ journal.
       "pending": false,
       "awaiting": null,
       "candidate_fingerprint": "fp-...",
-      "blocked_reason": null
+      "blocked_reason": null,
+      "assurance_number": 0
     }
   ],
   "refs": [
@@ -95,7 +107,13 @@ count otherwise, so a non-pending Work's `attempt` field would be a
 redundant restatement, not new information the text surface conveys.
 `candidate_fingerprint`/`blocked_reason`/`awaiting` are `null` when
 absent, never omitted -- a fixed key set every Work object carries, so a
-consumer can destructure without a presence check. `refs` is
+consumer can destructure without a presence check. `assurance_number`
+(issue #266) is `wp.assurance_number()` (`INV-021`'s per-Execution
+assurance index, `0` when none has started for the current Execution) --
+unlike the null-when-absent fields, `0` IS the "none yet" value, so no
+null variant exists; it is the same number the text line's pending+
+`ASSURING` `assurance=N` fragment (`orc_werk.cli.main._work_line`) shows,
+exposed unconditionally here rather than only while pending. `refs` is
 `orc_werk.cli.refs.collect_refs`'s row list, field for field (this is the
 load-bearing part for the #65 follow-on lane: a structured consumer walks
 `refs` instead of scraping `orc refs`'s text table). `next` is
@@ -183,6 +201,14 @@ def _work_document(work_id: str, wp: WorkProjection) -> dict[str, Any]:
         "awaiting": _awaiting_label(wp) if pending else None,
         "candidate_fingerprint": wp.current_candidate_fingerprint(),
         "blocked_reason": wp.blocked_reason,
+        # Issue #266 item (c): the text surface's pending+ASSURING
+        # `assurance=N` fragment (`orc_werk.cli.main._work_line`),
+        # unconditionally exposed here like every other field on this
+        # fixed key set -- `wp.assurance_number()` already defines `0` as
+        # "no assurance started for the current Execution" (INV-021), so
+        # no null variant is needed the way an absent candidate/block
+        # reason needs one.
+        "assurance_number": wp.assurance_number(),
     }
 
 
