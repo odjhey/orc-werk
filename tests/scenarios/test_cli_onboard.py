@@ -29,8 +29,12 @@ from orc_werk.cli.onboard import (
     BLOCK_BEGIN,
     BLOCK_END,
     GITIGNORE_ENTRY,
+    OMP_AGENT_NAMES,
     agents_block_text,
     cmd_onboard,
+    omp_scaffold_agent_text,
+    omp_scaffold_config_text,
+    omp_scaffold_rules_text,
     packaged_skill_changelog_text,
     packaged_skill_text,
 )
@@ -67,7 +71,7 @@ def _run_cli(cwd: Path, *args: str, env: dict | None = None) -> subprocess.Compl
 def _namespace(**kwargs) -> argparse.Namespace:
     defaults = dict(
         path=".", print_agents_block=False, force=False, agents_file="AGENTS.md",
-        journal=None, agents_block="slim", ledger="local",
+        journal=None, agents_block="slim", ledger="local", omp=False,
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
@@ -466,6 +470,112 @@ class OnboardScaffoldTest(unittest.TestCase):
         with self.assertRaises(CoreError) as ctx:
             cmd_onboard(_namespace(path=str(not_a_dir)))
         self.assertEqual(ctx.exception.to_canonical()["error"], "ERR-VALIDATION")
+
+
+# ---------------------------------------------------------------------------
+# OMP seat scaffold (`TASK-M5-007`, `ADR-0007`): --omp/existing .omp/ trigger,
+# all five files installed, idempotent re-run, operator-modified preserved
+# unless --force, absent trigger leaves today's onboarding unchanged.
+# ---------------------------------------------------------------------------
+
+
+class OmpScaffoldTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.target = Path(self._tmp.name)
+
+    def test_trigger_absent_installs_nothing_and_leaves_output_unchanged(self):
+        exit_code, output = _onboard(path=str(self.target))
+        self.assertEqual(exit_code, 0)
+        self.assertFalse((self.target / ".omp").exists())
+        self.assertNotIn("omp:", output)
+        self.assertNotIn("omp agents/", output)
+
+    def test_omp_flag_installs_all_five_files(self):
+        exit_code, output = _onboard(path=str(self.target), omp=True)
+        self.assertEqual(exit_code, 0)
+        self.assertIn("omp: --omp requested", output)
+        for name in OMP_AGENT_NAMES:
+            path = self.target / ".omp" / "agents" / f"{name}.md"
+            self.assertEqual(path.read_text(encoding="utf-8"), omp_scaffold_agent_text(name))
+            self.assertIn(f"omp agents/{name}.md: installed", output)
+        self.assertEqual(
+            (self.target / ".omp" / "config.yml").read_text(encoding="utf-8"), omp_scaffold_config_text()
+        )
+        self.assertEqual(
+            (self.target / ".omp" / "RULES.md").read_text(encoding="utf-8"), omp_scaffold_rules_text()
+        )
+        self.assertIn("omp config.yml: installed", output)
+        self.assertIn("omp RULES.md: installed", output)
+
+    def test_existing_omp_directory_triggers_scaffold_without_the_flag(self):
+        (self.target / ".omp").mkdir()
+        exit_code, output = _onboard(path=str(self.target))
+        self.assertEqual(exit_code, 0)
+        self.assertIn("omp: existing", output)
+        self.assertIn("detected", output)
+        for name in OMP_AGENT_NAMES:
+            self.assertTrue((self.target / ".omp" / "agents" / f"{name}.md").exists())
+
+    def test_rerun_is_idempotent_no_dupes_skip_notes(self):
+        _onboard(path=str(self.target), omp=True)
+        before = {
+            name: (self.target / ".omp" / "agents" / f"{name}.md").read_text(encoding="utf-8")
+            for name in OMP_AGENT_NAMES
+        }
+        exit_code, output = _onboard(path=str(self.target), omp=True)
+        self.assertEqual(exit_code, 0)
+        for name in OMP_AGENT_NAMES:
+            self.assertEqual(
+                (self.target / ".omp" / "agents" / f"{name}.md").read_text(encoding="utf-8"), before[name]
+            )
+            self.assertIn(f"omp agents/{name}.md: already installed -- skip", output)
+        self.assertIn("omp config.yml: already installed -- skip", output)
+        self.assertIn("omp RULES.md: already installed -- skip", output)
+
+    def test_operator_modified_file_is_skipped_then_replaced_with_force(self):
+        _onboard(path=str(self.target), omp=True)
+        ship_path = self.target / ".omp" / "agents" / "ship.md"
+        ship_path.write_text("OPERATOR EDITED SHIP SEAT", encoding="utf-8")
+
+        exit_code, output = _onboard(path=str(self.target), omp=True)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(ship_path.read_text(encoding="utf-8"), "OPERATOR EDITED SHIP SEAT")
+        self.assertIn("operator-modified", output)
+        self.assertIn("--force", output)
+        # every OTHER file stays untouched by the one conflict
+        for name in ("scout", "verify"):
+            self.assertEqual(
+                (self.target / ".omp" / "agents" / f"{name}.md").read_text(encoding="utf-8"),
+                omp_scaffold_agent_text(name),
+            )
+
+        exit_code, output = _onboard(path=str(self.target), omp=True, force=True)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(ship_path.read_text(encoding="utf-8"), omp_scaffold_agent_text("ship"))
+        self.assertIn("omp agents/ship.md: replaced (--force)", output)
+
+    def test_unknown_agent_template_name_is_rejected(self):
+        with self.assertRaises(ValueError):
+            omp_scaffold_agent_text("watchtower")
+
+    def test_agent_templates_carry_valid_frontmatter_with_a_model_field(self):
+        # Each template must parse as a `name:`/`model:` frontmatter block an
+        # OMP agent definition needs; a fork that drops the model comment or
+        # breaks the fence would fail this.
+        for name in OMP_AGENT_NAMES:
+            text = omp_scaffold_agent_text(name)
+            lines = text.splitlines()
+            self.assertEqual(lines[0].strip(), "---")
+            end = lines.index("---", 1)
+            frontmatter = "\n".join(lines[1:end])
+            self.assertIn(f"name: {name}", frontmatter)
+            self.assertIn("model:", frontmatter)
+            self.assertIn(
+                "TEMPLATE (orc onboard --omp)", frontmatter,
+                "template must tell the adopter to pick their own account's models",
+            )
 
 
 # ---------------------------------------------------------------------------
