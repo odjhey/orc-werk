@@ -45,6 +45,26 @@ unchanged.
 - `orc status`, `show`, `report`, `verdict`, and the `next:` affordances now
   name the assurance index and render every assurance of an attempt, so a
   re-request reads as a re-request rather than as a lost verdict.
+- **Observational dispatch warnings for real-Git candidate boundaries**
+  (#289, #295): `orc dispatch` now prints a stderr-only warning, never a
+  Fact and never a Decision, in two cases the git/scripted adapters could
+  previously leave silent: (1) the currently observed candidate's fingerprint
+  differs from what a real Git worktree's `HEAD` reports right now (extends
+  the existing scripted-config divergence warning to a genuine Git adapter
+  via `CandidatePort.current`), and (2) a re-observed candidate's exact
+  `candidate_id`+fingerprint match caused this dispatch pass to inherit a
+  prior attempt's terminal verdict rather than requesting a fresh assurance
+  (`STATE-DELIVERY` item 8). Neither warning changes any journaled Fact,
+  retry/assurance budget, or acceptance outcome — they only make an
+  already-legal kernel resting point legible to the operator.
+- **Operator abandon for externally-invalidated candidates documented**
+  (#289): `STATE-DELIVERY` item 9, `SCN-010`, and `PLAYBOOK-CLI-USAGE` now
+  explicitly name a real-Git `HEAD` moving underneath a frozen
+  `EXECUTING`/`ASSURING` candidate as a legal `DEC-ABANDON-ATTEMPT` basis,
+  alongside issue #95's adapter-orphaned-session case. Frozen candidate
+  identity, full attempt cost, and the no-supersession/no-budget-waiver
+  rule are unchanged; an exhausted run still requires a new run. Docs-only —
+  no new Decision, port Effect, or CLI flag.
 
 ### Changed
 - `FX-START-ASSURANCE`'s `INV-020` key gains an `assurance_number` component

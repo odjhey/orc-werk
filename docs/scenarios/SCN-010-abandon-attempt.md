@@ -3,7 +3,7 @@ id: SCN-010
 type: scenario
 status: current
 authority: normative
-description: Operator DEC-ABANDON-ATTEMPT consumes an unresolved candidate-observation conflict or an unsettleable Assurance and lets the run proceed honestly.
+description: Operator DEC-ABANDON-ATTEMPT consumes an unresolved candidate-observation conflict, or an Assurance the operator elects not to await settlement for (adapter-orphaned per #95, or externally invalidated per #289), and lets the run proceed honestly.
 ---
 
 # SCN-010 — Abandoned-attempt recovery
@@ -11,13 +11,26 @@ description: Operator DEC-ABANDON-ATTEMPT consumes an unresolved candidate-obser
 ## Purpose
 
 `TASK-M3B-001` (approved ruling, issue #76's PERMANENCE escalation; also
-resolves issue #95's operator-override gap). `STATE-DELIVERY` mechanical
-fact sequencing item 9 is the executable specification this scenario maps
-to. Two independent shapes, both legal grounds for `DEC-ABANDON-ATTEMPT`:
-a candidate-observation conflict `SCN-009`'s inheritance rule cannot
-resolve, and an Assurance the operator knows (out-of-band) will never
-settle — issue #95's adapter-owned in-flight case, where the assurance was
-started by a foreign/orphaned session no seat here can observe.
+resolves issue #95's operator-override gap and issue #289's
+external-invalidation gap). `STATE-DELIVERY` mechanical fact sequencing
+item 9 is the executable specification this scenario maps to. Two
+independent shapes, both legal grounds for `DEC-ABANDON-ATTEMPT`: a
+candidate-observation conflict `SCN-009`'s inheritance rule cannot
+resolve, and an Assurance the operator has out-of-band reason not to
+await -- issue #95's adapter-owned in-flight case (the assurance was
+started by a foreign/orphaned session no seat here can observe), or
+issue #289's externally-invalidated-candidate case (the assurance
+session is perfectly capable of settling on its own terms, but the
+operator already knows -- from something outside this ledger, e.g. a
+later commit on the same branch, or a sibling run's own settlement --
+that the frozen Candidate it would be judging no longer reflects
+reality). Both bases produce the identical mechanical shape below: only
+the operator-supplied `reason` differs, never the Fact/Decision
+sequence, the attempt cost, or the frozen candidate identity
+(`INV-007`/`INV-008`) issue #289 leaves fully intact. No supersede/rebind
+verb and no budget waiver exist for either basis -- the sanctioned
+recovery is this same abandon, then an ordinary retry (or, once the
+budget is exhausted, a new run) that re-observes honestly.
 
 ## Given (candidate-observation conflict shape)
 - Work A is ready. `max_attempts = 2`.
@@ -64,7 +77,7 @@ started by a foreign/orphaned session no seat here can observe.
    guidance for this Work names the same `attempt-abandoned` reason
    rather than deferring to `orc history`.
 
-## Given (unsettleable-assurance shape, #95)
+## Given (unsettleable-or-invalidated-assurance shape, #95/#289)
 - Work B is ready. `max_attempts = 3`.
 - Execution 1 produces Candidate C2. `FACT-ASSURE-STARTED` is journaled
   for C2 (an assurance run began — for example, dispatched to an
@@ -74,13 +87,28 @@ started by a foreign/orphaned session no seat here can observe.
   Ordinary re-dispatch leaves Work B resting at `ASSURING`, pending
   (`STATE-DELIVERY` item 7) — indistinguishable, from journal state alone,
   from an assurance that is merely still genuinely in flight.
+- Issue #289's variant reaches the identical resting point (Work B at
+  `ASSURING`, `FACT-ASSURE-STARTED` journaled for C2, no
+  `FACT-ASSURE-SETTLED` yet) without any orphaned session: the assurance
+  is live and could still settle on its own terms, but the operator
+  already knows -- from something outside this ledger, e.g. `git log` on
+  the same branch showing HEAD moved past what C2 froze, or a sibling
+  run's own settlement -- that C2 no longer reflects what it should be
+  judged against.
 
-## Then (unsettleable-assurance shape)
-4. The operator, with out-of-band knowledge that this assurance will never
-   settle, records `DEC-ABANDON-ATTEMPT` for Work B (attribution: the
-   operator's identity; basis: the unsettled `FACT-ASSURE-STARTED`; data:
-   reason, e.g. "adapter session orphaned"). `FACT-ATTEMPT-ABANDONED` is
-   journaled for Work B.
+## Then (unsettleable-or-invalidated-assurance shape)
+4. The operator, with out-of-band knowledge that this assurance is not
+   worth letting settle -- whether it never will (issue #95: an
+   orphaned/foreign session) or because the Candidate it would judge has
+   already been overtaken by something outside the ledger (issue #289: a
+   later commit, a sibling run's settlement), records
+   `DEC-ABANDON-ATTEMPT` for Work B (attribution: the operator's
+   identity; basis: the unsettled `FACT-ASSURE-STARTED`; data: reason,
+   e.g. "adapter session orphaned" or "sibling run superseded this
+   candidate"). `FACT-ATTEMPT-ABANDONED` is journaled for Work B -- this
+   settles the *attempt* as abandoned; it never fabricates a verdict for
+   C2 and never rebinds or supersedes C2's own frozen identity
+   (`INV-007`/`INV-008`).
 5. With attempt 1 of 3 consumed and budget remaining, Work B resolves to
    `READY` — an ordinary `DEC-RETRY` follows on the next dispatch pass,
    starting Execution 2 honestly (no fabricated candidate, no fabricated
@@ -114,5 +142,5 @@ unset until the later `FACT-WORK-BLOCKED` confirmation (issue #288's
 prior shape) turns step 3 red: `orc status` right after the abandon
 would again show `blocked_reason=None` for a terminal Work.
 
-Verifies: `INV-003`, `INV-006`, `INV-008`, `INV-009`, `INV-011`, `INV-012`,
-`INV-018`, `INV-019`, `INV-020`.
+Verifies: `INV-003`, `INV-006`, `INV-007`, `INV-008`, `INV-009`, `INV-011`,
+`INV-012`, `INV-018`, `INV-019`, `INV-020`.
