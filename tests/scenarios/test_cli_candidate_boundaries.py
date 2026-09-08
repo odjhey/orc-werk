@@ -38,7 +38,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.cli.main import _warn_verdict_inheritance
+from orc_werk.core.effects import FX_START_EXECUTION, make_effect
+from orc_werk.core.facts import (
+    FACT_ASSURE_SETTLED,
+    FACT_ASSURE_STARTED,
+    FACT_CANDIDATE_OBSERVED,
+    FACT_EXEC_SETTLED,
+    FACT_EXEC_STARTED,
+    FACT_WORK_CREATED,
+    FACT_WORK_READY,
+    make_fact,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
@@ -328,6 +340,116 @@ class WarnVerdictInheritanceUnitTest(unittest.TestCase):
             _warn_verdict_inheritance(new_records, history_before_advance)
         self.assertIn("inherited attempt", stderr.getvalue())
         self.assertIn("STATE-DELIVERY item 8, verdict inheritance", stderr.getvalue())
+
+
+class ShowRealJournalFingerprintMismatchConflictTest(unittest.TestCase):
+    """Issue #295 (VerifyBoundaries309's rejection of attempt 3, AGENTS.md
+    rule 18): a same-`candidate_id`/different-fingerprint re-observation is
+    structurally unreachable through any real `orc dispatch` -- every
+    built-in `CandidatePort` adapter derives `candidate_id` from a prefix
+    of its own fingerprint (`WarnVerdictInheritanceUnitTest`'s docstring
+    above) -- but `PORT-CANDIDATE` nonetheless permits it for a different
+    adapter, and the reducer must still resolve it as an unresolved
+    candidate-observation conflict (`STATE-DELIVERY` item 9), never a
+    mechanically inherited verdict. Hand-crafts a reducer-valid
+    `JSONLJournal` history directly (bypassing every adapter, `orc_werk.
+    core.facts.make_fact` / `orc_werk.core.effects.make_effect`) and drives
+    the REAL `orc show` consumer against it, so a regression in
+    `_settled_fingerprints_by_work`'s identity keying is caught at the
+    observable CLI contract -- not just the internal helper's own unit
+    tests, which stay green independent of `show.py`'s own rendering."""
+
+    def test_reobserved_candidate_with_mismatched_fingerprint_shows_conflict_not_inherited(self) -> None:
+        drid = "collision-show"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            journal = JSONLJournal(root / ".orc")
+            journal.append_fact(make_fact(FACT_WORK_CREATED, delivery_run_id=drid, work_id="w1"))
+            journal.append_fact(make_fact(FACT_WORK_READY, delivery_run_id=drid, work_id="w1"))
+
+            # Attempt 1: executes, observes candidate cand-A/fp-1, rejected
+            # (attempt_number 1 < the reducer's schema-default budget of 3,
+            # so this settles to READY rather than BLOCKED).
+            journal.append_effect_record(
+                make_effect(
+                    FX_START_EXECUTION,
+                    delivery_run_id=drid,
+                    work_id="w1",
+                    idempotency_key=f"{drid}|w1|1|FX-START-EXECUTION",
+                    data={"attempt_number": 1},
+                ),
+                dispatch_result={"status": "ok"},
+            )
+            journal.append_fact(make_fact(FACT_EXEC_STARTED, delivery_run_id=drid, work_id="w1", execution_id="e1"))
+            journal.append_fact(
+                make_fact(
+                    FACT_EXEC_SETTLED, delivery_run_id=drid, work_id="w1", execution_id="e1", outcome="completed"
+                )
+            )
+            journal.append_fact(
+                make_fact(
+                    FACT_CANDIDATE_OBSERVED,
+                    delivery_run_id=drid,
+                    work_id="w1",
+                    candidate_id="cand-A",
+                    fingerprint="fp-1",
+                    execution_id="e1",
+                )
+            )
+            journal.append_fact(
+                make_fact(
+                    FACT_ASSURE_STARTED, delivery_run_id=drid, work_id="w1", assurance_id="a1", candidate_id="cand-A"
+                )
+            )
+            journal.append_fact(
+                make_fact(
+                    FACT_ASSURE_SETTLED,
+                    delivery_run_id=drid,
+                    work_id="w1",
+                    assurance_id="a1",
+                    candidate_fingerprint="fp-1",
+                    verdict="rejected",
+                )
+            )
+
+            # Attempt 2: executes, re-observes the SAME candidate_id with a
+            # DIFFERENT fingerprint -- a genuinely new/changed Candidate the
+            # (hypothetical) adapter authored, never a re-vote on attempt
+            # 1's already-rejected head.
+            journal.append_effect_record(
+                make_effect(
+                    FX_START_EXECUTION,
+                    delivery_run_id=drid,
+                    work_id="w1",
+                    idempotency_key=f"{drid}|w1|2|FX-START-EXECUTION",
+                    data={"attempt_number": 2},
+                ),
+                dispatch_result={"status": "ok"},
+            )
+            journal.append_fact(make_fact(FACT_EXEC_STARTED, delivery_run_id=drid, work_id="w1", execution_id="e2"))
+            journal.append_fact(
+                make_fact(
+                    FACT_EXEC_SETTLED, delivery_run_id=drid, work_id="w1", execution_id="e2", outcome="completed"
+                )
+            )
+            journal.append_fact(
+                make_fact(
+                    FACT_CANDIDATE_OBSERVED,
+                    delivery_run_id=drid,
+                    work_id="w1",
+                    candidate_id="cand-A",
+                    fingerprint="fp-2",
+                    execution_id="e2",
+                )
+            )
+            del journal  # release the journal's own file handles before the subprocess re-reads it.
+
+            result = _run_cli(root, "show", drid, "--journal", "./.orc")
+            self.assertEqual(result.returncode, 3, msg=result.stdout + result.stderr)
+            out = result.stdout
+            self.assertIn("candidate-observation conflict", out)
+            self.assertIn("STATE-DELIVERY item 9", out)
+            self.assertNotIn("inherited", out)
 
 
 if __name__ == "__main__":
