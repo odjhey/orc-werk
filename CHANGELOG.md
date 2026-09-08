@@ -14,6 +14,15 @@ the running version; finding reports should include it.
 
 ## [Unreleased]
 
+### Added
+- **Tool-independent adoption paths** (#312): practice-only delivery and
+  bring-your-own-CLI implementation guides, with portable record examples
+  and explicit boundaries between manual practice and kernel conformance.
+- **Portable replay conformance kit** (#313): 24 versioned JSON cases,
+  a documented language-neutral driver boundary, and 14 falsification
+  probes. A frozen, docs-only Node implementation passed the complete
+  corpus; this bounded replay proof is not full-engine certification.
+
 ## [0.10.0] — 2026-09-08
 
 No breaking changes. No migration: a legacy journal whose `FX-CREATE-WORK`
