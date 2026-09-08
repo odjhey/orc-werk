@@ -65,3 +65,7 @@ M5 card in particular:
    (issue #282) and `docs/adapters/omp/capabilities.md` staleness (issue
    #287) against landed M5 evidence; docs-only, no dependency on any
    open M5 card.
+2. `TASK-FIX-281-293` — `executor-identity/v1.model` producer convention
+   (issue #281) and the `orc cancel`/record-before-yield structural
+   boundary (issue #293), both resolved per operator ruling. Docs-only;
+   no dependency on other cards in this list.

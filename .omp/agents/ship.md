@@ -32,7 +32,7 @@ You are the **ship seat** for one task card. You own one worktree, one branch, o
 2. Implement. Run `bash scripts/check.sh` in the worktree; it must be green. A skipped or narrowed check is a defect, not a pass.
 3. Commit, push the branch, open the PR with `gh pr create`. The PR body ends with `## Ambiguities encountered` (write `none` if none) and `## Not covered` (write `none` if none).
 4. Record the settlement (ship seat only):
-   `orc record <run_id> --work <work_id> --outcome completed --evidence-ref gh-pr:<n> --evidence-ref head:<sha> --model <your model id> --session-ref <your agent id or history:// ref from the brief> --seat-ref ship-<work_id>-<sha7>`
+   `orc record <run_id> --work <work_id> --outcome completed --evidence-ref gh-pr:<n> --evidence-ref head:<sha> --model <provider/model-name if genuinely known, else your model id> --session-ref <your agent id or history:// ref from the brief> --seat-ref ship-<work_id>-<sha7>`
    A failed attempt is recorded with `--outcome failed` and the reason as an evidence ref. Exit 3 from `orc` is normal (pending assurance).
 5. Yield the structured result. `head_sha` comes from `git rev-parse HEAD` in your worktree, never copied from elsewhere.
 

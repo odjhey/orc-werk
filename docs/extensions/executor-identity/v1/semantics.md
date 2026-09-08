@@ -27,6 +27,15 @@ The payload is an executor's identity claim. It does not authenticate the execut
 
 Canonical projection and transitions MUST be identical whether the extension is present, absent, unknown, or changed (`EXT-005`). No-self-assurance remains process discipline rather than a kernel-enforced transition rule.
 
+## Known limitation: self-reported identity cannot establish runtime family or a mid-run switch (issue #281)
+
+`model` is exactly what the producer typed; nothing in this extension, in `orc record`, or in the generic core observes, verifies, or cross-checks it against the model that actually served the request. Two consequences follow, and neither is a defect this version fixes:
+
+- The payload cannot prove that a seat's declared model family matches the family that actually ran it (for example, a ship/verify model-family-separation ruling such as `.omp/agents/verify.md`'s `V7` comment). A seat can honestly report the model it requested and still have run on a different one if the underlying harness silently substituted it (a retry/fallback chain, a provider-side reroute).
+- The payload has no mechanism to record a mid-execution model-family switch: one seat writes exactly one `executor-identity/v1` payload, once, at settlement. A switch during that seat's own turns is not observable from this extension at any granularity.
+
+Harness-observed (rather than self-reported) executor identity — for example, a hook or adapter that reads the running model directly and populates this field without seat involvement — is out of scope for `executor-identity/v1` and would need its own versioned design (a new extension or an `executor-identity` major version), not a v1 amendment.
+
 ## Missing identity is valid
 
 The extension is optional, and each of `model`, `session_ref`, and `seat_ref` is optional. Their absence does not invalidate an execution settlement or assurance verdict, and consumers MUST NOT fabricate missing values. When the extension is present, `role` is required so its seat use is unambiguous.
