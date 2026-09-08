@@ -366,7 +366,7 @@ parses JSON from its stdout.
 
 ## Coverage (`conformance/manifest.json`)
 
-24 cases (`CASE-001` through `CASE-024`) currently cover:
+23 cases (`CASE-001` through `CASE-023`) currently cover:
 
 - happy-path acceptance (`SCN-001`);
 - rejected verdict then a retry that accepts (`SCN-002`);
@@ -394,11 +394,7 @@ parses JSON from its stdout.
   `STATE-DELIVERY` mechanical fact sequencing item 9, `CONF-CAND-004`);
 - operator cancellation from `READY`/`EXECUTING`/`ASSURING`, and its
   rejection as illegal from a terminal `ACCEPTED` state (`SCN-011`,
-  `CONF-JOURNAL-004`);
-- the driver's own wire-boundary shape guard: a malformed (non-array)
-  `history` field is rejected with `ERR-VALIDATION` and every location
-  field null, never a crash and never a fabricated index
-  (`CONFORMANCE-PORTABLE-KIT`).
+  `CONF-JOURNAL-004`).
 
 See `conformance/manifest.json` for the authoritative, exact list with
 each case's mapped IDs.
