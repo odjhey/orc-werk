@@ -260,6 +260,13 @@
         "CONF-CAND-004",
         "STATE-DELIVERY item 9"
       ]
+    },
+    {
+      "case_id": "CASE-024-malformed-history-shape",
+      "title": "A non-array `history` is a transport-level ERR-VALIDATION with no fabricated location, never a crash",
+      "maps_to": [
+        "CONFORMANCE-PORTABLE-KIT"
+      ]
     }
   ]
 }

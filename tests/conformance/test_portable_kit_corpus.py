@@ -33,7 +33,7 @@ class PortableKitCorpusTest(unittest.TestCase):
 
     def test_every_case_passes_against_the_reference_driver(self) -> None:
         manifest = checker.load_manifest()
-        self.assertEqual(23, len(manifest["cases"]))
+        self.assertEqual(24, len(manifest["cases"]))
         failures: dict[str, list[str]] = {}
         for entry in manifest["cases"]:
             case = checker.load_case(entry["case_id"])
@@ -72,11 +72,19 @@ class PortableKitCorpusTest(unittest.TestCase):
     def test_every_fact_work_id_appears_in_the_records_own_plan(self) -> None:
         """PORT-WORK-001: a case's `history` must never fold a Fact for a
         Work absent from its own `FX-CREATE-WORK` plan -- the exact defect
-        class the verifier found in the pre-fix CASE-013/015/016."""
+        class the verifier found in the pre-fix CASE-013/015/016. Cases
+        whose `history` is itself not a well-formed envelope list (e.g.
+        `CASE-024-malformed-history-shape`) are outside this domain-level
+        assertion; that transport-level shape is covered by
+        `checker.load_case(entry["case_id"])`'s own `expected` block."""
         manifest = checker.load_manifest()
         for entry in manifest["cases"]:
             case = checker.load_case(entry["case_id"])
             history = case["input"]["history"]
+            if not isinstance(history, list) or not all(
+                isinstance(record, dict) for record in history
+            ):
+                continue
             create_work = next(rec for rec in history if rec.get("id") == "FX-CREATE-WORK")
             planned = {w["work_id"] for w in create_work["data"]["plan"]["works"]}
             self.assertIn("dispatch_result", create_work["data"], entry["case_id"])

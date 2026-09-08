@@ -53,7 +53,7 @@ is complete.
 - `docs/conformance/README.md`: a link to the portable kit doc.
 - `conformance/manifest.json`: the case index, mapping each `case_id` to
   its current stable `SCN-*`/`INV-*`/`CONF-*` IDs.
-- `conformance/cases/CASE-001-*.json` through `CASE-023-*.json`: static,
+- `conformance/cases/CASE-001-*.json` through `CASE-024-*.json`: static,
   versioned input+expected fixtures, each authored by asserting it
   against the real reference core's actual output.
 - `conformance/reference/run_case.py`: the reference driver adapter
@@ -93,7 +93,7 @@ is complete.
   parse as plain JSON with no Python-specific construct, and each case's
   `expected` block is satisfied by running `conformance/checker.py`
   against the real reference core (`python3 conformance/checker.py`
-  exits 0, printing `PASS` for all 23 cases).
+  exits 0, printing `PASS` for all 24 cases).
 - `python3 conformance/checker.py --probe` exits 0, printing `PROBE OK`
   for every falsification probe (wrong acceptance, wrong candidate
   binding, wrong replay-budget outcome, wrong pending behavior, wrong
@@ -124,3 +124,11 @@ is complete.
   only the canonical `error` id and observable state fields
   (`failing_fact_id`, `failing_work_id`) -- per the explicit instruction
   that error assertions must not pin reference wording.
+- **`CASE-024-malformed-history-shape`'s `maps_to`.** Its request has no
+  domain `SCN-*`/`INV-*` counterpart -- a non-array `history` is purely
+  this kit's own wire-boundary rule, not a domain scenario -- so it maps
+  to `CONFORMANCE-PORTABLE-KIT` itself rather than inventing a new core
+  requirement ID. Added in a corrective round after review found the
+  case fixing a genuine reference-driver crash (an uncaught
+  `AttributeError` on a non-list `history`) more valuable than removing
+  the coverage claim to reach a smaller, greener corpus.

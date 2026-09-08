@@ -229,6 +229,11 @@ def _probe_mutations() -> list[tuple[str, str, Any]]:
                 ["run-1", "A", 1, "FX-START-ASSURANCE", None, 2],
             ),
         ),
+        (
+            "CASE-024-malformed-history-shape",
+            "fabricated location: claims failing_work_id \"0\" for a failure raised before any envelope could be identified",
+            lambda expected: _set_path(expected, ["failing_work_id"], "0"),
+        ),
     ]
 
 
