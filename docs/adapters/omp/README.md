@@ -37,6 +37,20 @@ Consequently:
   or `CONF-CAND-*` conformance suites; the only canonical surface it
   touches is the `executor-identity/v1` extension (`conformance.md`).
 
+## Skill frontmatter and OMP's strict YAML parser
+
+OMP's own skill/config loader parses frontmatter with a strict YAML
+parser. Authoring the packaged `orc-ledger` skill's frontmatter
+`description` for OMP specifically (`docs/delivery/watchtower-operations.md`'s
+Conventions section keeps the harness-independent "what + when, never a
+how-summary" half of this rule; this is the OMP-specific mechanism
+underneath it, moved here per issue #282): no colon-space (`: `) in an
+unquoted value — OMP's parser reads it as a nested mapping and the skill
+silently fails to load. Single-quote the value and double inner
+apostrophes if a mid-sentence colon is unavoidable. The same
+colon-space caution applies to any doc frontmatter OMP's own tooling
+might strict-parse, not only the packaged skill.
+
 ## Scope of this directory
 
 - [`mapping.md`](mapping.md) — the OMP-concept-to-canonical-concept

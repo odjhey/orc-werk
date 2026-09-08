@@ -44,9 +44,11 @@ registered `CONF-*` requirement — it tests properties of the *harness*
 lifecycle, transcript durability, role-identity), not of a canonical Port
 this repository's conformance registry (`docs/conformance/README.md`)
 defines requirements for. See `capabilities.md`'s findings table for the
-current (pending, as of this writing) per-point status; that table is
-this document's only home for those points; no new `CONF-*` family is
-declared here since none is registered in `docs/conformance/`.
+current per-point status (filled since `TASK-M5-001`'s report landed
+2026-09-07, PR #277, and reconciled 2026-09-08 per issue #287); that
+table is this document's only home for those points; no new `CONF-*`
+family is declared here since none is registered in
+`docs/conformance/`.
 
 ## Related
 
