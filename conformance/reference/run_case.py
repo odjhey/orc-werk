@@ -271,8 +271,36 @@ def _extract_work_id(record: Mapping[str, Any]) -> Any:
 
 
 def run(case_input: dict[str, Any]) -> dict[str, Any]:
-    delivery_run_id = case_input["delivery_run_id"]
+    # Transport-level failures with no associated raw fact envelope
+    # (`docs/conformance/portable-kit.md`): a missing/non-string
+    # `delivery_run_id`, `history` itself not being a JSON array, or one
+    # of its entries not being a JSON object, all happen before any fact
+    # could be identified -- all three location fields report `null`,
+    # never a fabricated index/id/work_id.
+    delivery_run_id = case_input.get("delivery_run_id")
+    if not isinstance(delivery_run_id, str):
+        return _error_result(
+            ValueError("'delivery_run_id' must be a JSON string"),
+            fact_index=None,
+            fact_id=None,
+            work_id=None,
+        )
     history = case_input.get("history", [])
+    if not isinstance(history, list):
+        return _error_result(
+            ValueError("'history' must be a JSON array of envelopes"),
+            fact_index=None,
+            fact_id=None,
+            work_id=None,
+        )
+    for record in history:
+        if not isinstance(record, dict):
+            return _error_result(
+                ValueError("every 'history' entry must be a JSON object"),
+                fact_index=None,
+                fact_id=None,
+                work_id=None,
+            )
 
     # Single-authority budget derivation (issue #240 R1, `SCN-008`,
     # `SCN-021`'s legacy-fallback amendment): read straight off the raw
@@ -338,15 +366,19 @@ def run(case_input: dict[str, Any]) -> dict[str, Any]:
 
 
 def _error_result(
-    exc: Exception, *, fact_index: int, fact_id: Any, work_id: Any = None
+    exc: Exception, *, fact_index: int | None, fact_id: Any, work_id: Any = None
 ) -> dict[str, Any]:
-    """Every failure this driver can hit while folding history is a
-    canonical error (`CONTRACT-ERRORS`): a plain `ValueError` (raised by
-    `Fact.__post_init__`/`fact_from_envelope` for a malformed record --
-    unknown id, missing required field, non-portable data, or an invalid
-    enum value such as a malformed assurance verdict) is normalized to
-    `ERR-VALIDATION` rather than surfaced as an uncaught traceback; a
-    `CoreError` already carries its own canonical error id/message."""
+    """Every failure this driver can hit is a canonical error
+    (`CONTRACT-ERRORS`): a plain `ValueError` (raised by this driver's own
+    shape guards, or by `Fact.__post_init__`/`fact_from_envelope` for a
+    malformed record -- unknown id, missing required field, non-portable
+    data, or an invalid enum value such as a malformed assurance verdict)
+    is normalized to `ERR-VALIDATION` rather than surfaced as an uncaught
+    traceback; a `CoreError` already carries its own canonical error
+    id/message. `fact_index`/`fact_id`/`work_id` are `None` exactly when
+    the failure happened outside any identifiable fact envelope (`history`
+    itself malformed, or one of its entries not a JSON object) -- there is
+    no envelope position to report."""
     error = exc.to_canonical() if isinstance(exc, CoreError) else canonical_error(
         ERR_VALIDATION, str(exc)
     )

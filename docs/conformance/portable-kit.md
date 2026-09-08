@@ -180,18 +180,64 @@ A driver is any executable, in any language, invoked as a subprocess
    unparseable stdout -- is always a checker failure, never silently
    treated as a passing `"error"` outcome).
 
-**`failing_work_id` derivation** is exact, mechanical, and
-phase-independent -- not inferential and never conditioned on how far
-parsing got: it is the failing envelope's own raw `data.work_id` when
-that value is a JSON string, `null` otherwise. This is read straight off
-the untrusted `history` entry the driver was folding when it failed, by
-its position (`failing_fact_index`) alone -- a decode/validation failure
-that never got as far as constructing a Fact object still reports the
-available `work_id` from the raw envelope; it MUST NOT be hidden merely
-because the envelope itself turned out to be invalid. A driver MUST NOT
-special-case any particular fact id, error id, or `expected` value to
-decide this; it is the same one generic-extraction rule for every
-failure this driver can hit.
+**The error-location fields are exact, mechanical, and phase-independent
+-- never inferential, never conditioned on how far parsing got, and
+never derived from `expected` or from any Python type.** For a failure
+associated with a raw `history` entry whose own `kind` is exactly
+`"fact"`:
+
+- `failing_fact_index` is that entry's zero-based ordinal counted only
+  among `kind: "fact"` envelopes in `history` -- non-fact envelopes
+  never increment it, and it is never an index into the full `history`
+  including effect/decision envelopes. This is the natural "which fact
+  in my own fold loop failed" index a driver already has. Association
+  is by the raw envelope's position alone, even when its `id` or `data`
+  cannot be decoded into a valid Fact at all.
+- `failing_fact_id` is that envelope's raw `id` field when that value is
+  a JSON string, `null` otherwise. This is raw location context, not a
+  validated/normalized registry lookup: a string is reported verbatim
+  even when it is empty, or names no known Fact id, or names a Fact id
+  whose own kind was rejected for an unrelated reason -- it is never
+  hidden merely because it turned out to be unknown or malformed, and a
+  non-string value (a number, `null`, or the key being absent entirely)
+  is never stringified or guessed at.
+- `failing_work_id` is that envelope's raw `data.work_id` when `data` is
+  a JSON object and that value is a JSON string, `null` otherwise. This
+  is read straight off the untrusted raw envelope, independent of
+  whether Fact construction/validation itself succeeded -- a
+  decode/validation failure that never got as far as constructing a
+  Fact object still reports the `work_id` available on the raw
+  envelope; it MUST NOT be hidden merely because the envelope itself
+  turned out to be invalid.
+
+All three fields are **always present** in an `"outcome": "error"`
+response. A driver MUST NOT special-case any particular fact id, error
+id, or `expected` value to decide any of the three; it is the same one
+generic raw-location extraction rule for every failure this driver can
+hit.
+
+**All three location fields are `null` when there is no associated raw
+fact envelope at all** -- a transport/configuration/budget failure
+raised before the driver ever reaches a `kind: "fact"` envelope to index
+into (a missing or non-string top-level `delivery_run_id`; `history`
+itself not being a JSON array; one of its entries not being a JSON
+object), or a failure associated only with an effect/non-fact envelope.
+These are all canonical `ERR-VALIDATION` failures with no fact envelope
+to attribute them to, so `failing_fact_index`, `failing_fact_id`, and
+`failing_work_id` are all `null`; a driver MUST NOT fabricate an index
+(such as `0`) or guess at a work id merely because no fact was ever
+identified. Note the distinction from the fact-envelope case above: a
+raw `kind: "fact"` envelope with a missing or wrong-typed `id` is still
+**located** by its position (`failing_fact_index` is set, `failing_fact_id`
+is `null`) -- a missing/wrong-typed `id` on an otherwise-identifiable
+fact envelope is never conflated with there being no associated fact
+envelope at all.
+
+None of this changes the canonical error id vocabulary or adds a new
+error class: the reported `error.error` remains the existing canonical
+`ERR-*` value the reducer/policy itself would raise, and `error.message`
+remains informative-only, unasserted text that MAY vary by
+implementation/locale.
 
 A comparison against `expected.error` pins the canonical `error` id
 (`ERR-VALIDATION`, `ERR-CONFLICT`, ...) and observable state fields
@@ -320,7 +366,7 @@ parses JSON from its stdout.
 
 ## Coverage (`conformance/manifest.json`)
 
-23 cases (`CASE-001` through `CASE-023`) currently cover:
+24 cases (`CASE-001` through `CASE-024`) currently cover:
 
 - happy-path acceptance (`SCN-001`);
 - rejected verdict then a retry that accepts (`SCN-002`);
@@ -348,7 +394,11 @@ parses JSON from its stdout.
   `STATE-DELIVERY` mechanical fact sequencing item 9, `CONF-CAND-004`);
 - operator cancellation from `READY`/`EXECUTING`/`ASSURING`, and its
   rejection as illegal from a terminal `ACCEPTED` state (`SCN-011`,
-  `CONF-JOURNAL-004`).
+  `CONF-JOURNAL-004`);
+- the driver's own wire-boundary shape guard: a malformed (non-array)
+  `history` field is rejected with `ERR-VALIDATION` and every location
+  field null, never a crash and never a fabricated index
+  (`CONFORMANCE-PORTABLE-KIT`).
 
 See `conformance/manifest.json` for the authoritative, exact list with
 each case's mapped IDs.
