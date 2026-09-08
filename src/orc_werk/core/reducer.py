@@ -698,8 +698,26 @@ def apply_fact(
             )
         if projection.attempt_number < max_attempts:
             next_state = STATE_READY
+            blocked_reason = projection.blocked_reason
         else:
             next_state = STATE_BLOCKED
+            # Issue #288: every other BLOCKED-bound row in this function
+            # derives its terminal state eagerly, the instant the trigger
+            # Fact folds (module docstring's "state-derivation convention"),
+            # and leaves only the idempotency-marker confirmation
+            # (`blocked_confirmed`, flipped below by FACT-WORK-BLOCKED) for
+            # later. `blocked_reason` on this row used to be the one
+            # exception: it stayed `None` until that later confirmation,
+            # so a reader polling between the abandon and the next dispatch
+            # pass saw a `BLOCKED` Work with no reason -- indistinguishable
+            # from every other resting point. `policy._block_reason` (the
+            # v0 reason vocabulary's only source) already special-cases
+            # this exact trigger fact into the literal below; deriving it
+            # here, eagerly, matches every other field on this row and
+            # costs nothing when the confirmation does arrive -- FACT-WORK-
+            # BLOCKED's own branch re-sets the identical value from that
+            # same vocabulary, never overwriting it with something else.
+            blocked_reason = "attempt-abandoned"
         assurances = projection.assurances
         if legality.unsettleable:
             assurances = tuple(
@@ -709,6 +727,7 @@ def apply_fact(
         return replace_projection(
             projection,
             state=next_state,
+            blocked_reason=blocked_reason,
             assurances=assurances,
             candidate_conflict=None,
             trigger_facts=(fact.to_dict(),),

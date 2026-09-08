@@ -45,9 +45,24 @@ started by a foreign/orphaned session no seat here can observe.
    reason) via the CLI operator surface. `FACT-ATTEMPT-ABANDONED` is
    journaled for Work A.
 3. With attempt 2 of 2 now consumed and the retry budget exhausted, Work A
-   resolves to `BLOCKED` (`reason: attempt-abandoned`) via the same
-   `INV-018`/`INV-019` arithmetic every other failed-attempt row uses. No
-   `FACT-ASSURE-SETTLED` was ever fabricated for C1 (`INV-003`, `INV-009`).
+   resolves to `BLOCKED` via the same `INV-018`/`INV-019` arithmetic every
+   other failed-attempt row uses. No `FACT-ASSURE-SETTLED` was ever
+   fabricated for C1 (`INV-003`, `INV-009`). `blocked_reason` is derived
+   *eagerly*, the instant `FACT-ATTEMPT-ABANDONED` folds, to the literal
+   `attempt-abandoned` (`policy._block_reason`'s reason vocabulary) --
+   the same eager-derivation convention every other row in this state
+   machine already uses; `blocked_confirmed` stays `False` and no port
+   Effect is dispatched by this `--abandon-work` invocation (the
+   confirming `DEC-BLOCK`/`FX-BLOCK-WORK`/`FACT-WORK-BLOCKED` is left to a
+   later dispatch under the run's real adapters, exactly like the READY
+   branch's next attempt, issue #165). Because `blocked_reason` is
+   already set, `orc`'s text and JSON projections carry
+   `blocked_reason=attempt-abandoned` immediately -- never a transient
+   `None`/`null` awaiting a follow-up dispatch (issue #288). The
+   operator's full free-form abandon reason is never discarded either: it
+   stays durable on `FACT-ATTEMPT-ABANDONED` in history, and the `next:`
+   guidance for this Work names the same `attempt-abandoned` reason
+   rather than deferring to `orc history`.
 
 ## Given (unsettleable-assurance shape, #95)
 - Work B is ready. `max_attempts = 3`.
@@ -69,7 +84,10 @@ started by a foreign/orphaned session no seat here can observe.
 5. With attempt 1 of 3 consumed and budget remaining, Work B resolves to
    `READY` — an ordinary `DEC-RETRY` follows on the next dispatch pass,
    starting Execution 2 honestly (no fabricated candidate, no fabricated
-   verdict: `INV-003` intact throughout).
+   verdict: `INV-003` intact throughout). Because this branch leaves the
+   next attempt's `FX-START-EXECUTION` to a later dispatch under the run's
+   real adapters (issue #165), there is no `blocked_reason` to confirm
+   here — Work B is not `BLOCKED`.
 6. Nothing about C2's abandoned assurance is asserted as a verdict: had the
    operator instead fabricated a `FACT-ASSURE-SETTLED` to "unstick" Work B,
    that would be a forged verdict, exactly what `DEC-ABANDON-ATTEMPT` is
@@ -89,7 +107,12 @@ Removing `FACT-ATTEMPT-ABANDONED`'s legality as a continuation from either
 resting point (reverting to: no legal Fact ever consumes an unresolved
 candidate-observation conflict or an unsettleable Assurance) turns both
 halves of this scenario red: Work A and Work B never leave their resting
-points, and no `DEC-RETRY`/`DEC-BLOCK` ever fires for either.
+points, and no `DEC-RETRY`/`DEC-BLOCK` ever fires for either. Separately,
+reverting the eager `blocked_reason` derivation in the
+`FACT-ATTEMPT-ABANDONED` reducer branch back to leaving `blocked_reason`
+unset until the later `FACT-WORK-BLOCKED` confirmation (issue #288's
+prior shape) turns step 3 red: `orc status` right after the abandon
+would again show `blocked_reason=None` for a terminal Work.
 
 Verifies: `INV-003`, `INV-006`, `INV-008`, `INV-009`, `INV-011`, `INV-012`,
 `INV-018`, `INV-019`, `INV-020`.

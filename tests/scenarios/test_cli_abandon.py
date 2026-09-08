@@ -24,7 +24,7 @@ from pathlib import Path
 
 from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.cli.affordances import render_next_block
-from orc_werk.core.decisions import DEC_ABANDON_ATTEMPT
+from orc_werk.core.decisions import DEC_ABANDON_ATTEMPT, DEC_BLOCK
 from orc_werk.core.facts import FACT_ATTEMPT_ABANDONED
 from orc_werk.core.state import STATE_EXECUTING, WorkProjection, replace_projection
 
@@ -110,6 +110,17 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
             self.assertEqual(len(starts), 2)
 
     def test_budget_exhausted_abandon_rests_blocked_without_next_start(self) -> None:
+        """Issue #288: an abandon that exhausts the retry budget must land
+        with `blocked_reason` already set to the distinct `attempt-abandoned`
+        literal -- never `None` and never ordinary `retry-budget-exhausted`
+        -- from the *same* `--abandon-work` invocation, derived eagerly by
+        the `FACT-ATTEMPT-ABANDONED` reducer fold itself. The confirming
+        `DEC-BLOCK`/`FACT-WORK-BLOCKED` pair is deliberately left to a later
+        dispatch under the run's real adapters (issue #165's stub-port
+        wedge) -- the abandon invocation dispatches no port Effect at all --
+        and this must be durable (a fresh `orc status` process replaying
+        only the journal sees the same reason too, not just this process's
+        own memory)."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             config_path = root / "cfg.json"
@@ -126,9 +137,44 @@ class AbandonUnsettleableAssuranceCliTest(unittest.TestCase):
             )
             self.assertEqual(abandoned.returncode, 1, msg=abandoned.stdout + abandoned.stderr)
             self.assertIn("now BLOCKED", abandoned.stdout)
+            # The abandon's own text output already names the reason --
+            # never None/absent while the run rests BLOCKED (issue #288).
+            self.assertIn("blocked_reason=attempt-abandoned", abandoned.stdout)
             history = JSONLJournal(root / ".orc").history(delivery_run_id="abandon-exhausted")
             starts = [r for r in history if r["kind"] == "effect" and r["id"] == "FX-START-EXECUTION"]
-            self.assertEqual(len(starts), 1)
+            self.assertEqual(len(starts), 1, "abandon must not mint a next attempt through stub ports")
+            # No port Effect at all accompanies the abandon (STATE-DELIVERY
+            # item 9: journal-only), so the confirming FACT-WORK-BLOCKED/
+            # DEC-BLOCK pair has NOT folded yet -- it is left to a later,
+            # real-config dispatch (issue #165), exactly like the READY
+            # branch's deferred next attempt above.
+            blocked_facts = [r for r in history if r["kind"] == "fact" and r["id"] == "FACT-WORK-BLOCKED"]
+            self.assertEqual(len(blocked_facts), 0)
+            block_decisions = [r for r in history if r["kind"] == "decision" and r["id"] == DEC_BLOCK]
+            self.assertEqual(len(block_decisions), 0)
+            abandoned_facts = [r for r in history if r["kind"] == "fact" and r["id"] == FACT_ATTEMPT_ABANDONED]
+            self.assertEqual(len(abandoned_facts), 1)
+            # `next:` must describe *this* reason's arithmetic, never borrow
+            # the assurance-inconclusive branch's wording (issue #288's
+            # `affordances.next_entries`/`render_next_block` shared helper
+            # previously fell through the generic `else` for any reason
+            # other than the two pre-existing ones).
+            self.assertIn(
+                "retry budget exhausted by the abandoned attempt", abandoned.stdout
+            )
+            self.assertNotIn("inconclusive verdict spends the assurance budget", abandoned.stdout)
+            # Durable, not an artifact of the abandoning process's own
+            # memory: a brand-new `orc status` process replaying only the
+            # journal confirms the same reason immediately -- still without
+            # any confirming FACT-WORK-BLOCKED having fired.
+            status = _run_cli(root, "status", "abandon-exhausted", "--json")
+            self.assertEqual(status.returncode, 1, msg=status.stdout + status.stderr)
+            doc = json.loads(status.stdout)
+            self.assertEqual(doc["works"][0]["blocked_reason"], "attempt-abandoned")
+            self.assertNotEqual(doc["works"][0]["blocked_reason"], "retry-budget-exhausted")
+            json_next_text = " ".join(entry["description"] for entry in doc["next"])
+            self.assertIn("retry budget exhausted by the abandoned attempt", json_next_text)
+            self.assertNotIn("inconclusive verdict spends the assurance budget", json_next_text)
 
     def test_abandon_real_candidate_run_does_not_construct_provider_ports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

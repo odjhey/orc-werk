@@ -852,6 +852,22 @@ class Orchestrator:
                 reason=reason,
             )
         )
+        # Issue #288 (`STATE-DELIVERY` item 9's `DEC-ABANDON-ATTEMPT` ->
+        # `BLOCKED` branch): the confirming `FACT-WORK-BLOCKED`/`DEC-BLOCK`
+        # pair is deliberately NOT folded here -- `FX-BLOCK-WORK` calls
+        # `self.work_graph.block` (`_dispatch_policy_effect` below), a real
+        # port Effect, and this method is journal-only by contract
+        # (docstring above; a rejected verdict on this exact line caught an
+        # earlier attempt that dispatched it from here). `core/reducer.py`'s
+        # `FACT-ATTEMPT-ABANDONED` fold now derives `blocked_reason`
+        # eagerly the moment this Work lands at `BLOCKED` -- the same
+        # eager-state/lazy-confirmation split the transition table already
+        # uses everywhere else (module docstring) -- so text/JSON readers
+        # observe it immediately without this method ever touching a port.
+        # The confirming `FACT-WORK-BLOCKED` (and its `FX-BLOCK-WORK` port
+        # call) still happens the ordinary way, whenever a later `run()`
+        # pass next advances policy for this Work -- unchanged from every
+        # other `BLOCKED` row's shape.
         self._assert_replay_consistent()
 
     def cancel_work(self, *, work_id: str, reason: str, by: str) -> None:

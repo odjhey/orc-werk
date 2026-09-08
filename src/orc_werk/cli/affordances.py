@@ -50,6 +50,7 @@ from orc_werk.adapters.jsonl import layout
 from orc_werk.app.orchestrator import has_candidate_conflict, is_pending
 from orc_werk.cli.journal_reading import (
     BLOCKED_REASON_ASSURANCE_INCONCLUSIVE,
+    BLOCKED_REASON_ATTEMPT_ABANDONED,
     BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED,
     _awaiting_label,
 )
@@ -404,6 +405,18 @@ def render_next_block(
                 budget_note = ""
                 if reason == BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED:
                     budget_note = " (retry budget exhausted -- no attempts remain)"
+                elif reason == BLOCKED_REASON_ATTEMPT_ABANDONED:
+                    # Issue #288: this reason is only ever reached once the
+                    # retry budget IS exhausted (STATE-DELIVERY item 9's
+                    # `DEC-ABANDON-ATTEMPT`, resolved via the identical
+                    # `INV-018`/`INV-019` arithmetic every other row uses) --
+                    # never an inconclusive-verdict story, so this must not
+                    # fall through to the generic assurance-budget note below.
+                    # `_block_budget` (keyed off a `DEC-BLOCK` decision) is
+                    # unavailable here: this Work's confirming `DEC-BLOCK` is
+                    # deliberately deferred to a later dispatch (issue #165),
+                    # so nothing below can rely on it having fired yet.
+                    budget_note = " (retry budget exhausted by the abandoned attempt -- no attempts remain)"
                 elif budget is not None and isinstance(budget[0], int) and isinstance(budget[1], int):
                     remaining = max(0, budget[1] - budget[0])
                     assurance_budget = _block_assurance_budget(history, work_id)
@@ -570,6 +583,18 @@ def next_entries(
                 budget_note = ""
                 if reason == BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED:
                     budget_note = " (retry budget exhausted -- no attempts remain)"
+                elif reason == BLOCKED_REASON_ATTEMPT_ABANDONED:
+                    # Issue #288: this reason is only ever reached once the
+                    # retry budget IS exhausted (STATE-DELIVERY item 9's
+                    # `DEC-ABANDON-ATTEMPT`, resolved via the identical
+                    # `INV-018`/`INV-019` arithmetic every other row uses) --
+                    # never an inconclusive-verdict story, so this must not
+                    # fall through to the generic assurance-budget note below.
+                    # `_block_budget` (keyed off a `DEC-BLOCK` decision) is
+                    # unavailable here: this Work's confirming `DEC-BLOCK` is
+                    # deliberately deferred to a later dispatch (issue #165),
+                    # so nothing below can rely on it having fired yet.
+                    budget_note = " (retry budget exhausted by the abandoned attempt -- no attempts remain)"
                 elif budget is not None and isinstance(budget[0], int) and isinstance(budget[1], int):
                     remaining = max(0, budget[1] - budget[0])
                     assurance_budget = _block_assurance_budget(history, work_id)
