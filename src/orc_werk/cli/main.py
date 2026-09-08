@@ -79,8 +79,9 @@ from orc_werk.cli.onboard import DEFAULT_AGENTS_FILE, cmd_onboard
 from orc_werk.cli.pagination import DEFAULT_LIMIT, paginate, size_hint, window_before
 from orc_werk.cli.refs import FACT_ASSURE_SETTLED, cmd_refs
 from orc_werk.cli.report import _index_state_rollup, cmd_report, ordered_run_entries
-from orc_werk.cli.show import _render_findings, cmd_show
+from orc_werk.cli.show import _render_findings, _settled_fingerprints_by_work, cmd_show
 from orc_werk.core.errors import ERR_VALIDATION, CoreError, conflict_error, not_found_error, validation_error
+from orc_werk.core.facts import FACT_ASSURE_STARTED, FACT_CANDIDATE_OBSERVED
 from orc_werk.core.reducer import journaled_max_assurance_attempts, journaled_max_attempts
 from orc_werk.core.state import STATE_ACCEPTED, STATE_ASSURING, STATE_BLOCKED, STATE_EXECUTING, WorkProjection
 from orc_werk.ports.capabilities import validate_capabilities
@@ -436,6 +437,103 @@ def _warn_journal_only_config_tolerated(warning: Optional[CoreError], *, verb: s
     )
 
 
+def _warn_verdict_inheritance(
+    new_records: Sequence[Mapping[str, Any]], history_before_advance: Sequence[Mapping[str, Any]],
+) -> None:
+    """Issue #295: name it explicitly when THIS dispatch pass actually
+    inherited a prior attempt's terminal verdict for a re-observed
+    candidate (STATE-DELIVERY item 8, `_inherit_verdict`) instead of
+    requesting a fresh assurance -- issue #295's own repro rejected a
+    candidate on PR-prose alone, then watched the identical fingerprint
+    re-observe with no review at all, and a bare `state=` line never said
+    why. Scoped strictly to `FACT-CANDIDATE-OBSERVED` records newly
+    appended by THIS invocation (`new_records`) against the pre-pass
+    journal (`history_before_advance`): a resume that observes nothing
+    new, or a Work resting on a verdict it inherited earlier in its own
+    history, never re-fires this (no false positive off old state alone).
+    The reducer's own fold is the sole authority for WHETHER inheritance
+    occurred: every OTHER path a `FACT-CANDIDATE-OBSERVED` fold can rest
+    at within the same pass -- a brand-new candidate, or ADR-0006's
+    inconclusive-only re-attribution -- journals a fresh
+    `FACT-ASSURE-STARTED` for the same work in this same pass, and a
+    genuine identity collision (item 9) never matches a settled
+    fingerprint at all (the reducer requires the SAME `candidate_id`
+    reused, per `INV-006`/`INV-007`/`INV-008`, before it even compares
+    fingerprints -- two different ids that happen to share a fingerprint,
+    e.g. a hand-scripted config's coincidence, are never treated as the
+    same candidate and never inherit). Detecting "did this fold rest
+    without requesting assurance" this way, then using
+    `_settled_fingerprints_by_work` (shared with `orc show`'s identical
+    JUDGED-section derivation) only to name WHICH prior attempt/verdict is
+    being reused, avoids re-deriving the reducer's id/fingerprint gate a
+    second time here."""
+    started_work_ids = {
+        record.get("data", {}).get("work_id")
+        for record in new_records
+        if record.get("kind") == "fact" and record.get("id") == FACT_ASSURE_STARTED
+    }
+    for record in new_records:
+        if record.get("kind") != "fact" or record.get("id") != FACT_CANDIDATE_OBSERVED:
+            continue
+        work_id = record.get("data", {}).get("work_id")
+        if work_id in started_work_ids:
+            continue
+        fingerprint = record.get("data", {}).get("fingerprint")
+        if not isinstance(fingerprint, str):
+            continue
+        prior = _settled_fingerprints_by_work(history_before_advance, work_id).get(fingerprint)
+        if prior is None:
+            continue
+        attempt_number, prior_settled = prior
+        verdict = prior_settled.get("data", {}).get("verdict", "-")
+        print(
+            f"warning: work {work_id!r} inherited attempt {attempt_number}'s settled verdict "
+            f"({verdict}) for its re-observed candidate -- no fresh assurance was requested this "
+            "dispatch (STATE-DELIVERY item 8, verdict inheritance)",
+            file=sys.stderr,
+        )
+
+
+def _warn_git_candidate_divergence(
+    candidate: Any, projection: Any, *, run_id: str, config_path: Path,
+) -> None:
+    """Issue #289: `_warn_candidate_divergence` above only ever compares a
+    SCRIPTED config's per-attempt candidate against its own journal
+    binding -- it has no view of a real git worktree moving underneath a
+    candidate already frozen at `EXECUTING`/`ASSURING`. This is
+    `PORT-CAND-002`'s (`CandidatePort.current`) first real caller anywhere
+    in the tree -- previously contracted but never invoked. A `None`
+    result is `current`'s own documented "cannot determine safely" outcome
+    (an unclean repo, no commits, `git` unavailable) and is silently
+    skipped, never treated as "no divergence"; an adapter error is never
+    caught here and propagates exactly like any other dispatch-pass error
+    (no fake fallback). Fires only when the LIVE fingerprint genuinely
+    differs from the frozen one -- an edit that reduces to the identical
+    diff digest, or a repo the adapter cannot read, never warns. Scoped to
+    the real `git` candidate adapter only (`_dispatch_pass`'s caller
+    gates on `candidate_adapter == "git"`); a scripted candidate's own
+    `current()` reflects the same config `_warn_candidate_divergence`
+    already covers and would only ever echo it."""
+    for work_id, wp in projection.works.items():
+        if wp.current_candidate_id is None or wp.state not in (STATE_EXECUTING, STATE_ASSURING):
+            continue
+        live = candidate.current(work_id=work_id)
+        if live is None:
+            continue
+        bound_fingerprint = wp.current_candidate_fingerprint()
+        if bound_fingerprint is None or live.fingerprint == bound_fingerprint:
+            continue
+        live_text = _candidate_identity_text(live.subject_identity)
+        print(
+            f"warning: git HEAD ({live_text}) has diverged from the bound attempt-{wp.attempt_number} "
+            f"candidate (fingerprint {bound_fingerprint}); candidates are immutable per attempt -- "
+            "to open a fresh attempt: orc dispatch "
+            f"--run-id {run_id} --config {config_path} --abandon-work {work_id} "
+            '--abandon-reason "<why>"',
+            file=sys.stderr,
+        )
+
+
 class _DispatchPassResult(NamedTuple):
     """One `_dispatch_pass` invocation's outcome, consumed by both the
     ordinary (non-`--wait`) `cmd_dispatch` and the `--wait` loop
@@ -699,6 +797,10 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
         config_path=persisted_config_path.resolve(),
     )
     projection = pre_advance_projection if args.abandon_work is not None else orchestrator.run()
+    if args.abandon_work is None and candidate_adapter == "git":
+        _warn_git_candidate_divergence(
+            candidate, projection, run_id=run_id, config_path=persisted_config_path.resolve()
+        )
     history = journal.history(delivery_run_id=run_id)
 
     # `TASK-M2-006`: optional, write-only Beads mirror -- absent `mirror`
@@ -812,6 +914,7 @@ def _dispatch_pass(args: argparse.Namespace) -> _DispatchPassResult:
     # ingestion rather than an echo of the config input.
     previous_seq = max((record["seq"] for record in history_before_advance), default=0)
     new_records = [record for record in history if record["seq"] > previous_seq]
+    _warn_verdict_inheritance(new_records, history_before_advance)
 
     # SCN-018 (issue #193): observer hooks fire ONLY for facts newly
     # appended by THIS pass (`new_records` above, already seq-sorted) --

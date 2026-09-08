@@ -715,14 +715,30 @@ _ADOPTER_SUBSTITUTIONS: dict[str, list[tuple[str, str, str]]] = {
             "orc-werk's own check.sh path is repo-specific, not portable to an adopter",
         ),
         (
-            "4. Decide: `accepted` only when every acceptance criterion holds at the derived sha; "
-            "`rejected` for any defect on advertised behavior (findings verbatim, they become the next "
-            "brief); `inconclusive` when you could not evaluate (tooling down, timeout, sandbox "
-            "missing) \u2014 never `rejected` for a failure that is yours.",
-            "4. Decide: `accepted` only when every acceptance criterion holds at the derived sha; "
-            "`rejected` for any defect on advertised behavior (findings verbatim, they become the next "
-            "brief); `inconclusive` when you could not evaluate (tooling down, timeout, sandbox "
-            "missing) -- never `rejected` for a failure that is yours.",
+            "4. Decide: `accepted` only when every acceptance criterion holds at the derived sha; `rejected` "
+            "for any defect on advertised behavior of the diff itself (findings verbatim, they become the "
+            "next brief); `inconclusive` when you could not evaluate (tooling down, timeout, sandbox missing) "
+            "— never `rejected` for a failure that is yours. **Candidate-only blocking (issue #295):** the "
+            "candidate is the diff at the derived sha; the PR's own mutable prose (title, description) is not "
+            "part of it, and editing that prose never changes the fingerprint you derived. A defect confined "
+            "to that prose (a stale claim, an already-fixed issue still described as open) is real and MUST "
+            "be reported — prefix it `NON-BLOCKING` in `findings` — but it MUST NOT by itself turn an "
+            "otherwise-earned `accepted` into `rejected`: rejecting there would burn an attempt budget "
+            "re-verifying a diff you already confirmed is correct. `NON-BLOCKING` is not \"ignore it\" — the "
+            "watchtower is required to fix the prose before merge (`PLAYBOOK-WATCHTOWER`'s merge gate), it is "
+            "only not a reason to withhold acceptance of the diff.",
+            "4. Decide: `accepted` only when every acceptance criterion holds at the derived sha; `rejected` "
+            "for any defect on advertised behavior of the diff itself (findings verbatim, they become the "
+            "next brief); `inconclusive` when you could not evaluate (tooling down, timeout, sandbox missing) "
+            "-- never `rejected` for a failure that is yours. **Candidate-only blocking (issue #295):** the "
+            "candidate is the diff at the derived sha; the PR's own mutable prose (title, description) is not "
+            "part of it, and editing that prose never changes the fingerprint you derived. A defect confined "
+            "to that prose (a stale claim, an already-fixed issue still described as open) is real and MUST "
+            "be reported -- prefix it `NON-BLOCKING` in `findings` -- but it MUST NOT by itself turn an "
+            "otherwise-earned `accepted` into `rejected`: rejecting there would burn an attempt budget "
+            "re-verifying a diff you already confirmed is correct. `NON-BLOCKING` is not \"ignore it\" -- the "
+            "watchtower is required to fix the prose before merge (`PLAYBOOK-WATCHTOWER`'s merge gate), it is "
+            "only not a reason to withhold acceptance of the diff.",
             "ASCII-safe em-dash substitution for the packaged template (no functional difference)",
         ),
     ],

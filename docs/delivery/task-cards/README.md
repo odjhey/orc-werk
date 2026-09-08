@@ -77,3 +77,7 @@ M5 card in particular:
    derives `blocked_reason=attempt-abandoned` eagerly instead of leaving
    it `None` until a later dispatch's confirmation (issue #288). No new
    field, no dependency on other cards in this list.
+5. `TASK-FIX-289-295` — candidate-only blocking assurance (issue #295)
+   plus an explicit operator abandon basis and a real-git divergence
+   warning for a frozen, externally-invalidated candidate (issue #289).
+   Docs-first; no dependency on other cards in this list.

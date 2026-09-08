@@ -181,6 +181,36 @@ def _segment_attempts(work_records: Sequence[Mapping[str, Any]]) -> list[tuple[A
     return attempts
 
 
+def _settled_fingerprints_by_work(
+    history: Sequence[Mapping[str, Any]], work_id: str
+) -> dict[str, tuple[Any, Mapping[str, Any]]]:
+    """Fingerprint -> (attempt_number, FACT-ASSURE-SETTLED record) for
+    every attempt of `work_id` in `history` that reached its OWN fresh
+    settlement (never a merely-inherited one), across the WHOLE of
+    `history` -- STATE-DELIVERY item 8 (verdict inheritance) keys off
+    exactly this map. A later attempt's settlement overwrites an earlier
+    one, matching `_settled_assurance_for_candidate` (the reducer's own
+    inheritance source), which takes the most recent settled assurance
+    for a given candidate. Computing the map over the full history rather
+    than incrementally per attempt is equivalent here: a later attempt's
+    fresh settlement can never retroactively explain an earlier attempt's
+    fold, since the reducer only creates attempt N+1 after attempt N's own
+    resting point is already resolved -- there is no causal path for a
+    coincidental collision to matter. Shared by `_render_work`'s JUDGED
+    section below and `orc_werk.cli.main`'s dispatch-pass inheritance
+    warning (issue #295), so both read the identical derivation instead of
+    two separately maintained heuristics."""
+    settled_by_fingerprint: dict[str, tuple[Any, Mapping[str, Any]]] = {}
+    for attempt_number, attempt_records in _segment_attempts(_work_records(history, work_id)):
+        candidate_observed = _first(attempt_records, "fact", FACT_CANDIDATE_OBSERVED)
+        own_settled = _first(attempt_records, "fact", FACT_ASSURE_SETTLED)
+        if own_settled is not None and isinstance(candidate_observed, Mapping):
+            fingerprint = candidate_observed.get("data", {}).get("fingerprint")
+            if isinstance(fingerprint, str):
+                settled_by_fingerprint[fingerprint] = (attempt_number, own_settled)
+    return settled_by_fingerprint
+
+
 def _parse_observed_at(value: Any) -> Optional[datetime.datetime]:
     if not isinstance(value, str):
         return None
@@ -502,13 +532,11 @@ def _render_work(
     print(f"work {work_id}:")
     provenance = prompt_provenance(config, work_id, intent_text)
 
-    # fingerprint -> (attempt_number, FACT-ASSURE-SETTLED record) for every
-    # attempt already walked, in attempt order -- verdict inheritance
-    # (STATE-DELIVERY item 8) looks a re-observed candidate's fingerprint
-    # up against this map; a later match overwrites an earlier one, since
-    # `_settled_assurance_for_candidate` (the reducer's own inheritance
-    # source) takes the *most recent* settled assurance for that candidate.
-    settled_by_fingerprint: dict[str, tuple[Any, Mapping[str, Any]]] = {}
+    # STATE-DELIVERY item 8 (verdict inheritance): a re-observed
+    # candidate's fingerprint is looked up against this work's own
+    # settled-fingerprint map, shared with `orc_werk.cli.main`'s
+    # dispatch-pass inheritance warning (`_settled_fingerprints_by_work`).
+    settled_by_fingerprint = _settled_fingerprints_by_work(history, work_id)
 
     for attempt_number, attempt_records in attempts:
         print(f"  attempt {attempt_number}:")
@@ -531,11 +559,6 @@ def _render_work(
             print(line)
         for line in _render_next_deeper(attempt_records):
             print(line)
-
-        if own_settled is not None and isinstance(candidate_observed, Mapping):
-            fingerprint = candidate_observed.get("data", {}).get("fingerprint")
-            if isinstance(fingerprint, str):
-                settled_by_fingerprint[fingerprint] = (attempt_number, own_settled)
 
     if wp is not None:
         trailer = f"  now at {wp.state} (attempts={wp.attempt_number}"
