@@ -23,11 +23,15 @@ independent implementation (`PLAYBOOK-IMPLEMENTERS-GUIDE`).
 you the seat protocol's *discipline* — candidate-bound acceptance,
 independent verdicts, a durable record, seat separation. It does not get
 you a conforming Orc Werk implementation. A conforming implementation
-mechanically enforces those guarantees against forgetting, editing history,
-or self-assurance; a human following a checklist enforces them only by
-continuing to follow the checklist. Section 4 below states, line by line,
-which guarantee is which. **A manual checklist is not a conforming kernel,
-and this playbook does not claim otherwise.**
+mechanically enforces some of those guarantees — append-only history,
+exact-fingerprint candidate comparison, no silent verdict upgrade — against
+forgetting or editing history; a human following a checklist enforces the
+same guarantees only by continuing to follow the checklist. No-self-
+assurance is *not* mechanically enforced by a conforming kernel either —
+it is a seat-discipline rule (`PLAYBOOK-WATCHTOWER`), same as here. Section
+4 below states, line by line, which guarantee is which. **A manual
+checklist is not a conforming kernel, and this playbook does not claim
+otherwise.**
 
 ## 1. Map your existing tools onto the canonical roles
 
@@ -38,7 +42,7 @@ you already have.
 |---|---|---|---|
 | Work graph / tracker | `PORT-WORK-GRAPH` | Wherever you already write down "what needs doing" — one line is enough | A sticky note, a spreadsheet row, a plain-text TODO, an existing issue tracker, a notebook page |
 | Executor | `PORT-EXECUTION` | Whoever or whatever does the work and can honestly say when it's done | You, a colleague, an AI assistant, a script you run by hand |
-| Independent verifier | `PORT-ASSURANCE` | A **different** person or process than the executor, who looks at the exact result and judges it | A colleague who did not do the work, a second reading of your own work after a full day's gap (weak, see below), a checklist a third party runs |
+| Independent verifier | `PORT-ASSURANCE` | A **different** person or process than the executor, who looks at the exact result and judges it | A colleague who did not do the work, a checklist a third party runs, an automated check nobody who shipped can silently rerun and reinterpret |
 | Evidence store / journal | `PORT-JOURNAL` | An append-only plain-text record nobody edits after the fact | A single markdown or text file you only ever append to, one dated line per event; a physical notebook; a `git log` of a file you only ever append to |
 | Candidate identity | `PORT-CANDIDATE` | Whatever exact, comparable thing the verifier will judge | A git commit sha, a file's checksum, a URL to a specific artifact, a PR number pinned to a specific commit — anything two people can independently compute and compare (`INV-006`) |
 
@@ -81,7 +85,7 @@ completion for them (`ADR-0005` — this is the one piece of Orc Werk's model
 you get for free just by writing this down instead of assuming it).
 
 ```text
-2026-09-08 10:40  SHIP: work done, candidate = commit a1b2c3d (fix-report-range branch)
+2026-09-08 10:40  SHIP: <name> — work done, candidate = commit a1b2c3d (fix-report-range branch)
 ```
 
 ### 2.4 Independently bound verdict
@@ -157,7 +161,7 @@ record looks like for one work item:
 
 ```text
 2026-09-08 09:00  INTENT: fix the off-by-one in the weekly report's date range
-2026-09-08 10:40  SHIP: work done, candidate = commit a1b2c3d (fix-report-range branch)
+2026-09-08 10:40  SHIP: <name> — work done, candidate = commit a1b2c3d (fix-report-range branch)
 2026-09-08 14:15  VERDICT: candidate a1b2c3d — ACCEPTED — ran the report on
                   three sample weeks, all date ranges correct, reviewed the diff
 2026-09-08 14:15  VERIFIER: <name, different from the executor>
@@ -184,7 +188,7 @@ it.
 | Candidates compare exactly, not "close enough" | Mechanically enforced: `INV-006` (exact fingerprint equality), `CONF-CAND-001`/`002` | **Manual.** You must actually check out the exact commit / compute the exact hash yourself, not eyeball a description. Nothing stops a sloppy comparison but your own care. |
 | Evidence is bound to the one candidate it evaluated | Mechanically enforced: `INV-007`/`INV-008`, `CONF-ASSURE-003` | **Manual.** Write the exact candidate identity on every verdict line; never let a verdict outlive the candidate it was written against. |
 | Rejected/inconclusive never silently becomes accepted | Mechanically enforced: `INV-009`, `CONF-ASSURE-002`/`004` | **Manual.** Only write `ACCEPTED` on its own dedicated line, only once, only after an honest accepted verdict exists. |
-| One claimant per work at a time | Mechanically enforced: `PORT-WORK-004`'s atomic claim, `INV-020` | **Manual.** You have to actually check nobody else already started the same item before you start it — nothing arbitrates a race for you. |
+| One claimant per work at a time | Mechanically enforced only when the adapter advertises `CAP-WORK-ATOMIC-CLAIM` (`PORT-WORK-004`'s claim, `INV-020`, `CONF-WORK-004`) — a minimal/scripted adapter may not advertise it, in which case this is manual there too | **Manual.** You have to actually check nobody else already started the same item before you start it — nothing arbitrates a race for you. |
 | Deterministic replay from history alone | Mechanically enforced: `PORT-JOURNAL-005`, `CONF-JOURNAL-003` | **Manual, and only as good as your notes.** Section 2.6's fresh-session test is how you find out whether this held. |
 | Retry/assurance budgets are bounded and counted | Mechanically enforced: `INV-018`/`INV-019`/`INV-021`, `ADR-0006` | **Manual, optional.** Decide up front how many retries you'll allow before escalating (asking someone, changing approach) and actually stop there — nothing counts for you. |
 | Crash/process-restart durability | Mechanically enforced at a stated durability level (`CONTRACT-STORAGE-CONCURRENCY` §9) | **As durable as your storage.** A paper notebook survives a laptop crash; an unsaved text buffer does not. Choose accordingly. |

@@ -144,10 +144,13 @@ shape:
   (identity, idempotency key, `dispatch_result`) for effects. `data.
   dispatch_result` is reserved: an effect payload must not define its own
   field of that name (`PORT-JOURNAL-003`).
-- `extensions` — present only when carrying a registered extension payload;
-  must satisfy `CONTRACT-EXTENSIONS` (see §7 below for the shape and the
-  two registered examples you can reuse as templates:
-  `EXT-EXECUTOR-IDENTITY-V1`, `EXT-REVIEW-FINDINGS-V1`).
+- `extensions` — present only when carrying an extension payload; any
+  namespaced, versioned key satisfying `CONTRACT-EXTENSIONS` is legal
+  (`EXT-001` requires only that the identifier itself be stable and
+  versioned, not that it appear in this repository's own extension
+  registry) — see §4 below for the shape and the two extensions already
+  registered in this repository that you can reuse as templates:
+  `EXT-EXECUTOR-IDENTITY-V1`, `EXT-REVIEW-FINDINGS-V1`.
 
 Portability constraint, carried from `ADR-0003`: canonical persisted/
 interchange records must not depend on pickle, language-native class
@@ -242,9 +245,16 @@ implementing deliberately rather than discovering by accident:
 
 - **Verdict inheritance** (`STATE-DELIVERY` item 8) — a re-observed
   candidate id whose incoming fingerprint matches what's already on record,
-  with a prior settled verdict, is not re-verified: the existing verdict is
-  cited as the `basis` of an ordinary `DEC-ACCEPT`/`DEC-RETRY`/`DEC-BLOCK`.
-  No second `FACT-ASSURE-SETTLED` is ever journaled for the same candidate.
+  with a prior *settled* verdict already on record for that exact
+  candidate, is not re-verified: no new `FACT-ASSURE-STARTED`/
+  `FACT-ASSURE-SETTLED` pair is journaled at all for this re-observation —
+  the existing verdict is cited as the `basis` of an ordinary
+  `DEC-ACCEPT`/`DEC-RETRY`/`DEC-BLOCK` instead. This is distinct from an
+  `inconclusive` re-request (item 11/`INV-021`, §7 below): that case has no
+  settled verdict yet to inherit, so it *does* journal additional
+  `FACT-ASSURE-STARTED`/`FACT-ASSURE-SETTLED` pairs against the same exact
+  `candidate_id`/fingerprint, one per `assurance_number`, until one settles
+  decisively or the assurance budget is exhausted.
 - **Candidate-observation conflict** (`STATE-DELIVERY` item 9) — a
   re-observed candidate id whose fingerprint does *not* match (or which has
   no prior settled verdict to inherit from) is still journaled — Facts are
@@ -376,7 +386,7 @@ shortest legal complete run. Seventeen records, `seq` 1 through 17:
 {"schema_version":1,"seq":2,"delivery_run_id":"run-1","kind":"effect","id":"FX-CREATE-WORK","data":{"idempotency_key":"run-1|FX-CREATE-WORK","plan":{"works":[{"work_id":"work-1","deps":[]}]},"max_attempts":3,"max_assurance_attempts":2,"dispatch_result":{"works":[{"work_id":"work-1"}]}},"extensions":{}}
 {"schema_version":1,"seq":3,"delivery_run_id":"run-1","kind":"fact","id":"FACT-WORK-CREATED","data":{"work_id":"work-1","delivery_run_id":"run-1"},"extensions":{}}
 {"schema_version":1,"seq":4,"delivery_run_id":"run-1","kind":"fact","id":"FACT-WORK-READY","data":{"work_id":"work-1"},"extensions":{}}
-{"schema_version:1":true,"schema_version":1,"seq":5,"delivery_run_id":"run-1","kind":"decision","id":"DEC-DISPATCH","data":{"work_id":"work-1","attempt_number":1,"attribution":{"policy":"v0-deterministic"},"basis":[{"id":"FACT-WORK-READY","kind":"fact","data":{"work_id":"work-1"}}]},"extensions":{}}
+{"schema_version":1,"seq":5,"delivery_run_id":"run-1","kind":"decision","id":"DEC-DISPATCH","data":{"work_id":"work-1","attempt_number":1,"attribution":{"policy":"v0-deterministic"},"basis":[{"id":"FACT-WORK-READY","kind":"fact","data":{"work_id":"work-1"}}]},"extensions":{}}
 {"schema_version":1,"seq":6,"delivery_run_id":"run-1","kind":"effect","id":"FX-START-EXECUTION","data":{"work_id":"work-1","attempt_number":1,"idempotency_key":"run-1|work-1|1|FX-START-EXECUTION","dispatch_result":{"execution_id":"exec-1"}},"extensions":{}}
 {"schema_version":1,"seq":7,"delivery_run_id":"run-1","kind":"fact","id":"FACT-EXEC-STARTED","data":{"work_id":"work-1","execution_id":"exec-1"},"extensions":{}}
 {"schema_version":1,"seq":8,"delivery_run_id":"run-1","kind":"fact","id":"FACT-EXEC-SETTLED","data":{"work_id":"work-1","execution_id":"exec-1","outcome":"completed","artifact_refs":["gh-pr:1","head:abc1111"]},"extensions":{"executor-identity/v1":{"role":"ship","model":"example/model-a","session_ref":"sess-ship-1","seat_ref":"ship-work-1-abc1111"}}}
@@ -391,41 +401,80 @@ shortest legal complete run. Seventeen records, `seq` 1 through 17:
 {"schema_version":1,"seq":17,"delivery_run_id":"run-1","kind":"fact","id":"FACT-WORK-COMPLETED","data":{"work_id":"work-1"},"extensions":{}}
 ```
 
-(Ignore the stray `"schema_version:1":true` key on the `seq:5` line above if
-you are pattern-matching this text by eye — it does not belong there; a
-real implementation's decision record has the same six top-level keys as
-every other record. It is called out explicitly here, rather than silently
-fixed, as a worked instance of §12.3's checklist item "unknown/malformed
-keys are rejected, not ignored": a strict reader must flag it.)
+### 12.1a An invalid record, for the checklist's malformed-key test
+
+§13's checklist asks you to confirm your reader rejects, rather than
+silently ignores, an unknown/malformed top-level key. This is what such a
+violation looks like — a decision record carrying a stray
+`"schema_version:1"` key that does not belong in the envelope (contrast
+with the legitimate `seq:5` record in 12.1 above, which has exactly the
+canonical six top-level keys):
+
+```jsonl
+{"schema_version:1":true,"schema_version":1,"seq":5,"delivery_run_id":"run-1","kind":"decision","id":"DEC-DISPATCH","data":{"work_id":"work-1","attempt_number":1,"attribution":{"policy":"v0-deterministic"},"basis":[{"id":"FACT-WORK-READY","kind":"fact","data":{"work_id":"work-1"}}]},"extensions":{}}
+```
+
+A strict reader MUST reject this line rather than tolerate the extra key —
+it is not part of `PORT-JOURNAL-ENVELOPE`'s canonical shape. This is a
+standalone negative example; it is never part of a legal, complete run.
 
 ### 12.2 Rejected, then retried, then accepted
 
-The same run shape, but the first assurance rejects, forcing a second
-execution attempt. Notice `attempt_number` increments to `2`, a brand-new
-`execution_id`/`candidate_id`/`fingerprint` is produced (§6 — a retry never
-reuses the prior candidate's identity), and `DEC-RETRY` cites the rejecting
-`FACT-ASSURE-SETTLED` as its `basis` (`INV-012`):
+The same Work, but the first assurance rejects, forcing a second execution
+attempt within the *same* run. A retry always creates a new Execution
+identity (`INV-004` — historical Executions are never overwritten), so
+`attempt_number` increments to `2` and a new `execution_id` is produced;
+the candidate identification that follows the new execution typically
+yields a new `candidate_id`/`fingerprint` too (a different artifact was
+produced), though that is a consequence of the artifact actually differing,
+not a rule this contract enforces on candidate identity itself — see §6's
+verdict-inheritance case for when a re-observed candidate legitimately
+keeps its prior identity instead. `DEC-RETRY` cites the rejecting
+`FACT-ASSURE-SETTLED` as its `basis` (`INV-012`). Twenty-seven records,
+`seq` 1 through 27, complete:
 
 ```jsonl
+{"schema_version":1,"seq":1,"delivery_run_id":"run-2","kind":"fact","id":"FACT-INTENT-SUBMITTED","data":{"intent_id":"run-2","text":"ship the widget, v2"},"extensions":{}}
+{"schema_version":1,"seq":2,"delivery_run_id":"run-2","kind":"effect","id":"FX-CREATE-WORK","data":{"idempotency_key":"run-2|FX-CREATE-WORK","plan":{"works":[{"work_id":"work-1","deps":[]}]},"max_attempts":3,"max_assurance_attempts":2,"dispatch_result":{"works":[{"work_id":"work-1"}]}},"extensions":{}}
+{"schema_version":1,"seq":3,"delivery_run_id":"run-2","kind":"fact","id":"FACT-WORK-CREATED","data":{"work_id":"work-1","delivery_run_id":"run-2"},"extensions":{}}
+{"schema_version":1,"seq":4,"delivery_run_id":"run-2","kind":"fact","id":"FACT-WORK-READY","data":{"work_id":"work-1"},"extensions":{}}
+{"schema_version":1,"seq":5,"delivery_run_id":"run-2","kind":"decision","id":"DEC-DISPATCH","data":{"work_id":"work-1","attempt_number":1,"attribution":{"policy":"v0-deterministic"},"basis":[{"id":"FACT-WORK-READY","kind":"fact","data":{"work_id":"work-1"}}]},"extensions":{}}
+{"schema_version":1,"seq":6,"delivery_run_id":"run-2","kind":"effect","id":"FX-START-EXECUTION","data":{"work_id":"work-1","attempt_number":1,"idempotency_key":"run-2|work-1|1|FX-START-EXECUTION","dispatch_result":{"execution_id":"exec-1"}},"extensions":{}}
+{"schema_version":1,"seq":7,"delivery_run_id":"run-2","kind":"fact","id":"FACT-EXEC-STARTED","data":{"work_id":"work-1","execution_id":"exec-1"},"extensions":{}}
+{"schema_version":1,"seq":8,"delivery_run_id":"run-2","kind":"fact","id":"FACT-EXEC-SETTLED","data":{"work_id":"work-1","execution_id":"exec-1","outcome":"completed","artifact_refs":["gh-pr:2","head:abc1111"]},"extensions":{"executor-identity/v1":{"role":"ship","model":"example/model-a","session_ref":"sess-ship-2","seat_ref":"ship-work-1-abc1111"}}}
+{"schema_version":1,"seq":9,"delivery_run_id":"run-2","kind":"effect","id":"FX-IDENTIFY-CANDIDATE","data":{"work_id":"work-1","execution_id":"exec-1","idempotency_key":"run-2|work-1|1|FX-IDENTIFY-CANDIDATE","dispatch_result":{"candidate":{"id":"cand-1","work_id":"work-1","execution_id":"exec-1","fingerprint":"fp-abc1111","subject_identity":{"head_sha":"abc1111"}}}},"extensions":{}}
+{"schema_version":1,"seq":10,"delivery_run_id":"run-2","kind":"fact","id":"FACT-CANDIDATE-OBSERVED","data":{"work_id":"work-1","execution_id":"exec-1","candidate_id":"cand-1","fingerprint":"fp-abc1111"},"extensions":{}}
+{"schema_version":1,"seq":11,"delivery_run_id":"run-2","kind":"decision","id":"DEC-REQUEST-ASSURANCE","data":{"work_id":"work-1","candidate_id":"cand-1","max_assurance_attempts":2,"assurance_number":1,"attribution":{"policy":"v0-deterministic"},"basis":[{"id":"FACT-CANDIDATE-OBSERVED","kind":"fact","data":{"work_id":"work-1","candidate_id":"cand-1"}}]},"extensions":{}}
+{"schema_version":1,"seq":12,"delivery_run_id":"run-2","kind":"effect","id":"FX-START-ASSURANCE","data":{"work_id":"work-1","candidate_id":"cand-1","candidate_fingerprint":"fp-abc1111","assurance_number":1,"idempotency_key":"run-2|work-1|1|FX-START-ASSURANCE|fp-abc1111","dispatch_result":{"assurance_id":"assure-1"}},"extensions":{}}
+{"schema_version":1,"seq":13,"delivery_run_id":"run-2","kind":"fact","id":"FACT-ASSURE-STARTED","data":{"work_id":"work-1","candidate_id":"cand-1","assurance_id":"assure-1"},"extensions":{}}
 {"schema_version":1,"seq":14,"delivery_run_id":"run-2","kind":"fact","id":"FACT-ASSURE-SETTLED","data":{"work_id":"work-1","assurance_id":"assure-1","candidate_fingerprint":"fp-abc1111","verdict":"rejected","evidence_refs":["gh-pr:2","head:abc1111"]},"extensions":{"review-findings/v1":{"findings":["REJECT: date range off by one day at week boundary"]}}}
 {"schema_version":1,"seq":15,"delivery_run_id":"run-2","kind":"decision","id":"DEC-RETRY","data":{"work_id":"work-1","attempt_number":2,"attribution":{"policy":"v0-deterministic"},"basis":[{"id":"FACT-ASSURE-SETTLED","kind":"fact","data":{"work_id":"work-1","verdict":"rejected"}}]},"extensions":{}}
 {"schema_version":1,"seq":16,"delivery_run_id":"run-2","kind":"effect","id":"FX-START-EXECUTION","data":{"work_id":"work-1","attempt_number":2,"idempotency_key":"run-2|work-1|2|FX-START-EXECUTION","dispatch_result":{"execution_id":"exec-2"}},"extensions":{}}
 {"schema_version":1,"seq":17,"delivery_run_id":"run-2","kind":"fact","id":"FACT-EXEC-STARTED","data":{"work_id":"work-1","execution_id":"exec-2"},"extensions":{}}
-{"schema_version":1,"seq":18,"delivery_run_id":"run-2","kind":"fact","id":"FACT-EXEC-SETTLED","data":{"work_id":"work-1","execution_id":"exec-2","outcome":"completed","artifact_refs":["gh-pr:2","head:def2222"]},"extensions":{"executor-identity/v1":{"role":"ship","model":"example/model-a","session_ref":"sess-ship-1","seat_ref":"ship-work-1-def2222"}}}
+{"schema_version":1,"seq":18,"delivery_run_id":"run-2","kind":"fact","id":"FACT-EXEC-SETTLED","data":{"work_id":"work-1","execution_id":"exec-2","outcome":"completed","artifact_refs":["gh-pr:2","head:def2222"]},"extensions":{"executor-identity/v1":{"role":"ship","model":"example/model-a","session_ref":"sess-ship-2","seat_ref":"ship-work-1-def2222"}}}
+{"schema_version":1,"seq":19,"delivery_run_id":"run-2","kind":"effect","id":"FX-IDENTIFY-CANDIDATE","data":{"work_id":"work-1","execution_id":"exec-2","idempotency_key":"run-2|work-1|2|FX-IDENTIFY-CANDIDATE","dispatch_result":{"candidate":{"id":"cand-2","work_id":"work-1","execution_id":"exec-2","fingerprint":"fp-def2222","subject_identity":{"head_sha":"def2222"}}}},"extensions":{}}
+{"schema_version":1,"seq":20,"delivery_run_id":"run-2","kind":"fact","id":"FACT-CANDIDATE-OBSERVED","data":{"work_id":"work-1","execution_id":"exec-2","candidate_id":"cand-2","fingerprint":"fp-def2222"},"extensions":{}}
+{"schema_version":1,"seq":21,"delivery_run_id":"run-2","kind":"decision","id":"DEC-REQUEST-ASSURANCE","data":{"work_id":"work-1","candidate_id":"cand-2","max_assurance_attempts":2,"assurance_number":1,"attribution":{"policy":"v0-deterministic"},"basis":[{"id":"FACT-CANDIDATE-OBSERVED","kind":"fact","data":{"work_id":"work-1","candidate_id":"cand-2"}}]},"extensions":{}}
+{"schema_version":1,"seq":22,"delivery_run_id":"run-2","kind":"effect","id":"FX-START-ASSURANCE","data":{"work_id":"work-1","candidate_id":"cand-2","candidate_fingerprint":"fp-def2222","assurance_number":1,"idempotency_key":"run-2|work-1|2|FX-START-ASSURANCE|fp-def2222","dispatch_result":{"assurance_id":"assure-2"}},"extensions":{}}
+{"schema_version":1,"seq":23,"delivery_run_id":"run-2","kind":"fact","id":"FACT-ASSURE-STARTED","data":{"work_id":"work-1","candidate_id":"cand-2","assurance_id":"assure-2"},"extensions":{}}
+{"schema_version":1,"seq":24,"delivery_run_id":"run-2","kind":"fact","id":"FACT-ASSURE-SETTLED","data":{"work_id":"work-1","assurance_id":"assure-2","candidate_fingerprint":"fp-def2222","verdict":"accepted","evidence_refs":["gh-pr:2","head:def2222"]},"extensions":{"executor-identity/v1":{"role":"verify","model":"example/model-b","session_ref":"sess-verify-2","seat_ref":"verify-work-1-def2222"}}}
+{"schema_version":1,"seq":25,"delivery_run_id":"run-2","kind":"decision","id":"DEC-ACCEPT","data":{"work_id":"work-1","attribution":{"policy":"v0-deterministic"},"basis":[{"id":"FACT-ASSURE-SETTLED","kind":"fact","data":{"work_id":"work-1","verdict":"accepted"}}]},"extensions":{}}
+{"schema_version":1,"seq":26,"delivery_run_id":"run-2","kind":"effect","id":"FX-COMPLETE-WORK","data":{"work_id":"work-1","idempotency_key":"run-2|work-1|2|FX-COMPLETE-WORK","dispatch_result":{"work_id":"work-1"}},"extensions":{}}
+{"schema_version":1,"seq":27,"delivery_run_id":"run-2","kind":"fact","id":"FACT-WORK-COMPLETED","data":{"work_id":"work-1"},"extensions":{}}
 ```
 
-The rest of attempt 2 replays the same shape as records `seq` 9-17 in
-§12.1, with `exec-2`/`cand-2`/`fp-def2222` in place of the attempt-1
-identities, ending in `verdict: "accepted"` and `FACT-WORK-COMPLETED`.
+### 12.3 An `inconclusive` re-request (fragment, not a complete run)
 
-### 12.3 An `inconclusive` re-request (fragment)
-
-To see the assurance-budget-only fork from §7 (never touching
+Unlike 12.1 and 12.2 above, this is deliberately only a fragment — it
+exists to show the assurance-budget-only fork from §7 (never touching
 `attempt_number`), the shape a second assurance of the *same* candidate
 takes after an `inconclusive` settlement — note `assurance_number: 2` and
 the extra `assurance_number` component on `FX-START-ASSURANCE`'s
 idempotency key, with `attempt_number` untouched from whatever it already
-was:
+was. As §6 notes, this second `FACT-ASSURE-SETTLED` under a new assurance
+identity for the same `candidate_id` is exactly what item 8's verdict
+inheritance does *not* produce — inheritance only applies once one of these
+re-requests actually settles decisively:
 
 ```jsonl
 {"schema_version":1,"seq":20,"delivery_run_id":"run-3","kind":"fact","id":"FACT-ASSURE-SETTLED","data":{"work_id":"work-1","assurance_id":"assure-1","candidate_fingerprint":"fp-abc1111","verdict":"inconclusive","evidence_refs":["sandbox-timeout"]},"extensions":{}}
@@ -444,8 +493,13 @@ check.
       keys (`schema_version`, `seq`, `delivery_run_id`, `kind`, `id`,
       `data`) present; `extensions` present or absent per §3.
 - [ ] **Seq monotonicity.** `seq` values within one `delivery_run_id` are
-      strictly increasing integers starting at `1`, with no gaps and no
-      repeats, regardless of how many processes appended concurrently.
+      strictly increasing integers assigned by your JournalPort on append
+      (`PORT-JOURNAL-ENVELOPE`), never repeated, regardless of how many
+      processes appended concurrently. `PORT-JOURNAL` requires only
+      monotonic increase, not a specific starting value or gaplessness —
+      the reference implementation happens to start at `1` with no gaps,
+      but that specific numbering is reference-specific (§11), not a
+      universal conformance requirement.
 - [ ] **Vocabulary closure.** Every `id` resolves against exactly one of
       `PROTOCOL-FACTS`, `PROTOCOL-DECISIONS`, or `PROTOCOL-EFFECTS`,
       matching its declared `kind`.
