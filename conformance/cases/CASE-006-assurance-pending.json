@@ -1,0 +1,133 @@
+{
+  "case_id": "CASE-006-assurance-pending",
+  "description": "FACT-ASSURE-STARTED is the last fact for Work A; no verdict exists yet. The work rests at ASSURING and no Decision fires.",
+  "expected": {
+    "decisions": {
+      "A": null
+    },
+    "outcome": "ok",
+    "projection": {
+      "A": {
+        "assurance_pending": true,
+        "pending_assurance_id": "a1",
+        "current_candidate_id": "c1",
+        "state": "ASSURING"
+      }
+    }
+  },
+  "input": {
+    "delivery_run_id": "run-1",
+    "history": [
+      {
+        "data": {
+          "dispatch_result": {
+            "works": [
+              {
+                "delivery_run_id": "run-1",
+                "id": "A"
+              }
+            ]
+          },
+          "idempotency_key": "run-1|FX-CREATE-WORK",
+          "max_attempts": 3,
+          "plan": {
+            "works": [
+              {
+                "deps": [],
+                "work_id": "A"
+              }
+            ]
+          },
+          "work_id": ""
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FX-CREATE-WORK",
+        "kind": "effect",
+        "schema_version": 1,
+        "seq": 1
+      },
+      {
+        "data": {
+          "delivery_run_id": "run-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-CREATED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 2
+      },
+      {
+        "data": {
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-READY",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 3
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 4
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "outcome": "completed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 5
+      },
+      {
+        "data": {
+          "candidate_id": "c1",
+          "execution_id": "e1",
+          "fingerprint": "fp-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-CANDIDATE-OBSERVED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 6
+      },
+      {
+        "data": {
+          "assurance_id": "a1",
+          "candidate_id": "c1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 7
+      }
+    ]
+  },
+  "maps_to": [
+    "SCN-007",
+    "INV-003"
+  ],
+  "schema_version": 1,
+  "title": "A started, unsettled assurance is a legal non-terminal resting point; nothing is fabricated"
+}

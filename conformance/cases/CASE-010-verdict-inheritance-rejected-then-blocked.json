@@ -1,0 +1,205 @@
+{
+  "case_id": "CASE-010-verdict-inheritance-rejected-then-blocked",
+  "description": "Execution 2 reproduces Candidate C1 byte-for-byte. No new FACT-ASSURE-SETTLED is fabricated; the second FACT-CANDIDATE-OBSERVED for C1 inherits attempt 1's rejected verdict, and with the retry budget now exhausted (2 of 2) Work A resolves straight to BLOCKED.",
+  "expected": {
+    "decisions": {
+      "A": {
+        "decision": {
+          "data": {
+            "reason": "retry-budget-exhausted"
+          },
+          "id": "DEC-BLOCK"
+        }
+      }
+    },
+    "outcome": "ok",
+    "projection": {
+      "A": {
+        "assurances": [
+          {
+            "assurance_id": "a1",
+            "candidate_id": "c1",
+            "verdict": "rejected"
+          }
+        ],
+        "attempt_number": 2,
+        "state": "BLOCKED"
+      }
+    }
+  },
+  "input": {
+    "delivery_run_id": "run-1",
+    "history": [
+      {
+        "data": {
+          "dispatch_result": {
+            "works": [
+              {
+                "delivery_run_id": "run-1",
+                "id": "A"
+              }
+            ]
+          },
+          "idempotency_key": "run-1|FX-CREATE-WORK",
+          "max_attempts": 2,
+          "plan": {
+            "works": [
+              {
+                "deps": [],
+                "work_id": "A"
+              }
+            ]
+          },
+          "work_id": ""
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FX-CREATE-WORK",
+        "kind": "effect",
+        "schema_version": 1,
+        "seq": 1
+      },
+      {
+        "data": {
+          "delivery_run_id": "run-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-CREATED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 2
+      },
+      {
+        "data": {
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-READY",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 3
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 4
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "outcome": "completed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 5
+      },
+      {
+        "data": {
+          "candidate_id": "c1",
+          "execution_id": "e1",
+          "fingerprint": "fp-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-CANDIDATE-OBSERVED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 6
+      },
+      {
+        "data": {
+          "assurance_id": "a1",
+          "candidate_id": "c1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 7
+      },
+      {
+        "data": {
+          "assurance_id": "a1",
+          "candidate_fingerprint": "fp-1",
+          "verdict": "rejected",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 8
+      },
+      {
+        "data": {
+          "execution_id": "e2",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 9
+      },
+      {
+        "data": {
+          "execution_id": "e2",
+          "outcome": "completed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 10
+      },
+      {
+        "data": {
+          "candidate_id": "c1",
+          "execution_id": "e2",
+          "fingerprint": "fp-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-CANDIDATE-OBSERVED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 11
+      }
+    ]
+  },
+  "maps_to": [
+    "SCN-009",
+    "INV-003",
+    "INV-006",
+    "INV-007",
+    "INV-008",
+    "INV-009",
+    "INV-010",
+    "INV-012",
+    "INV-018"
+  ],
+  "schema_version": 1,
+  "title": "Re-observing the exact same rejected candidate inherits its verdict instead of raising a conflict"
+}

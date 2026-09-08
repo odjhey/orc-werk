@@ -1,0 +1,169 @@
+{
+  "case_id": "CASE-001-happy-path-acceptance",
+  "description": "Work A executes once, its candidate is accepted, and the work reaches ACCEPTED with DEC-ACCEPT pending confirmation.",
+  "expected": {
+    "decisions": {
+      "A": {
+        "decision": {
+          "id": "DEC-ACCEPT"
+        },
+        "effects": [
+          {
+            "id": "FX-COMPLETE-WORK"
+          }
+        ]
+      }
+    },
+    "derived_max_assurance_attempts": 2,
+    "derived_max_attempts": 3,
+    "outcome": "ok",
+    "projection": {
+      "A": {
+        "attempt_number": 1,
+        "blocked_reason": null,
+        "cancelled_reason": null,
+        "candidates": {
+          "c1": {
+            "fingerprint": "fp-1"
+          }
+        },
+        "current_candidate_id": "c1",
+        "state": "ACCEPTED"
+      }
+    }
+  },
+  "input": {
+    "delivery_run_id": "run-1",
+    "history": [
+      {
+        "data": {
+          "dispatch_result": {
+            "works": [
+              {
+                "delivery_run_id": "run-1",
+                "id": "A"
+              }
+            ]
+          },
+          "idempotency_key": "run-1|FX-CREATE-WORK",
+          "max_assurance_attempts": 2,
+          "max_attempts": 3,
+          "plan": {
+            "works": [
+              {
+                "deps": [],
+                "work_id": "A"
+              }
+            ]
+          },
+          "work_id": ""
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FX-CREATE-WORK",
+        "kind": "effect",
+        "schema_version": 1,
+        "seq": 1
+      },
+      {
+        "data": {
+          "delivery_run_id": "run-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-CREATED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 2
+      },
+      {
+        "data": {
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-READY",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 3
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 4
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "outcome": "completed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 5
+      },
+      {
+        "data": {
+          "candidate_id": "c1",
+          "execution_id": "e1",
+          "fingerprint": "fp-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-CANDIDATE-OBSERVED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 6
+      },
+      {
+        "data": {
+          "assurance_id": "a1",
+          "candidate_id": "c1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 7
+      },
+      {
+        "data": {
+          "assurance_id": "a1",
+          "candidate_fingerprint": "fp-1",
+          "verdict": "accepted",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 8
+      }
+    ]
+  },
+  "maps_to": [
+    "SCN-001",
+    "INV-003",
+    "INV-005",
+    "INV-007",
+    "INV-011",
+    "INV-020"
+  ],
+  "schema_version": 1,
+  "title": "Happy path: one execution, one accepted candidate, work completes"
+}

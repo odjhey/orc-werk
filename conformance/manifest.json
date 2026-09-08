@@ -1,0 +1,272 @@
+{
+  "schema_version": 1,
+  "kit_version": 1,
+  "description": "Case index for the portable conformance kit (CONFORMANCE-PORTABLE-KIT). Each entry names a case file under cases/<case_id>.json and the stable contract/scenario IDs it exercises.",
+  "cases": [
+    {
+      "case_id": "CASE-001-happy-path-acceptance",
+      "title": "Happy path: one execution, one accepted candidate, work completes",
+      "maps_to": [
+        "SCN-001",
+        "INV-003",
+        "INV-005",
+        "INV-007",
+        "INV-011",
+        "INV-020"
+      ]
+    },
+    {
+      "case_id": "CASE-002-rejected-verdict-then-retry-accepted",
+      "title": "Assurance rejection triggers a fresh execution/candidate; the second candidate is accepted",
+      "maps_to": [
+        "SCN-002",
+        "INV-004",
+        "INV-007",
+        "INV-008",
+        "INV-010",
+        "INV-018"
+      ]
+    },
+    {
+      "case_id": "CASE-003-execution-failure-then-retry-accepted",
+      "title": "Execution failure is retried without overwriting attempt history",
+      "maps_to": [
+        "SCN-003",
+        "INV-003",
+        "INV-004",
+        "INV-018"
+      ]
+    },
+    {
+      "case_id": "CASE-004-execution-budget-exhausted",
+      "title": "Retry budget prevents a fourth execution; policy resolves to DEC-BLOCK",
+      "maps_to": [
+        "SCN-004",
+        "INV-018",
+        "INV-019"
+      ]
+    },
+    {
+      "case_id": "CASE-005-execution-pending",
+      "title": "A started, unobserved execution is a legal non-terminal resting point; nothing is fabricated",
+      "maps_to": [
+        "SCN-007",
+        "INV-003",
+        "INV-018"
+      ]
+    },
+    {
+      "case_id": "CASE-006-assurance-pending",
+      "title": "A started, unsettled assurance is a legal non-terminal resting point; nothing is fabricated",
+      "maps_to": [
+        "SCN-007",
+        "INV-003"
+      ]
+    },
+    {
+      "case_id": "CASE-007-replay-non-default-budget",
+      "title": "A fresh replay under a recorded non-default max_attempts=2 reconstructs BLOCKED, not a wrongly-derived READY",
+      "maps_to": [
+        "SCN-008",
+        "CONF-JOURNAL-003",
+        "INV-018",
+        "INV-019"
+      ]
+    },
+    {
+      "case_id": "CASE-008-legacy-fallback-max-attempts",
+      "title": "A legacy FX-CREATE-WORK record with no max_attempts field folds under the schema default (3)",
+      "maps_to": [
+        "SCN-008",
+        "CONF-JOURNAL-003",
+        "INV-018",
+        "INV-019"
+      ]
+    },
+    {
+      "case_id": "CASE-009-legacy-fallback-assurance-budget",
+      "title": "A legacy journal with max_attempts recorded but max_assurance_attempts absent folds under budget 1, not the schema default 2",
+      "maps_to": [
+        "SCN-021",
+        "CONF-JOURNAL-003",
+        "INV-021",
+        "CONF-ASSURE-008"
+      ]
+    },
+    {
+      "case_id": "CASE-010-verdict-inheritance-rejected-then-blocked",
+      "title": "Re-observing the exact same rejected candidate inherits its verdict instead of raising a conflict",
+      "maps_to": [
+        "SCN-009",
+        "INV-003",
+        "INV-006",
+        "INV-007",
+        "INV-008",
+        "INV-009",
+        "INV-010",
+        "INV-012",
+        "INV-018"
+      ]
+    },
+    {
+      "case_id": "CASE-011-candidate-observation-conflict-resting-point",
+      "title": "Re-observing a candidate with no settled (only abandoned) assurance history rests at a marked, non-erroneous conflict",
+      "maps_to": [
+        "SCN-010",
+        "SCN-009",
+        "INV-006",
+        "INV-011"
+      ]
+    },
+    {
+      "case_id": "CASE-012-attempt-abandonment-candidate-conflict",
+      "title": "Abandoning an unresolved candidate-observation conflict with the retry budget exhausted blocks with reason attempt-abandoned",
+      "maps_to": [
+        "SCN-010",
+        "INV-003",
+        "INV-006",
+        "INV-007",
+        "INV-008",
+        "INV-009",
+        "INV-011",
+        "INV-012",
+        "INV-018",
+        "INV-019",
+        "INV-020"
+      ]
+    },
+    {
+      "case_id": "CASE-013-attempt-abandonment-unsettled-assurance-recovery",
+      "title": "Abandoning an unsettleable assurance with retry budget remaining returns to READY, never fabricating a verdict",
+      "maps_to": [
+        "SCN-010",
+        "INV-003",
+        "INV-007",
+        "INV-008",
+        "INV-011",
+        "INV-018",
+        "INV-019"
+      ]
+    },
+    {
+      "case_id": "CASE-014-cancellation-from-ready",
+      "title": "Operator cancellation from READY closes the work as terminal CANCELLED, not a verdict",
+      "maps_to": [
+        "SCN-011",
+        "INV-003",
+        "INV-009",
+        "INV-011",
+        "INV-012",
+        "CONF-JOURNAL-004"
+      ]
+    },
+    {
+      "case_id": "CASE-015-cancellation-from-executing",
+      "title": "Operator cancellation from EXECUTING clears the in-flight execution marker",
+      "maps_to": [
+        "SCN-011",
+        "INV-003",
+        "INV-009",
+        "INV-011",
+        "INV-012",
+        "CONF-JOURNAL-004"
+      ]
+    },
+    {
+      "case_id": "CASE-016-cancellation-from-assuring",
+      "title": "Operator cancellation from ASSURING clears the in-flight assurance marker",
+      "maps_to": [
+        "SCN-011",
+        "INV-003",
+        "INV-009",
+        "INV-011",
+        "INV-012",
+        "CONF-JOURNAL-004"
+      ]
+    },
+    {
+      "case_id": "CASE-017-cancellation-illegal-from-accepted",
+      "title": "Cancelling an already-ACCEPTED work is rejected with a canonical conflict, never silently accepted",
+      "maps_to": [
+        "SCN-011",
+        "ERR-CONFLICT"
+      ]
+    },
+    {
+      "case_id": "CASE-018-candidate-fingerprint-mismatch",
+      "title": "Assurance evidence naming a fingerprint that does not match the bound candidate is rejected, never silently accepted",
+      "maps_to": [
+        "INV-007",
+        "INV-008",
+        "ERR-CONFLICT"
+      ]
+    },
+    {
+      "case_id": "CASE-019-malformed-assurance-verdict",
+      "title": "A verdict outside {accepted, rejected, inconclusive} is a canonical validation error, never guessed toward acceptance",
+      "maps_to": [
+        "CONF-ASSURE-006",
+        "ERR-VALIDATION"
+      ]
+    },
+    {
+      "case_id": "CASE-020-inconclusive-rerequest-decision",
+      "title": "An inconclusive settlement within budget re-requests assurance of the identical candidate under a new assurance identity",
+      "maps_to": [
+        "SCN-021",
+        "INV-007",
+        "INV-009",
+        "INV-012",
+        "INV-018",
+        "INV-020",
+        "INV-021",
+        "CONF-ASSURE-004",
+        "CONF-ASSURE-008"
+      ]
+    },
+    {
+      "case_id": "CASE-021-inconclusive-rerequest-then-accepted",
+      "title": "The re-requested second assurance of the same candidate accepts, completing the work",
+      "maps_to": [
+        "SCN-021",
+        "INV-007",
+        "INV-009",
+        "INV-018",
+        "INV-020",
+        "INV-021",
+        "CONF-ASSURE-004"
+      ]
+    },
+    {
+      "case_id": "CASE-022-inconclusive-budget-exhausted",
+      "title": "A second inconclusive settlement exhausts the assurance budget and blocks -- execution retry budget untouched",
+      "maps_to": [
+        "SCN-021",
+        "INV-007",
+        "INV-009",
+        "INV-018",
+        "INV-019",
+        "INV-020",
+        "INV-021",
+        "CONF-ASSURE-004",
+        "CONF-ASSURE-008"
+      ]
+    },
+    {
+      "case_id": "CASE-023-null-candidate-abandon-recovery",
+      "title": "A settled execution with no bound candidate is a legal abandon basis, recovering to READY with budget remaining",
+      "maps_to": [
+        "SCN-014",
+        "CONF-CAND-004",
+        "STATE-DELIVERY item 9"
+      ]
+    },
+    {
+      "case_id": "CASE-024-malformed-history-shape",
+      "title": "A non-array `history` is a transport-level ERR-VALIDATION with no fabricated location, never a crash",
+      "maps_to": [
+        "CONFORMANCE-PORTABLE-KIT"
+      ]
+    }
+  ]
+}

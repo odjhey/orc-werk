@@ -1,0 +1,22 @@
+{
+  "case_id": "CASE-024-malformed-history-shape",
+  "description": "The `history` field is a JSON string instead of a JSON array. No fact envelope can be identified at all -- this MUST be reported as ERR-VALIDATION with all three error-location fields null, never crash the driver and never fabricate a location.",
+  "expected": {
+    "error": {
+      "error": "ERR-VALIDATION"
+    },
+    "failing_fact_id": null,
+    "failing_fact_index": null,
+    "failing_work_id": null,
+    "outcome": "error"
+  },
+  "input": {
+    "delivery_run_id": "run-1",
+    "history": "not-an-array"
+  },
+  "maps_to": [
+    "CONFORMANCE-PORTABLE-KIT"
+  ],
+  "schema_version": 1,
+  "title": "A non-array `history` is a transport-level ERR-VALIDATION with no fabricated location, never a crash"
+}

@@ -1,0 +1,163 @@
+{
+  "case_id": "CASE-008-legacy-fallback-max-attempts",
+  "description": "FX-CREATE-WORK carries data.plan but no data.max_attempts at all (a journal written before that field existed). Replay derives the reducer's DEFAULT_MAX_ATTEMPTS (3), not 1 and not 2: a fourth execution never dispatches only after the third failure.",
+  "expected": {
+    "decisions": {
+      "A": {
+        "decision": {
+          "data": {
+            "reason": "retry-budget-exhausted"
+          },
+          "id": "DEC-BLOCK"
+        }
+      }
+    },
+    "derived_max_attempts": 3,
+    "outcome": "ok",
+    "projection": {
+      "A": {
+        "attempt_number": 3,
+        "state": "BLOCKED"
+      }
+    }
+  },
+  "input": {
+    "delivery_run_id": "run-1",
+    "history": [
+      {
+        "data": {
+          "dispatch_result": {
+            "works": [
+              {
+                "delivery_run_id": "run-1",
+                "id": "A"
+              }
+            ]
+          },
+          "idempotency_key": "run-1|FX-CREATE-WORK",
+          "plan": {
+            "works": [
+              {
+                "deps": [],
+                "work_id": "A"
+              }
+            ]
+          },
+          "work_id": ""
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FX-CREATE-WORK",
+        "kind": "effect",
+        "schema_version": 1,
+        "seq": 1
+      },
+      {
+        "data": {
+          "delivery_run_id": "run-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-CREATED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 2
+      },
+      {
+        "data": {
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-READY",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 3
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 4
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "outcome": "failed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 5
+      },
+      {
+        "data": {
+          "execution_id": "e2",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 6
+      },
+      {
+        "data": {
+          "execution_id": "e2",
+          "outcome": "failed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 7
+      },
+      {
+        "data": {
+          "execution_id": "e3",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 8
+      },
+      {
+        "data": {
+          "execution_id": "e3",
+          "outcome": "failed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 9
+      }
+    ]
+  },
+  "maps_to": [
+    "SCN-008",
+    "CONF-JOURNAL-003",
+    "INV-018",
+    "INV-019"
+  ],
+  "schema_version": 1,
+  "title": "A legacy FX-CREATE-WORK record with no max_attempts field folds under the schema default (3)"
+}

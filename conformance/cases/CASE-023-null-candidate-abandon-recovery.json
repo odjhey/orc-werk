@@ -1,0 +1,123 @@
+{
+  "case_id": "CASE-023-null-candidate-abandon-recovery",
+  "description": "Execution 1 settles completed but no candidate is ever observed (the adapter-side identification returned no subject). DEC-ABANDON-ATTEMPT is legal from this settled-execution/no-bound-candidate resting point and, with budget remaining, returns Work A to READY.",
+  "expected": {
+    "decisions": {
+      "A": {
+        "decision": {
+          "id": "DEC-RETRY"
+        }
+      }
+    },
+    "outcome": "ok",
+    "projection": {
+      "A": {
+        "attempt_number": 1,
+        "blocked_reason": null,
+        "current_candidate_id": null,
+        "state": "READY"
+      }
+    }
+  },
+  "input": {
+    "delivery_run_id": "run-1",
+    "history": [
+      {
+        "data": {
+          "dispatch_result": {
+            "works": [
+              {
+                "delivery_run_id": "run-1",
+                "id": "A"
+              }
+            ]
+          },
+          "idempotency_key": "run-1|FX-CREATE-WORK",
+          "max_attempts": 2,
+          "plan": {
+            "works": [
+              {
+                "deps": [],
+                "work_id": "A"
+              }
+            ]
+          },
+          "work_id": ""
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FX-CREATE-WORK",
+        "kind": "effect",
+        "schema_version": 1,
+        "seq": 1
+      },
+      {
+        "data": {
+          "delivery_run_id": "run-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-CREATED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 2
+      },
+      {
+        "data": {
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-READY",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 3
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 4
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "outcome": "completed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 5
+      },
+      {
+        "data": {
+          "reason": "candidate identification exhausted retries",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ATTEMPT-ABANDONED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 6
+      }
+    ]
+  },
+  "maps_to": [
+    "SCN-014",
+    "CONF-CAND-004",
+    "STATE-DELIVERY item 9"
+  ],
+  "schema_version": 1,
+  "title": "A settled execution with no bound candidate is a legal abandon basis, recovering to READY with budget remaining"
+}
