@@ -38,6 +38,7 @@ from orc_werk.cli.show import (
     _finding_summary,
     _render_findings,
     _segment_attempts,
+    _settled_fingerprints_by_work,
     prompt_provenance,
 )
 
@@ -119,6 +120,67 @@ class SegmentAttemptsUnitTest(unittest.TestCase):
 
     def test_no_attempts_yields_empty_list(self) -> None:
         self.assertEqual(_segment_attempts([{"kind": "fact", "id": "FACT-WORK-CREATED", "data": {}}]), [])
+
+
+class SettledFingerprintsByWorkUnitTest(unittest.TestCase):
+    """Issue #295 (verify rejection): STATE-DELIVERY item 8's inheritance
+    map must key by `candidate_id` (matching the reducer's own `_settled_
+    assurance_for_candidate`/`projection.candidates` keying) and must be
+    causally scoped -- a later attempt's fresh settlement must never
+    explain an earlier attempt's fold."""
+
+    @staticmethod
+    def _attempt(attempt_number: int, *, candidate_id: str, fingerprint: str, verdict: str | None) -> list[dict]:
+        records = [
+            {"kind": "effect", "id": "FX-START-EXECUTION", "data": {"work_id": "w1", "attempt_number": attempt_number}},
+            {
+                "kind": "fact",
+                "id": "FACT-CANDIDATE-OBSERVED",
+                "data": {"work_id": "w1", "candidate_id": candidate_id, "fingerprint": fingerprint},
+            },
+        ]
+        if verdict is not None:
+            records.append(
+                {"kind": "fact", "id": "FACT-ASSURE-SETTLED", "data": {"work_id": "w1", "verdict": verdict}}
+            )
+        return records
+
+    def test_keys_by_candidate_id_not_fingerprint(self) -> None:
+        # Two DIFFERENT candidate ids that happen to share a fingerprint
+        # (a hand-scripted config's coincidence) must each keep their own
+        # settlement -- neither may overwrite the other's map entry.
+        records = self._attempt(1, candidate_id="cand-A", fingerprint="fp-shared", verdict="rejected")
+        records += self._attempt(2, candidate_id="cand-B", fingerprint="fp-shared", verdict="accepted")
+        settled = _settled_fingerprints_by_work(records, "w1")
+        self.assertEqual(settled["cand-A"][0], 1)
+        self.assertEqual(settled["cand-A"][1]["data"]["verdict"], "rejected")
+        self.assertEqual(settled["cand-B"][0], 2)
+        self.assertEqual(settled["cand-B"][1]["data"]["verdict"], "accepted")
+
+    def test_before_attempt_excludes_causally_later_settlements(self) -> None:
+        # The exact issue #295 verify shape: attempt 1 (cand-A, rejected),
+        # attempt 2 (cand-A re-observed, inherited -- no own settlement),
+        # attempt 3 (a DISTINCT cand-C, freshly accepted). Looking up what
+        # attempt 2 could see must never surface attempt 3's future
+        # settlement, regardless of candidate identity.
+        records = self._attempt(1, candidate_id="cand-A", fingerprint="fp-1", verdict="rejected")
+        records += self._attempt(2, candidate_id="cand-A", fingerprint="fp-1", verdict=None)
+        records += self._attempt(3, candidate_id="cand-C", fingerprint="fp-3", verdict="accepted")
+
+        as_of_attempt_2 = _settled_fingerprints_by_work(records, "w1", before_attempt=2)
+        self.assertEqual(set(as_of_attempt_2), {"cand-A"})
+        self.assertEqual(as_of_attempt_2["cand-A"][0], 1)
+        self.assertEqual(as_of_attempt_2["cand-A"][1]["data"]["verdict"], "rejected")
+
+        full_history = _settled_fingerprints_by_work(records, "w1")
+        self.assertEqual(set(full_history), {"cand-A", "cand-C"})
+
+    def test_inconclusive_verdict_is_never_inherited(self) -> None:
+        # STATE-DELIVERY item 11's amendment: an `inconclusive` settlement
+        # decides nothing about the Candidate, so it must never populate
+        # the inheritance map.
+        records = self._attempt(1, candidate_id="cand-A", fingerprint="fp-1", verdict="inconclusive")
+        self.assertEqual(_settled_fingerprints_by_work(records, "w1"), {})
 
 
 class DurationTextUnitTest(unittest.TestCase):

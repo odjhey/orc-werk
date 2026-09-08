@@ -456,17 +456,17 @@ def _warn_verdict_inheritance(
     at within the same pass -- a brand-new candidate, or ADR-0006's
     inconclusive-only re-attribution -- journals a fresh
     `FACT-ASSURE-STARTED` for the same work in this same pass, and a
-    genuine identity collision (item 9) never matches a settled
-    fingerprint at all (the reducer requires the SAME `candidate_id`
-    reused, per `INV-006`/`INV-007`/`INV-008`, before it even compares
-    fingerprints -- two different ids that happen to share a fingerprint,
-    e.g. a hand-scripted config's coincidence, are never treated as the
-    same candidate and never inherit). Detecting "did this fold rest
-    without requesting assurance" this way, then using
-    `_settled_fingerprints_by_work` (shared with `orc show`'s identical
-    JUDGED-section derivation) only to name WHICH prior attempt/verdict is
-    being reused, avoids re-deriving the reducer's id/fingerprint gate a
-    second time here."""
+    genuine identity collision (item 9) never matches at all (the reducer
+    requires the SAME `candidate_id` reused, per `INV-006`/`INV-007`/
+    `INV-008`, before it even compares fingerprints -- two different ids
+    that happen to share a fingerprint, e.g. a hand-scripted config's
+    coincidence, are never treated as the same candidate and never
+    inherit). Detecting "did this fold rest without requesting assurance"
+    this way, then using `_settled_fingerprints_by_work` (shared with
+    `orc show`'s identical JUDGED-section derivation, keyed by
+    `candidate_id` to match the reducer exactly) only to name WHICH prior
+    attempt/verdict is being reused, avoids re-deriving the reducer's
+    id/fingerprint gate a second time here."""
     started_work_ids = {
         record.get("data", {}).get("work_id")
         for record in new_records
@@ -478,10 +478,10 @@ def _warn_verdict_inheritance(
         work_id = record.get("data", {}).get("work_id")
         if work_id in started_work_ids:
             continue
-        fingerprint = record.get("data", {}).get("fingerprint")
-        if not isinstance(fingerprint, str):
+        candidate_id = record.get("data", {}).get("candidate_id")
+        if not isinstance(candidate_id, str):
             continue
-        prior = _settled_fingerprints_by_work(history_before_advance, work_id).get(fingerprint)
+        prior = _settled_fingerprints_by_work(history_before_advance, work_id).get(candidate_id)
         if prior is None:
             continue
         attempt_number, prior_settled = prior

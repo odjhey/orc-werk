@@ -97,6 +97,7 @@ from orc_werk.core.facts import (
     FACT_EXEC_STARTED,
     FACT_WORK_CREATED,
 )
+from orc_werk.core.reducer import INHERITABLE_VERDICTS
 from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, STATE_CANCELLED, DeliveryProjection, WorkProjection
 
 # Read-only presentation exit-code mirror of `status`'s contract
@@ -182,33 +183,46 @@ def _segment_attempts(work_records: Sequence[Mapping[str, Any]]) -> list[tuple[A
 
 
 def _settled_fingerprints_by_work(
-    history: Sequence[Mapping[str, Any]], work_id: str
+    history: Sequence[Mapping[str, Any]], work_id: str, *, before_attempt: Any = None,
 ) -> dict[str, tuple[Any, Mapping[str, Any]]]:
-    """Fingerprint -> (attempt_number, FACT-ASSURE-SETTLED record) for
-    every attempt of `work_id` in `history` that reached its OWN fresh
-    settlement (never a merely-inherited one), across the WHOLE of
-    `history` -- STATE-DELIVERY item 8 (verdict inheritance) keys off
-    exactly this map. A later attempt's settlement overwrites an earlier
-    one, matching `_settled_assurance_for_candidate` (the reducer's own
-    inheritance source), which takes the most recent settled assurance
-    for a given candidate. Computing the map over the full history rather
-    than incrementally per attempt is equivalent here: a later attempt's
-    fresh settlement can never retroactively explain an earlier attempt's
-    fold, since the reducer only creates attempt N+1 after attempt N's own
-    resting point is already resolved -- there is no causal path for a
-    coincidental collision to matter. Shared by `_render_work`'s JUDGED
-    section below and `orc_werk.cli.main`'s dispatch-pass inheritance
-    warning (issue #295), so both read the identical derivation instead of
-    two separately maintained heuristics."""
-    settled_by_fingerprint: dict[str, tuple[Any, Mapping[str, Any]]] = {}
+    """`candidate_id` -> (attempt_number, FACT-ASSURE-SETTLED record) for
+    every attempt of `work_id` in `history` that reached its OWN fresh,
+    INHERITABLE settlement (`accepted`/`rejected` only -- `INHERITABLE_
+    VERDICTS`, reused verbatim from `orc_werk.core.reducer` rather than
+    re-deriving the same filter: STATE-DELIVERY item 11's amendment,
+    `inconclusive` is never inherited). Keyed by `candidate_id`, matching
+    the reducer's own `_settled_assurance_for_candidate`/`projection.
+    candidates` keying (`INV-006`/`INV-007`) -- two different candidate
+    ids that happen to share a fingerprint (a hand-scripted config's
+    coincidence, or two independently-produced-but-byte-identical git
+    diffs) are never conflated, exactly as the reducer never conflates
+    them.
+
+    `before_attempt`, when given, folds ONLY attempts whose `attempt_
+    number` is strictly less than it -- STATE-DELIVERY item 8 (verdict
+    inheritance) is a causal, attempt-order relation: a later attempt's
+    fresh settlement must never explain an EARLIER attempt's fold. Omit
+    it (the default) only when `history` is already causally scoped to
+    strictly before the fold being explained, as `orc_werk.cli.main`'s
+    dispatch-pass inheritance warning's `history_before_advance` is.
+    Shared by `_render_work`'s JUDGED section below (which passes this
+    attempt's own `attempt_number` as `before_attempt`) and that warning,
+    so both read the identical derivation instead of two separately
+    maintained heuristics."""
+    settled_by_candidate_id: dict[str, tuple[Any, Mapping[str, Any]]] = {}
     for attempt_number, attempt_records in _segment_attempts(_work_records(history, work_id)):
+        if before_attempt is not None and not (attempt_number < before_attempt):
+            continue
         candidate_observed = _first(attempt_records, "fact", FACT_CANDIDATE_OBSERVED)
         own_settled = _first(attempt_records, "fact", FACT_ASSURE_SETTLED)
-        if own_settled is not None and isinstance(candidate_observed, Mapping):
-            fingerprint = candidate_observed.get("data", {}).get("fingerprint")
-            if isinstance(fingerprint, str):
-                settled_by_fingerprint[fingerprint] = (attempt_number, own_settled)
-    return settled_by_fingerprint
+        if own_settled is None or not isinstance(candidate_observed, Mapping):
+            continue
+        if own_settled.get("data", {}).get("verdict") not in INHERITABLE_VERDICTS:
+            continue
+        candidate_id = candidate_observed.get("data", {}).get("candidate_id")
+        if isinstance(candidate_id, str):
+            settled_by_candidate_id[candidate_id] = (attempt_number, own_settled)
+    return settled_by_candidate_id
 
 
 def _parse_observed_at(value: Any) -> Optional[datetime.datetime]:
@@ -532,12 +546,6 @@ def _render_work(
     print(f"work {work_id}:")
     provenance = prompt_provenance(config, work_id, intent_text)
 
-    # STATE-DELIVERY item 8 (verdict inheritance): a re-observed
-    # candidate's fingerprint is looked up against this work's own
-    # settled-fingerprint map, shared with `orc_werk.cli.main`'s
-    # dispatch-pass inheritance warning (`_settled_fingerprints_by_work`).
-    settled_by_fingerprint = _settled_fingerprints_by_work(history, work_id)
-
     for attempt_number, attempt_records in attempts:
         print(f"  attempt {attempt_number}:")
         for line in _render_asked(provenance, work_id=work_id, run_id=run_id, config_path=config_path):
@@ -551,9 +559,19 @@ def _render_work(
         own_settled = _first(attempt_records, "fact", FACT_ASSURE_SETTLED)
         inherited_from = None
         if own_settled is None and candidate_observed is not None:
-            fingerprint = candidate_observed.get("data", {}).get("fingerprint")
-            if isinstance(fingerprint, str) and fingerprint in settled_by_fingerprint:
-                inherited_from = settled_by_fingerprint[fingerprint]
+            # STATE-DELIVERY item 8 (verdict inheritance): a re-observed
+            # candidate's `candidate_id` is looked up against this work's
+            # own settled-verdict map, causally scoped to strictly-prior
+            # attempts only -- shared with `orc_werk.cli.main`'s
+            # dispatch-pass inheritance warning (`_settled_fingerprints_
+            # by_work`).
+            candidate_id = candidate_observed.get("data", {}).get("candidate_id")
+            if isinstance(candidate_id, str):
+                settled_by_candidate_id = _settled_fingerprints_by_work(
+                    history, work_id, before_attempt=attempt_number
+                )
+                if candidate_id in settled_by_candidate_id:
+                    inherited_from = settled_by_candidate_id[candidate_id]
 
         for line in _render_judged(attempt_records, run_id=run_id, inherited_from=inherited_from, wp=wp):
             print(line)
