@@ -215,7 +215,18 @@ def _probe_mutations() -> list[tuple[str, str, Any]]:
             lambda expected: _set_path(
                 expected,
                 ["decisions", "A", "effects", 0, "idempotency_scope"],
-                ["run-1", "A", 1, "FX-START-ASSURANCE", None],
+                ["run-1", "A", 1, "FX-START-ASSURANCE", "fp-1", None],
+            ),
+        ),
+        (
+            "CASE-020-inconclusive-rerequest-decision",
+            "candidate fingerprint collision: omits the candidate_fingerprint component, "
+            "so a differently-fingerprinted candidate at the same assurance_number would "
+            "wrongly collide on the same idempotency scope",
+            lambda expected: _set_path(
+                expected,
+                ["decisions", "A", "effects", 0, "idempotency_scope"],
+                ["run-1", "A", 1, "FX-START-ASSURANCE", None, 2],
             ),
         ),
     ]

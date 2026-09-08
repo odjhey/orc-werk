@@ -236,7 +236,7 @@ respectively, and duplicating them per entry would be redundant:
 | `pending_execution_id` | string or null | the currently open (unsettled) Execution's id, derived by scanning `executions` for an entry with `outcome: null`; `null` when no Execution is open |
 | `pending_assurance_id` | string or null | the currently open (unsettled, non-abandoned) Assurance's id, derived by scanning `assurances` for an entry with `verdict: null` and `abandoned: false`; `null` when no Assurance is open |
 | `assurance_pending` | bool | `true` exactly when `pending_assurance_id` is non-null; a convenience boolean for a driver that would rather branch on a flag than a null check |
-| `blocked_reason` | string or null | one of `retry-budget-exhausted`, `assurance-inconclusive`, `attempt-abandoned`, or `null` when not `BLOCKED` |
+| `blocked_reason` | string or null | `null` when not `BLOCKED`; otherwise a free-form reason string -- `PROTOCOL-FACTS` documents `FACT-WORK-BLOCKED.reason` as free-form, and `docs/domain/state-machines/delivery.md`'s informative note says the v0 policy emits exactly `retry-budget-exhausted`, `assurance-inconclusive`, or `attempt-abandoned` today, but future policies MAY emit other values. A conforming driver MUST treat this as an open string, never a closed three-value enum |
 | `blocked_confirmed` | bool | `true` once a confirming `FACT-WORK-BLOCKED` has been folded |
 | `cancelled_reason` | string or null | the recorded cancellation reason, or `null` |
 | `cancelled_confirmed` | bool | `true` once `FACT-WORK-CANCELLED` has been folded |
@@ -250,30 +250,67 @@ decision): `{"id": string, "data": object}`. `id` is one of
 `DEC-DISPATCH`, `DEC-RETRY`, `DEC-REQUEST-ASSURANCE`, `DEC-ACCEPT`,
 `DEC-BLOCK` (the five IDs `orc_werk.core.policy.decide` can produce;
 `docs/protocol/decisions.md` names the full ID vocabulary, including the
-two operator-only IDs this driver boundary never emits). `data` carries
-decision-specific fields named by that ID -- e.g. `DEC-BLOCK.data.reason`
-(the same three-value vocabulary as `blocked_reason` above),
-`DEC-REQUEST-ASSURANCE.data.candidate_id`/`assurance_number`/
-`max_assurance_attempts`. `work_id` and `delivery_run_id` are omitted
-here for the same reason as the projection entry: both are already known
-from the enclosing map key and the top-level request.
+two operator-only IDs this driver boundary never emits). `work_id` and
+`delivery_run_id` are omitted here for the same reason as the
+projection entry: both are already known from the enclosing map key and
+the top-level request. `data`'s exact shape is fixed per `id`:
+
+| `id` | `data` shape |
+|---|---|
+| `DEC-DISPATCH` | `{}` -- always empty. The attempt this dispatches is observable via the paired `FX-START-EXECUTION` effect's `idempotency_scope`, not decision data |
+| `DEC-RETRY` | `{}` -- always empty, for the same reason as `DEC-DISPATCH` |
+| `DEC-REQUEST-ASSURANCE` | `{"candidate_id": string, "assurance_number": int, "max_assurance_attempts": int}` -- the selected candidate, the requested next per-execution assurance index (the first assurance of an Execution is `1`), and the effective journal-derived assurance budget |
+| `DEC-ACCEPT` | `{}` -- always empty |
+| `DEC-BLOCK` | `{"reason": string}` -- the current canonical block reason, the same open string documented for `blocked_reason` above |
+
+This is a bounded v0 observation profile, not the complete canonical
+Decision/Effect data payload: `decide()`'s real `Decision.data`/
+`Effect.data` MAY carry additional domain-internal fields (e.g. the
+retry/assurance budget arithmetic folded alongside `DEC-BLOCK.data.reason`)
+that a real adapter does not need, because `projection` and
+`idempotency_scope` already expose everything else this kit observes.
+The reference driver emits exactly the key sets above, never more; a
+conforming comparator MUST NOT require any key outside them, and MUST
+NOT treat their absence elsewhere as evidence of a missing field.
 
 **Each `effects[]` entry** (this kit's normalized encoding of a
 `PROTOCOL-EFFECTS` effect): `{"id": string, "data": object, "idempotency_scope": array}`.
 `id` is one of `FX-START-EXECUTION`, `FX-START-ASSURANCE`,
 `FX-COMPLETE-WORK`, `FX-BLOCK-WORK` (the four a `decide()` outcome can
 carry; `docs/protocol/effects.md` names the full ID vocabulary and each
-ID's target port). `idempotency_scope` is this kit's own structured
-stand-in for `INV-020`'s idempotency key -- never itself the domain's
-opaque `|`-joined string, which is documented informative detail with no
-pinned wire form -- as the four- or five-element array
-`[delivery_run_id, work_id, execution_attempt_number, effect_id, assurance_number_or_null]`.
-`execution_attempt_number` is the exact attempt the effect targets (the
-*upcoming* attempt for `DEC-DISPATCH`/`DEC-RETRY`'s `FX-START-EXECUTION`,
-the Work's *current* attempt for every other decision); the fifth
-element is `decide()`'s `assurance_number` for `FX-START-ASSURANCE`,
-`null` otherwise (`INV-021`). A case comparing `idempotency_scope` pins
-this array shape, never a byte-for-byte reproduction of the domain's own
+ID's target port). `data`'s exact shape is fixed per `id`, the same
+bounded-profile discipline as `decision.data` above:
+
+| `id` | `data` shape |
+|---|---|
+| `FX-START-EXECUTION` | `{}` -- always empty; its target attempt is explicit in `idempotency_scope` instead |
+| `FX-START-ASSURANCE` | `{"candidate_id": string, "candidate_fingerprint": string, "assurance_number": int}` -- the selected candidate's exact identity/fingerprint and requested assurance index, identical to the corresponding `idempotency_scope` dimensions |
+| `FX-COMPLETE-WORK` | `{}` -- always empty |
+| `FX-BLOCK-WORK` | `{"reason": string}` -- the same value as the triggering `DEC-BLOCK.data.reason` |
+
+`idempotency_scope` is this kit's own structured stand-in for
+`INV-020`'s idempotency key -- never itself the domain's opaque
+`|`-joined string, which is documented informative detail with no
+pinned wire form -- as the fixed six-element array
+`[delivery_run_id, work_id, target_execution_attempt_number, effect_id, candidate_fingerprint_or_null, assurance_number_or_null]`.
+`target_execution_attempt_number` is the exact attempt the effect
+targets: the *next* attempt (the Work's recorded execution-start count
+plus `1`) for `FX-START-EXECUTION`, the Work's *current* recorded
+attempt for every other effect. The fifth and sixth elements mirror
+`orc_werk.core.idempotency.idempotency_key`'s own `FX-START-ASSURANCE`
+branch: both are `null` for every other effect; for `FX-START-ASSURANCE`
+the fifth is always that candidate's exact fingerprint (never `null` --
+two different candidates assured at the same `assurance_number` MUST
+NOT collide on the same scope; `INV-020` names `candidate_fingerprint`
+as a required identity dimension of that key) and the sixth is
+`decide()`'s requested `assurance_number` when it is greater than `1`,
+else `null` (`INV-020`'s legacy first-assurance production-key omission
+is unchanged -- the normalized observation still *names* assurance
+number `1`, it just omits it from the sixth element, per
+`INV-020`/`ADR-0006`). This observes the key's canonical identity
+dimensions only, never a copy or split of the domain's own opaque
+production key encoding. A case comparing `idempotency_scope` pins this
+array shape, never a byte-for-byte reproduction of the domain's own
 `|`-joined key string.
 
 Any implementation satisfying steps 1-4 is a drop-in substitute for the

@@ -64,9 +64,21 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from orc_werk.core.decisions import DEC_DISPATCH, DEC_RETRY  # noqa: E402
-from orc_werk.core.decisions import Decision  # noqa: E402
-from orc_werk.core.effects import Effect, FX_START_ASSURANCE  # noqa: E402
+from orc_werk.core.decisions import (  # noqa: E402
+    DEC_ACCEPT,
+    DEC_BLOCK,
+    DEC_DISPATCH,
+    DEC_REQUEST_ASSURANCE,
+    DEC_RETRY,
+    Decision,
+)
+from orc_werk.core.effects import (  # noqa: E402
+    Effect,
+    FX_BLOCK_WORK,
+    FX_COMPLETE_WORK,
+    FX_START_ASSURANCE,
+    FX_START_EXECUTION,
+)
 from orc_werk.core.errors import CoreError, canonical_error  # noqa: E402
 from orc_werk.core.errors import ERR_VALIDATION  # noqa: E402
 from orc_werk.core.facts import FACT_INTENT_SUBMITTED  # noqa: E402
@@ -155,27 +167,83 @@ def _idempotency_scope(
     """The kit-specific structured stand-in for `INV-020`'s idempotency
     key (`orc_werk.core.idempotency.idempotency_key`'s opaque `|`-joined
     string): `[delivery_run_id, work_id, execution_attempt_number,
-    effect_id, assurance_number_or_null]`. `execution_attempt_number` is
-    the exact attempt the effect targets -- the *upcoming* attempt for
-    `DEC-DISPATCH`/`DEC-RETRY`'s `FX-START-EXECUTION`, the Work's
-    *current* attempt for every other decision -- and the fifth member is
-    `decide()`'s `assurance_number` for `FX-START-ASSURANCE`, `null`
-    otherwise (`INV-021`)."""
+    effect_id, candidate_fingerprint_or_null, assurance_number_or_null]`.
+    `execution_attempt_number` is the exact attempt the effect targets --
+    the *upcoming* attempt for `DEC-DISPATCH`/`DEC-RETRY`'s
+    `FX-START-EXECUTION`, the Work's *current* attempt for every other
+    decision. The fifth and sixth members mirror `idempotency_key`'s own
+    `FX-START-ASSURANCE` branch (`orc_werk.core.idempotency`): both are
+    `null` for every other effect; for `FX-START-ASSURANCE` the fifth is
+    always the candidate's fingerprint and the sixth is `decide()`'s
+    `assurance_number` when it is greater than `1`, else `null` (the
+    first assurance of a Candidate keeps the pre-`INV-021` reduced key
+    form verbatim, per `INV-020`/`ADR-0006`) -- so two starts of the same
+    attempt against *different* candidate fingerprints never collide on
+    the same scope even when their `assurance_number` also matches."""
     if decision.id in (DEC_DISPATCH, DEC_RETRY):
         attempt_number = decision.data["attempt_number"]
     else:
         attempt_number = projection.attempt_number
-    assurance_number = decision.data["assurance_number"] if effect.id == FX_START_ASSURANCE else None
-    return [decision.delivery_run_id, decision.work_id, attempt_number, effect.id, assurance_number]
+    if effect.id == FX_START_ASSURANCE:
+        candidate_fingerprint = effect.data["candidate_fingerprint"]
+        assurance_number = decision.data["assurance_number"]
+        scoped_assurance_number = assurance_number if assurance_number > 1 else None
+    else:
+        candidate_fingerprint = None
+        scoped_assurance_number = None
+    return [
+        decision.delivery_run_id,
+        decision.work_id,
+        attempt_number,
+        effect.id,
+        candidate_fingerprint,
+        scoped_assurance_number,
+    ]
+
+
+# Bounded v0 observation profile (`docs/conformance/portable-kit.md`'s
+# decision/effect data-shape tables): the exact, complete key set this
+# driver emits per `id` -- never the raw `Decision.data`/`Effect.data`
+# dict verbatim. This is a deliberately small, fully specified kit
+# observation, not a claim that these are the only fields `decide()`'s
+# domain data payload happens to carry (e.g. the retry/assurance budget
+# arithmetic folded into `DEC-BLOCK.data` alongside `reason`); a real
+# adapter needing that arithmetic already has it from `projection` and
+# `idempotency_scope` and MUST NOT rely on undocumented decision/effect
+# keys leaking through here. There is no ID outside these two tables in
+# this bounded profile -- `docs/protocol/decisions.md`/`effects.md` name
+# the full protocol-wide ID vocabulary, of which this profile only ever
+# observes the five decision IDs and four effect IDs `decide()` itself
+# can emit.
+_DECISION_DATA_FIELDS: dict[str, tuple[str, ...]] = {
+    DEC_DISPATCH: (),
+    DEC_RETRY: (),
+    DEC_REQUEST_ASSURANCE: ("candidate_id", "assurance_number", "max_assurance_attempts"),
+    DEC_ACCEPT: (),
+    DEC_BLOCK: ("reason",),
+}
+_EFFECT_DATA_FIELDS: dict[str, tuple[str, ...]] = {
+    FX_START_EXECUTION: (),
+    FX_START_ASSURANCE: ("candidate_id", "candidate_fingerprint", "assurance_number"),
+    FX_COMPLETE_WORK: (),
+    FX_BLOCK_WORK: ("reason",),
+}
+
+
+def _whitelisted_data(data: Mapping[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    return to_portable({field: data[field] for field in fields})
 
 
 def _normalize_decision(decision: Decision, effects: tuple[Effect, ...], projection: WorkProjection) -> dict[str, Any]:
     return {
-        "decision": {"id": decision.id, "data": to_portable(dict(decision.data))},
+        "decision": {
+            "id": decision.id,
+            "data": _whitelisted_data(decision.data, _DECISION_DATA_FIELDS[decision.id]),
+        },
         "effects": [
             {
                 "id": effect.id,
-                "data": to_portable(dict(effect.data)),
+                "data": _whitelisted_data(effect.data, _EFFECT_DATA_FIELDS[effect.id]),
                 "idempotency_scope": _idempotency_scope(decision, effect, projection),
             }
             for effect in effects

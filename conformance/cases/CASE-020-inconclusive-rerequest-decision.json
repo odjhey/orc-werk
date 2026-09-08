@@ -1,6 +1,6 @@
 {
   "case_id": "CASE-020-inconclusive-rerequest-decision",
-  "description": "Assurance 1 of 2 for C1 settles inconclusive. Work A rests at ASSURING with no assurance in flight; policy emits DEC-REQUEST-ASSURANCE for the SAME candidate_id/fingerprint with assurance_number=2, and the FX-START-ASSURANCE idempotency key gains the assurance_number component. No execution retry is consumed.",
+  "description": "Assurance 1 of 2 for C1 settles inconclusive. Work A rests at ASSURING with no assurance in flight; policy emits DEC-REQUEST-ASSURANCE for the SAME candidate_id/fingerprint with assurance_number=2, and the FX-START-ASSURANCE idempotency scope gains both the candidate_fingerprint and assurance_number components (assurance_number is only present past the first assurance, per ADR-0006). No execution retry is consumed.",
   "expected": {
     "decisions": {
       "A": {
@@ -20,7 +20,7 @@
               "candidate_id": "c1"
             },
             "id": "FX-START-ASSURANCE",
-            "idempotency_scope": ["run-1", "A", 1, "FX-START-ASSURANCE", 2]
+            "idempotency_scope": ["run-1", "A", 1, "FX-START-ASSURANCE", "fp-1", 2]
           }
         ]
       }
