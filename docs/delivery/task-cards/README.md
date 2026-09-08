@@ -57,3 +57,11 @@ test every later card's agent-definition behavior depends on):
 8. `TASK-M5-008` `docs/delivery/seat-reliability.md` + pilot write-up (depends on the pilot run itself and at least one later card's delivery data; sequenced last)
 
 `TASK-M5-002` and `TASK-M5-003` are independent of each other and may ship in parallel worktrees once `TASK-M5-001` lands; `TASK-M5-004` (the pilot) may proceed alongside them. `TASK-M5-005` and `TASK-M5-007` both depend on `TASK-M5-004`'s agent shape existing first. `TASK-M5-008` is the last M5 card, closing the milestone with the pilot's own findings.
+
+Post-M5 follow-ups, filed as issues after M5 cards landed and gated on no
+M5 card in particular:
+
+1. `TASK-OMP-282-287` — reconcile `PLAYBOOK-WATCHTOWER` prose residue
+   (issue #282) and `docs/adapters/omp/capabilities.md` staleness (issue
+   #287) against landed M5 evidence; docs-only, no dependency on any
+   open M5 card.

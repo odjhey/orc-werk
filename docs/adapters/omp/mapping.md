@@ -145,9 +145,57 @@ level: a single logical seat's OMP subagent may be parked and revived
 lifecycle churn is invisible to, and has no effect on, the recording
 call's idempotency.
 
+## Merge-frontier discovery: `scripts/watch_pr.py`
+
+`ADR-0007` keeps `scripts/watch_pr.py` unchanged as a policy lever, not
+ceremony this migration retires (`ADR-0007`'s "`scripts/watch_pr.py` is
+kept" section). It was untouched by the `TASK-M5-002` playbook shrink;
+only its own Conventions line in `PLAYBOOK-WATCHTOWER` was *deleted*, not
+moved, because that shrink was scoped to the convention *prose*, never
+the tool. Restoring its discoverability here (issue #282) documents the
+installed script as it exists, grounded in its own `--help` output and
+`classify()`/`classify_verdict()` source on this repo's current `master`
+— it changes nothing about the tool itself.
+
+`watch_pr.py [PR...] [--repo OWNER/NAME] [--watch] [--interval SECS]
+[--verified-sha SHA]` is a read-only GitHub PR merge-frontier watcher: no
+invocation mutates GitHub or the local repository. `classify()` evaluates
+top to bottom, first match wins — the blocker order is:
+
+1. `MERGED`/`CLOSED` — terminal.
+2. `CONFLICTS` — the branch has merge conflicts.
+3. `UNRESOLVED-THREADS` — one or more unresolved review threads.
+4. `CI-FAILING` — the status-check rollup contains a failed check.
+5. `MERGE-GATE` — draft, or changes requested.
+6. `CI-PENDING` — status checks are still running.
+7. `NEEDS-UPDATE-BRANCH` — the branch is behind base (`gh pr
+   update-branch` is the fix).
+8. `CI-PENDING` — the platform has not yet computed a merge state
+   (`mergeStateStatus` absent or `UNKNOWN`).
+9. `READY` — `mergeStateStatus` is `CLEAN`, or the platform's
+   `mergeable` flag is `MERGEABLE`.
+10. `MERGE-GATE` — the final fallback: any other, non-clean,
+    non-mergeable platform merge state (e.g. `DIRTY`, `BLOCKED`,
+    `UNSTABLE`) that none of the checks above matched.
+
+`--verified-sha SHA` binds the watcher to the sha an assurance verdict
+judged, per `PLAYBOOK-WATCHTOWER`'s "a verdict is stale the moment the
+head moves" rule: `classify_verdict()` compares `git patch-id --stable`
+between the verified sha and the PR's current head (both diffed against
+`master`) and reports the ordinary classification unmodified if the shas
+match exactly, `REBASED` folded into that classification's own reason
+(verdict carries — content is identical despite a different sha),
+`STALE-VERDICT` overriding it (content drift — re-verify), or
+`INDETERMINATE` overriding it if either commit is not locally reachable.
+Full exit-code-to-classification mapping is the script's own module
+docstring (`EXIT_CODES`), not restated here to avoid a second copy
+drifting from the source.
+
 ## Related
 
 - `ADR-0007`, `ADR-0005`
 - `EXT-EXECUTOR-IDENTITY-V1`, `EXT-EXECUTION-SESSION-V1`
 - `docs/playbooks/agent-cli-usage.md` (`PLAYBOOK-AGENT-CLI`)
+- `docs/delivery/watchtower-operations.md` (`PLAYBOOK-WATCHTOWER`) —
+  merge pipeline step 5, `scripts/watch_pr.py`'s own home
 - `docs/delivery/seat-reliability.md`

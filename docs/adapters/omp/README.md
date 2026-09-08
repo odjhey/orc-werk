@@ -16,9 +16,13 @@ agent running under OMP is an **external executor pushing its own
 observations** into the ledger through the ordinary `orc`/`orc record` CLI,
 exactly as a human operator typing the same commands would (`ADR-0005`'s
 push-recording model). OMP changes *who occupies a seat and how strongly
-its boundaries are enforced* (agent frontmatter instead of prose, a
-blocking hook instead of a convention); it does not change what a seat is
-allowed to record or how the kernel decides.
+its boundaries are enforced* (agent frontmatter and tool restriction
+instead of prose, GitHub branch protection on `master` instead of a bare
+convention for the one rule that needs an action-decidable rung; no
+`tool_call` hook ships anywhere in this repository — `capabilities.md`'s
+findings table and `ADR-0007`'s 2026-09-07 hook-retirement amendment
+record why); it does not change what a seat is allowed to record or how
+the kernel decides.
 
 ## What this is not
 
@@ -36,6 +40,20 @@ Consequently:
 - OMP is not a subject of the `CONF-WORK-*`, `CONF-EXEC-*`, `CONF-ASSURE-*`,
   or `CONF-CAND-*` conformance suites; the only canonical surface it
   touches is the `executor-identity/v1` extension (`conformance.md`).
+
+## Skill frontmatter and OMP's strict YAML parser
+
+OMP's own skill/config loader parses frontmatter with a strict YAML
+parser. Authoring the packaged `orc-ledger` skill's frontmatter
+`description` for OMP specifically (`docs/delivery/watchtower-operations.md`'s
+Conventions section keeps the harness-independent "what + when, never a
+how-summary" half of this rule; this is the OMP-specific mechanism
+underneath it, moved here per issue #282): no colon-space (`: `) in an
+unquoted value — OMP's parser reads it as a nested mapping and the skill
+silently fails to load. Single-quote the value and double inner
+apostrophes if a mid-sentence colon is unavoidable. The same
+colon-space caution applies to any doc frontmatter OMP's own tooling
+might strict-parse, not only the packaged skill.
 
 ## Scope of this directory
 

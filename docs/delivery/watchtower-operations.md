@@ -14,7 +14,7 @@ The cross-cutting *method* the roles below rely on — how to write agent-facing
 
 ## Seats
 
-This table states each seat's harness-independent boundary — what it may touch, never what tool runs it. Model/effort configuration, tool restrictions, structured-output enforcement, and worktree fencing are *mechanics*; today's mechanics live in `.omp/agents/*.md` and `.omp/config.yml`, documented for this harness in `docs/adapters/omp/` (`ADAPTER-OMP`, `ADR-0007`). A future harness swap changes the mechanics column, never the boundary.
+This table states each seat's harness-independent boundary — what it may touch, never what tool runs it. Model/effort configuration, tool restrictions, structured-output enforcement, and worktree fencing are *mechanics*, documented for the current harness in `docs/adapters/omp/` (`ADAPTER-OMP`, `ADR-0007`). A future harness swap changes the mechanics column, never the boundary.
 
 | Seat | Effects boundary | Model family (current harness) | Effort | Result schema | Observed failures |
 |---|---|---|---|---|---|
@@ -153,4 +153,4 @@ Every decision must be reconstructable after the fact:
 - Local gate `bash scripts/check.sh` mirrors CI exactly; green locally means green remotely.
 - Commits carry attribution trailers; PR bodies end with generation attribution.
 - Run `python3 scripts/docs_check.py` before committing any documentation change.
-- **Authoring the packaged `orc-ledger` skill's frontmatter `description`** (it is loaded by adopters' agents, including strict-YAML providers): (a) no colon-space (`: `) in an unquoted value — strict parsers (e.g. Pi's) read it as a nested mapping and the skill silently fails to load; single-quote the value and double inner apostrophes if a mid-sentence colon is unavoidable; (b) state **what + when** (the trigger phrases that should route to it) and never a how-summary of the workflow — a description that lists the steps makes the agent follow the summary and skip loading the body. The same colon-space caution applies to any doc frontmatter that a non-`docs_check` tool might strict-parse.
+- **Authoring the packaged `orc-ledger` skill's frontmatter `description`**: state **what + when** (the trigger phrases that should route to it) and never a how-summary of the workflow — a description that lists the steps makes the agent follow the summary and skip loading the body. Harness-specific strict-YAML parsing gotchas for this convention live in `docs/adapters/omp/README.md`.
