@@ -39,6 +39,7 @@ from orc_werk.adapters.jsonl.journal import JSONLJournal
 from orc_werk.adapters.memory.work_graph import MemoryWorkGraph
 from orc_werk.app.orchestrator import Orchestrator, is_pending
 from orc_werk.cli.affordances import redispatch_command, render_next_block
+from orc_werk.cli.census import census_document, parse_as_of, render_census_text
 from orc_werk.cli import config as config_module
 from orc_werk.cli.observers import fire_observers
 from orc_werk.cli.config import (
@@ -1323,6 +1324,22 @@ def cmd_verdict(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_census(args: argparse.Namespace) -> int:
+    """`orc census` (`TASK-FIX-285`, issue #285): whole-ledger, as-of-dated
+    tally of settled assurance verdicts. Validate `--as-of` before any
+    read so an invalid bound fails closed with empty stdout, matching
+    `cmd_index`'s same validate-before-read discipline."""
+    as_of = parse_as_of(args.as_of) if args.as_of is not None else None
+    directory = resolve_journal_dir(args.journal)
+    doc = census_document(directory.resolve(), as_of=as_of)
+    if getattr(args, "json", False):
+        print(dump_json(doc))
+        return 0
+    for line in render_census_text(doc):
+        print(line)
+    return 0
+
+
 def cmd_history(args: argparse.Namespace) -> int:
     directory, run_id = _resolve_journal(args.target, args.journal)
     _require_journal_file(directory, run_id, target=args.target)
@@ -1868,6 +1885,43 @@ def build_parser() -> argparse.ArgumentParser:
         "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
     )
     verdict_parser.set_defaults(func=cmd_verdict)
+
+    census_parser = subparsers.add_parser(
+        "census",
+        help="whole-ledger tally of settled assurance verdicts, grouped by raw model x verdict x UTC day",
+        description="Read-only whole-ledger aggregate over every run's settled assurance Facts "
+        "(FACT-ASSURE-SETTLED; accepted/rejected/inconclusive -- never an inherited verdict "
+        "reuse, which journals no new Fact), discovered through the canonical new-and-legacy "
+        "per-run layout enumeration, dated by the times sidecar at or before --as-of "
+        "(inclusive), and grouped by the exact self-reported executor-identity/v1 model "
+        "string x verdict x UTC day. Undated settlements and unreadable runs are disclosed, "
+        "never silently dropped.",
+        epilog="examples:\n"
+        "  orc census\n"
+        "  orc census --as-of 2026-09-07T12:11:25Z\n"
+        "  orc census --journal ./.orc --json\n\n"
+        "defaults: --as-of defaults to the latest recorded settlement timestamp already in "
+        "the ledger (null when none is dated, never wall-clock now()); --journal defaults to "
+        "$ORC_JOURNAL_DIR or ./.orc",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    census_parser.add_argument(
+        "--as-of",
+        dest="as_of",
+        metavar="ISO8601Z",
+        default=None,
+        help="inclusive UTC cutoff, Z-suffixed ISO-8601 with optional fractional seconds "
+        "(default: the ledger's own latest recorded settlement timestamp)",
+    )
+    census_parser.add_argument(
+        "--journal", help="journal directory (default $ORC_JOURNAL_DIR or ./.orc)", default=None
+    )
+    census_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the orc-census/v1 machine document as one JSON document on stdout instead of text",
+    )
+    census_parser.set_defaults(func=cmd_census)
 
     history_parser = subparsers.add_parser(
         "history",

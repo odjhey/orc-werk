@@ -138,3 +138,6 @@ description: Flat documentation index.
 - [TASK-M4B-001](delivery/task-cards/TASK-M4B-001-richer-index.md)
 - [TASK-M4B-002](delivery/task-cards/TASK-M4B-002-inflight-rollup.md)
 - [TASK-M4C-001](delivery/task-cards/TASK-M4C-001-role-guides.md)
+
+## Standalone fix cards
+- [TASK-FIX-285](delivery/task-cards/TASK-FIX-285-ledger-census.md)
