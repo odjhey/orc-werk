@@ -89,6 +89,8 @@ description: Flat documentation index.
 - [Agent onboarding playbook](playbooks/agent-onboarding.md)
 - [CLI usage guide](playbooks/cli-usage.md)
 - [Agent CLI usage playbook](playbooks/agent-cli-usage.md)
+- [Practice-only adoption playbook](playbooks/practice-adoption.md)
+- [Independent implementation guide](playbooks/implementers-guide.md)
 - [Engineering method](playbooks/engineering-method.md)
 - [Portfolio cockpit](playbooks/portfolio-cockpit.md)
 - [ergo coexistence](playbooks/ergo-coexistence.md)
@@ -141,3 +143,4 @@ description: Flat documentation index.
 
 ## Standalone fix cards
 - [TASK-FIX-285](delivery/task-cards/TASK-FIX-285-ledger-census.md)
+- [TASK-ADOPTION-GUIDES](delivery/task-cards/TASK-ADOPTION-GUIDES.md)

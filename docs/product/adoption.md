@@ -12,6 +12,26 @@ This guide answers three questions an operator asks before adopting Orc Werk: wh
 
 **To onboard an AGENT to an adopting repo**, point it at `docs/playbooks/agent-onboarding.md` (`PLAYBOOK-AGENT-ONBOARDING`) instead — a single, imperative, top-to-bottom executable entry point covering install, `orc onboard`, the day-to-day dispatch/record loop, and optional ergo coexistence wiring. The rest of this document is the operator-facing why: when to adopt, the ladder, the customization surfaces.
 
+## 0. Choose your entry point
+
+Before either of the two questions below, pick which of four paths fits —
+each is a legitimate, fully-supported way to use Orc Werk's model, not a
+watered-down substitute for "the real thing":
+
+| Path | Pick this when | Requires | Start here |
+|---|---|---|---|
+| Practice-only | You want candidate-bound acceptance and independent verdicts today, with zero new tooling, and are willing to maintain the discipline by hand. | Nothing — a tracker of any kind, a text file, a second person. | `PLAYBOOK-PRACTICE-ADOPTION` |
+| Reference Python CLI | You have or can add Python 3.11+, and want the mechanically-enforced guarantees (durable journal, idempotent effects, bounded retries) without building anything yourself. | Python 3.11+ and this repository. | This guide's §2 install path below, then `docs/playbooks/agent-onboarding.md` |
+| Custom composition around the Python package | You want your own CLI/service, wiring your own adapters into the reference `app` + `core` + `ports` layers, without adopting the reference CLI's config/output shapes. | Python 3.11+, this repository as a library. | This guide's "Composition layer" section below (§3), `PLAYBOOK-CLI-USAGE` |
+| Independent implementation | You want a conforming implementation in another language, or a from-scratch tool that never imports this repository at all. | Nothing Python-specific — just the contracts. | `PLAYBOOK-IMPLEMENTERS-GUIDE` |
+
+All four paths implement the same model (`PRODUCT-THESIS`); they differ
+only in how much of the enforcement is mechanical versus your own
+discipline, and how much of the reference implementation's convenience you
+adopt alongside it. Nothing below in this guide is specific to the second
+or third path — the ladder, prerequisites, and customization surfaces apply
+to any adopter building on or around the reference Python implementation.
+
 ## 1. When to use it
 
 Reach for Orc Werk when three conditions co-occur:
