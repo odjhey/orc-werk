@@ -16,13 +16,14 @@ Orc Werk is the contract and opinionated delivery model. Python is the v0.x refe
 
 1. [`docs/product/thesis.md`](docs/product/thesis.md)
 2. [`docs/product/principles.md`](docs/product/principles.md)
-3. [`docs/contracts/invariants.md`](docs/contracts/invariants.md)
-4. [`docs/domain/ubiquitous-language.md`](docs/domain/ubiquitous-language.md)
-5. [`docs/contracts/ports/README.md`](docs/contracts/ports/README.md)
-6. [`docs/contracts/extensions.md`](docs/contracts/extensions.md)
-7. [`docs/scenarios/README.md`](docs/scenarios/README.md)
-8. [`docs/delivery/M0-pure-core.md`](docs/delivery/M0-pure-core.md)
-9. [`docs/research/README.md`](docs/research/README.md)
+3. [`docs/product/adoption.md`](docs/product/adoption.md) — when to adopt, and the entry-point choice between practice-only, the reference CLI, custom composition, or an independent implementation
+4. [`docs/contracts/invariants.md`](docs/contracts/invariants.md)
+5. [`docs/domain/ubiquitous-language.md`](docs/domain/ubiquitous-language.md)
+6. [`docs/contracts/ports/README.md`](docs/contracts/ports/README.md)
+7. [`docs/contracts/extensions.md`](docs/contracts/extensions.md)
+8. [`docs/scenarios/README.md`](docs/scenarios/README.md)
+9. [`docs/delivery/M0-pure-core.md`](docs/delivery/M0-pure-core.md)
+10. [`docs/research/README.md`](docs/research/README.md)
 
 ## Docs-driven development rule
 
@@ -55,6 +56,19 @@ See [`docs/architecture/repository-structure.md`](docs/architecture/repository-s
 The `orc` CLI is the reference way to dispatch and read delivery runs. See
 [`docs/cli/README.md`](docs/cli/README.md) for the full command reference
 (quickstart, flags, exit codes, config schema, journal layout).
+
+## Adopting without Python or `orc`
+
+Neither Python nor this repository's CLI is required to use Orc Werk's
+model. `docs/product/adoption.md` lays out four supported entry points;
+the two that need no Python/`orc` install at all are:
+
+- [`docs/playbooks/practice-adoption.md`](docs/playbooks/practice-adoption.md)
+  — run the seat protocol by hand with any tracker, executor, verifier, and
+  evidence store you already have.
+- [`docs/playbooks/implementers-guide.md`](docs/playbooks/implementers-guide.md)
+  — build an independent, conforming implementation in any language against
+  the contracts alone.
 
 ## Documentation integrity
 
