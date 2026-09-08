@@ -191,6 +191,21 @@ This document is that shape's normative source, stated here in full so a
 non-Python implementation never has to read `src/orc_werk/core/*.py` to
 derive it:
 
+**A canonical `Fact.to_dict()` shape.** Several fields below embed a
+*complete settled Fact*, not a summary of it -- the reference driver
+never invents a reduced or convenience shape for this. Every such
+embedding is exactly:
+
+```json
+{"id": "FACT-EXEC-SETTLED", "delivery_run_id": "run-1", "data": {"...": "..."}, "extensions": {}}
+```
+
+four keys, always: `id` (the Fact's canonical `FACT-*` id), `delivery_run_id`,
+`data` (that Fact's own required data fields, per `PROTOCOL-FACTS`), and
+`extensions`. This is the one Fact shape used everywhere below --
+`executions[].settled_fact`, `assurances[].settled_fact`,
+`candidate_conflict.fact`, and every element of a `decision.basis` array.
+
 **A `projection[work_id]` entry** (one per Work, canonical
 `WorkProjection`):
 
@@ -201,13 +216,13 @@ derive it:
 | `state` | string | one of `READY`, `EXECUTING`, `ASSURING`, `ACCEPTED`, `BLOCKED`, `CANCELLED` (`docs/domain/state-machines/delivery.md`) |
 | `ready_confirmed` | bool | `true` once `FACT-WORK-READY` has been folded for this Work |
 | `attempt_number` | int | count of `FACT-EXEC-STARTED` folded for this Work's lineage (`INV-018`) |
-| `executions` | array of object | one entry per started Execution, in fold order; each is `{"execution_id": string, "outcome": "completed"\|"failed"\|null}` (`null` while unsettled) |
+| `executions` | array of object | one entry per started Execution, in fold order; each is `{"execution_id": string, "outcome": "completed"\|"failed"\|null, "settled_fact": null\|Fact.to_dict()}`. `outcome`/`settled_fact` are `null` together while unsettled; `settled_fact` is always present as a key (`null` or a Fact), never omitted |
 | `current_execution_id` | string or null | the in-flight/most-recent Execution id, or `null` when none is open |
 | `candidates` | object | `{candidate_id: {"fingerprint": string, "execution_id": string}}`, one entry per distinct candidate ever observed |
 | `current_candidate_id` | string or null | the candidate currently bound (pending or settled assurance), or `null` |
-| `assurances` | array of object | one entry per started Assurance, in fold order; each is `{"assurance_id": string, "candidate_id": string, "execution_id": string, "verdict": "accepted"\|"rejected"\|"inconclusive"\|"abandoned"\|null}` (`null` while unsettled) |
-| `current_assurance_id` | string or null | the in-flight Assurance id, or `null` |
-| `assurance_started_for_current` | bool | `true` while an Assurance for the current candidate is in flight (started, not yet settled) |
+| `assurances` | array of object | one entry per started Assurance, in fold order; each starts as `{"assurance_id": string, "candidate_id": string, "execution_id": string, "verdict": null}` -- note **no `settled_fact` key at all** at this point, not even `null` -- and gains `"settled_fact": Fact.to_dict()` alongside a non-null `verdict` (`"accepted"\|"rejected"\|"inconclusive"`) once `FACT-ASSURE-SETTLED` folds for it. A distinct fourth `verdict` value, `"abandoned"`, is written onto the most recent (never-settled) entry by `FACT-ATTEMPT-ABANDONED` when that Assurance is unsettleable (`SCN-010`); this path never folds a `FACT-ASSURE-SETTLED`, so an `"abandoned"` entry never gains a `settled_fact` key either. A case asserting an unsettled `assurances[i]` entry under `expected` MUST NOT mention `settled_fact` (a key `expected` mentions that `observed` omits is a mismatch, per the subset-equality rule above) |
+| `current_assurance_id` | string or null | the `assurance_id` of the most recently started Assurance for the Work's *current* Execution attempt. Set when `FACT-ASSURE-STARTED` folds; reset to `null` only when the *next* `FACT-EXEC-STARTED` (a new attempt) folds. It is **not** cleared by that Assurance settling, at any verdict -- an `ACCEPTED` Work's `current_assurance_id` durably names the Assurance whose `accepted` verdict produced that terminal state, because `ACCEPTED` never folds a further `FACT-EXEC-STARTED` to clear it |
+| `assurance_started_for_current` | bool | `true` from the moment `FACT-ASSURE-STARTED` folds. `false` only: (a) the per-Work default, before any Assurance has ever started; (b) immediately after `FACT-CANDIDATE-OBSERVED` enters `ASSURING` for a newly (or exactly re-)observed candidate not yet assured under this Execution; (c) immediately after an in-budget `inconclusive` `FACT-ASSURE-SETTLED` that re-enters `ASSURING` for a same-candidate re-request. It is **not** reset by settlement of any other verdict -- exactly like `current_assurance_id`, an `ACCEPTED` Work retains `assurance_started_for_current: true` from its accepting Assurance |
 | `assurance_number` | int | `INV-021`'s per-execution-attempt assurance index of the most recently started Assurance for the current Execution (`0` when none has started yet) |
 | `claim_ref` | string or null | the recorded `FACT-WORK-CLAIMED` reference, or `null` |
 | `blocked_reason` | string or null | one of `retry-budget-exhausted`, `assurance-inconclusive`, `attempt-abandoned`, or `null` when not `BLOCKED` |
@@ -215,12 +230,15 @@ derive it:
 | `completed_confirmed` | bool | `true` once a confirming `FACT-WORK-COMPLETED` has been folded |
 | `cancelled_reason` | string or null | the recorded cancellation reason, or `null` |
 | `cancelled_confirmed` | bool | `true` once `FACT-WORK-CANCELLED` has been folded |
-| `candidate_conflict` | object or null | `{"candidate_id": string, "reason": string}` while an unresolved re-observation conflict rests unresolved (`STATE-DELIVERY` mechanical fact sequencing item 9), else `null` |
+| `candidate_conflict` | object or null | `{"candidate_id": string, "fact": Fact.to_dict(), "reason": "fingerprint-mismatch"\|"no-inheritable-verdict"}` while an unresolved re-observation conflict rests unresolved (`STATE-DELIVERY` mechanical fact sequencing item 9; `fact` is the re-observation's own `FACT-CANDIDATE-OBSERVED`), else `null` |
 
 **A `decisions[work_id]` entry** is `null` when nothing is currently
 pending for that Work, else `{"decision": {...}, "effects": [...]}`.
 
-**`decision`** (canonical `Decision`): `{"id": string, "delivery_run_id": string, "work_id": string, "attribution": object, "basis": array of object, "data": object, "extensions": object}`.
+**`decision`** (canonical `Decision`): `{"id": string, "delivery_run_id": string, "work_id": string, "attribution": object, "basis": array of Fact.to_dict(), "data": object, "extensions": object}`.
+`basis` is one or two entries, each the exact `Fact.to_dict()` shape
+defined above -- never a driver-invented summary object -- naming the
+settled Fact(s) (`INV-011`/`INV-012`) that made this Decision current.
 `id` is one of `DEC-DISPATCH`, `DEC-RETRY`, `DEC-REQUEST-ASSURANCE`,
 `DEC-ACCEPT`, `DEC-BLOCK` (the five IDs `orc_werk.core.policy.decide` can
 produce; `docs/protocol/decisions.md` names the full ID vocabulary,
