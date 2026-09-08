@@ -20,7 +20,12 @@ Wire contract (the entire language-neutral boundary):
 
   stdout -- exactly one JSON object: the observed-result envelope
             (`kit_version`, `outcome`, and either `projection`+`decisions`
-            for `"ok"` or `error`+`failing_*` for `"error"`).
+            for `"ok"` or `error`+`failing_*` for `"error"`). The success
+            shape is this kit's OWN normalized observation adapter over the
+            domain's derived state -- it never serializes a Python
+            dataclass verbatim; see `_normalize_projection`/
+            `_normalize_decision` below and `docs/conformance/portable-
+            kit.md`'s output-schema table for the field-by-field contract.
 
 This driver performs the SAME operation `PORT-JOURNAL-005 load_projection`
 performs on a real journal (`CONF-JOURNAL-003`'s replay-determinism
@@ -49,7 +54,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 # Resolve the sibling `src/` tree by path so this driver runs from a bare
 # checkout with no install step and no reliance on the caller's PYTHONPATH
@@ -59,18 +64,142 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from orc_werk.core.decisions import DEC_DISPATCH, DEC_RETRY  # noqa: E402
+from orc_werk.core.decisions import Decision  # noqa: E402
+from orc_werk.core.effects import Effect, FX_START_ASSURANCE  # noqa: E402
 from orc_werk.core.errors import CoreError, canonical_error  # noqa: E402
 from orc_werk.core.errors import ERR_VALIDATION  # noqa: E402
 from orc_werk.core.facts import FACT_INTENT_SUBMITTED  # noqa: E402
 from orc_werk.core.policy import decide  # noqa: E402
+from orc_werk.core.portable import to_portable  # noqa: E402
 from orc_werk.core.reducer import (  # noqa: E402
     apply_fact,
     journaled_max_assurance_attempts,
     journaled_max_attempts,
 )
 from orc_werk.core.serialization import KIND_FACT, fact_from_envelope  # noqa: E402
+from orc_werk.core.state import WorkProjection  # noqa: E402
 
 KIT_VERSION = 1
+
+
+def _normalize_projection(proj: WorkProjection) -> dict[str, Any]:
+    """The kit's normalized per-Work observation (`docs/conformance/
+    portable-kit.md`'s output-schema table is the field-by-field contract
+    this function implements). It derives *observable* pending markers
+    from the domain's raw historical lists rather than exposing the
+    reducer's own retained-pointer fields verbatim -- `current_execution_id`
+    /`current_assurance_id`/`assurance_started_for_current` are private
+    reset quirks of the Python reducer's replay bookkeeping, not part of
+    what a real adapter would ever need to observe."""
+    executions = [
+        {"execution_id": item["execution_id"], "outcome": item.get("outcome")}
+        for item in proj.executions
+    ]
+    pending_execution_id = None
+    if proj.current_execution_id is not None:
+        for item in proj.executions:
+            if item["execution_id"] == proj.current_execution_id and item.get("outcome") is None:
+                pending_execution_id = proj.current_execution_id
+                break
+
+    assurances = [
+        {
+            "assurance_id": item["assurance_id"],
+            "candidate_id": item["candidate_id"],
+            "execution_id": item["execution_id"],
+            # A raw "abandoned" entry is never a fourth canonical verdict:
+            # it folds back to `verdict: null` plus a separate boolean.
+            "verdict": None if item.get("verdict") in (None, "abandoned") else item["verdict"],
+            "abandoned": item.get("verdict") == "abandoned",
+        }
+        for item in proj.assurances
+    ]
+    pending_assurance_id = None
+    if proj.current_assurance_id is not None:
+        for item in proj.assurances:
+            if item["assurance_id"] == proj.current_assurance_id and item.get("verdict") is None:
+                pending_assurance_id = proj.current_assurance_id
+                break
+
+    candidate_conflict = None
+    if proj.candidate_conflict is not None:
+        candidate_conflict = {
+            "candidate_id": proj.candidate_conflict["candidate_id"],
+            "reason": proj.candidate_conflict["reason"],
+        }
+
+    return to_portable(
+        {
+            "state": proj.state,
+            "attempt_number": proj.attempt_number,
+            "executions": executions,
+            "candidates": {cid: dict(c) for cid, c in proj.candidates.items()},
+            "current_candidate_id": proj.current_candidate_id,
+            "assurances": assurances,
+            "pending_execution_id": pending_execution_id,
+            "pending_assurance_id": pending_assurance_id,
+            "assurance_pending": pending_assurance_id is not None,
+            "blocked_reason": proj.blocked_reason,
+            "blocked_confirmed": proj.blocked_confirmed,
+            "cancelled_reason": proj.cancelled_reason,
+            "cancelled_confirmed": proj.cancelled_confirmed,
+            "candidate_conflict": candidate_conflict,
+        }
+    )
+
+
+def _idempotency_scope(
+    decision: Decision, effect: Effect, projection: WorkProjection
+) -> list[Any]:
+    """The kit-specific structured stand-in for `INV-020`'s idempotency
+    key (`orc_werk.core.idempotency.idempotency_key`'s opaque `|`-joined
+    string): `[delivery_run_id, work_id, execution_attempt_number,
+    effect_id, assurance_number_or_null]`. `execution_attempt_number` is
+    the exact attempt the effect targets -- the *upcoming* attempt for
+    `DEC-DISPATCH`/`DEC-RETRY`'s `FX-START-EXECUTION`, the Work's
+    *current* attempt for every other decision -- and the fifth member is
+    `decide()`'s `assurance_number` for `FX-START-ASSURANCE`, `null`
+    otherwise (`INV-021`)."""
+    if decision.id in (DEC_DISPATCH, DEC_RETRY):
+        attempt_number = decision.data["attempt_number"]
+    else:
+        attempt_number = projection.attempt_number
+    assurance_number = decision.data["assurance_number"] if effect.id == FX_START_ASSURANCE else None
+    return [decision.delivery_run_id, decision.work_id, attempt_number, effect.id, assurance_number]
+
+
+def _normalize_decision(decision: Decision, effects: tuple[Effect, ...], projection: WorkProjection) -> dict[str, Any]:
+    return {
+        "decision": {"id": decision.id, "data": to_portable(dict(decision.data))},
+        "effects": [
+            {
+                "id": effect.id,
+                "data": to_portable(dict(effect.data)),
+                "idempotency_scope": _idempotency_scope(decision, effect, projection),
+            }
+            for effect in effects
+        ],
+    }
+
+
+def _extract_fact_id(record: Mapping[str, Any]) -> Any:
+    fact_id = record.get("id")
+    return fact_id if isinstance(fact_id, str) else None
+
+
+def _extract_work_id(record: Mapping[str, Any]) -> Any:
+    """Phase-independent location extraction (`docs/conformance/portable-
+    kit.md`): the raw envelope's `data.work_id` when that value is a
+    string, `null` otherwise -- available even when the envelope failed to
+    become a `Fact` object, so a decode/validation failure never hides a
+    work id merely because construction never reached that point."""
+    data = record.get("data")
+    if isinstance(data, dict):
+        work_id = data.get("work_id")
+        if isinstance(work_id, str):
+            return work_id
+    return None
 
 
 def run(case_input: dict[str, Any]) -> dict[str, Any]:
@@ -83,7 +212,6 @@ def run(case_input: dict[str, Any]) -> dict[str, Any]:
     max_attempts = journaled_max_attempts(history)
     max_assurance_attempts = journaled_max_assurance_attempts(history)
 
-    intent_id = None
     works: dict[str, Any] = {}
     fact_index = -1
 
@@ -94,10 +222,14 @@ def run(case_input: dict[str, Any]) -> dict[str, Any]:
         try:
             fact = fact_from_envelope(record)
         except (CoreError, ValueError) as exc:
-            return _error_result(exc, fact_index=fact_index, fact_id=record.get("id"))
+            return _error_result(
+                exc,
+                fact_index=fact_index,
+                fact_id=_extract_fact_id(record),
+                work_id=_extract_work_id(record),
+            )
 
         if fact.id == FACT_INTENT_SUBMITTED:
-            intent_id = fact.field("intent_id")
             continue
 
         work_id = fact.data.get("work_id")
@@ -121,10 +253,7 @@ def run(case_input: dict[str, Any]) -> dict[str, Any]:
             max_assurance_attempts=max_assurance_attempts,
         )
         decisions[work_id] = (
-            {
-                "decision": outcome.decision.to_dict(),
-                "effects": [effect.to_dict() for effect in outcome.effects],
-            }
+            _normalize_decision(outcome.decision, outcome.effects, projection)
             if outcome is not None
             else None
         )
@@ -133,10 +262,9 @@ def run(case_input: dict[str, Any]) -> dict[str, Any]:
         "kit_version": KIT_VERSION,
         "outcome": "ok",
         "delivery_run_id": delivery_run_id,
-        "intent_id": intent_id,
         "derived_max_attempts": max_attempts,
         "derived_max_assurance_attempts": max_assurance_attempts,
-        "projection": {work_id: proj.to_dict() for work_id, proj in works.items()},
+        "projection": {work_id: _normalize_projection(proj) for work_id, proj in works.items()},
         "decisions": decisions,
     }
 

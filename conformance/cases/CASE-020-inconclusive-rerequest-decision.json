@@ -20,7 +20,7 @@
               "candidate_id": "c1"
             },
             "id": "FX-START-ASSURANCE",
-            "idempotency_key": "run-1|A|1|FX-START-ASSURANCE|fp-1|2"
+            "idempotency_scope": ["run-1", "A", 1, "FX-START-ASSURANCE", 2]
           }
         ]
       }
@@ -28,7 +28,7 @@
     "outcome": "ok",
     "projection": {
       "A": {
-        "assurance_started_for_current": false,
+        "assurance_pending": false,
         "assurances": [
           {
             "assurance_id": "a1",

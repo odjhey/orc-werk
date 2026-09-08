@@ -192,6 +192,32 @@ def _probe_mutations() -> list[tuple[str, str, Any]]:
             "type-confused attempt_number: claims the string \"1\" where the contract requires the integer 1",
             lambda expected: _set_path(expected, ["projection", "A", "attempt_number"], "1"),
         ),
+        (
+            "CASE-019-malformed-assurance-verdict",
+            "wrong failing_work_id derivation: claims null when the raw envelope's data.work_id was actually the discoverable string \"A\"",
+            lambda expected: _set_path(expected, ["failing_work_id"], None),
+        ),
+        (
+            "CASE-013-attempt-abandonment-unsettled-assurance-recovery",
+            "manufactured fourth verdict: claims verdict \"abandoned\" instead of null+abandoned:true",
+            lambda expected: _set_path(
+                expected, ["projection", "B", "assurances", 0, "verdict"], "abandoned"
+            ),
+        ),
+        (
+            "CASE-015-cancellation-from-executing",
+            "stale pending pointer: claims pending_execution_id survives cancellation",
+            lambda expected: _set_path(expected, ["projection", "B", "pending_execution_id"], "e1"),
+        ),
+        (
+            "CASE-020-inconclusive-rerequest-decision",
+            "wrong idempotency_scope: omits the assurance_number component for the second assurance",
+            lambda expected: _set_path(
+                expected,
+                ["decisions", "A", "effects", 0, "idempotency_scope"],
+                ["run-1", "A", 1, "FX-START-ASSURANCE", None],
+            ),
+        ),
     ]
 
 

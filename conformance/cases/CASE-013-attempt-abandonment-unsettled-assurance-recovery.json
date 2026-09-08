@@ -14,9 +14,10 @@
       "B": {
         "assurances": [
           {
+            "abandoned": true,
             "assurance_id": "a1",
             "candidate_id": "c2",
-            "verdict": "abandoned"
+            "verdict": null
           }
         ],
         "attempt_number": 1,

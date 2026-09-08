@@ -98,10 +98,15 @@ not a reduced or driver-convenience subset:
 `data.plan` names every planned Work (`PORT-WORK-001`); `data.dispatch_result`
 is the reserved key `PORT-JOURNAL-003` (`docs/contracts/ports/journal-port.md`)
 requires on every persisted effect record, carrying the dispatch outcome as
-portable data -- here, the `{"works": [...]}` shape `WorkGraphPort.create`
-actually returns on success (each entry is a `Work.to_dict()`:
-`{"id": ..., "delivery_run_id": ...}`), one entry per Work named in `plan`,
-in the same order. `data.max_attempts`/`data.max_assurance_attempts` are
+portable data. `PORT-WORK-001` defines the Work-creation plan/semantics but
+does not specify a generic serialized create return; the shape above
+(`{"works": [{"id": ..., "delivery_run_id": ...}]}`, one entry per Work
+named in `plan`, in the same order) is this kit's own reference adapter's
+illustrative example of what a `WorkGraphPort.create` implementation may
+record there, not a canonical cross-adapter output format. A conforming
+driver replays `data.dispatch_result` verbatim from the given `history`;
+it never re-derives or validates its shape.
+`data.max_attempts`/`data.max_assurance_attempts` are
 present where the case is testing a specific or legacy budget (a case
 testing the legacy fallback for one of these two fields omits it
 entirely, exactly as a pre-existing-field journal would). Every `fact`
@@ -163,7 +168,7 @@ A driver is any executable, in any language, invoked as a subprocess
    currently-applicable next Decision/Effect(s) per Work (or none, where
    the Work is already resting on nothing pending).
 3. Writes **exactly one JSON object** to stdout:
-   - On success: `{"kit_version": 1, "outcome": "ok", "derived_max_attempts": <int>, "derived_max_assurance_attempts": <int>, "projection": {<work_id>: {...}}, "decisions": {<work_id>: {"decision": {...}, "effects": [...]}, or null}}`.
+   - On success: `{"kit_version": 1, "outcome": "ok", "delivery_run_id": <string>, "derived_max_attempts": <int>, "derived_max_assurance_attempts": <int>, "projection": {<work_id>: {...}}, "decisions": {<work_id>: {"decision": {...}, "effects": [...]}, or null}}`.
    - On a legally-rejected fact (an illegal transition, a validation
      failure, a fingerprint/conflict violation -- anything the reducer
      itself would raise `CoreError`/`ValueError` for): `{"kit_version": 1, "outcome": "error", "failing_fact_index": <int|null>, "failing_fact_id": <string|null>, "failing_work_id": <string|null>, "error": {"error": "<canonical ERR-* id>", "message": "<string>", "details": {...}}}`.
@@ -175,90 +180,101 @@ A driver is any executable, in any language, invoked as a subprocess
    unparseable stdout -- is always a checker failure, never silently
    treated as a passing `"error"` outcome).
 
+**`failing_work_id` derivation** is exact, mechanical, and
+phase-independent -- not inferential and never conditioned on how far
+parsing got: it is the failing envelope's own raw `data.work_id` when
+that value is a JSON string, `null` otherwise. This is read straight off
+the untrusted `history` entry the driver was folding when it failed, by
+its position (`failing_fact_index`) alone -- a decode/validation failure
+that never got as far as constructing a Fact object still reports the
+available `work_id` from the raw envelope; it MUST NOT be hidden merely
+because the envelope itself turned out to be invalid. A driver MUST NOT
+special-case any particular fact id, error id, or `expected` value to
+decide this; it is the same one generic-extraction rule for every
+failure this driver can hit.
+
 A comparison against `expected.error` pins the canonical `error` id
 (`ERR-VALIDATION`, `ERR-CONFLICT`, ...) and observable state fields
 (`failing_fact_id`, `failing_work_id`) -- never `message` wording, which
 is documented informative-only and MAY vary by implementation/locale.
 
 This is the entire wire contract. It pins no Python dataclass layout, no
-incidental UUID, and no private function name -- but it pins every field
-named below exactly, because no other document defines the JSON
-*serialization* of these shapes; `docs/domain/state-machines/delivery.md`
-and `docs/protocol/facts.md`/`decisions.md`/`effects.md` define the state
+incidental UUID, and no private function name. The shapes below are
+**this kit's own normalized JSON encoding** for observational read-back
+of the domain's Fact/Decision/Effect/derived-state concepts -- pinned
+here exactly, field by field, because no other document defines a JSON
+*serialization* of them; `docs/domain/state-machines/delivery.md` and
+`docs/protocol/facts.md`/`decisions.md`/`effects.md` define the state
 vocabulary and each Fact's *required data fields* (what a producer must
-supply), not the JSON field-by-field output shape a consumer reads back.
-This document is that shape's normative source, stated here in full so a
+supply), never a consumer-facing wire layout, and MUST NOT be read as
+asserting that this encoding is itself part of those contracts. This
+document is that encoding's normative source, stated here in full so a
 non-Python implementation never has to read `src/orc_werk/core/*.py` to
-derive it:
+derive it. The encoding below derives *observable* pending markers from
+the domain's raw historical lists rather than exposing the Python
+reducer's own retained-pointer fields verbatim: a private replay-cursor
+quirk of one implementation (e.g. "which pointer resets on which fact")
+is not part of what a real adapter would ever need to observe, and this
+kit does not require reproducing it.
 
-**A canonical `Fact.to_dict()` shape.** Several fields below embed a
-*complete settled Fact*, not a summary of it -- the reference driver
-never invents a reduced or convenience shape for this. Every such
-embedding is exactly:
-
-```json
-{"id": "FACT-EXEC-SETTLED", "delivery_run_id": "run-1", "data": {"...": "..."}, "extensions": {}}
-```
-
-four keys, always: `id` (the Fact's canonical `FACT-*` id), `delivery_run_id`,
-`data` (that Fact's own required data fields, per `PROTOCOL-FACTS`), and
-`extensions`. This is the one Fact shape used everywhere below --
-`executions[].settled_fact`, `assurances[].settled_fact`,
-`candidate_conflict.fact`, and every element of a `decision.basis` array.
-
-**A `projection[work_id]` entry** (one per Work, canonical
-`WorkProjection`):
+**A `projection[work_id]` entry** (one per Work) -- this kit's own
+normalized encoding of the domain's per-Work derived state
+(`docs/domain/state-machines/delivery.md`'s `STATE-DELIVERY` transition
+contract), not an assertion that this JSON layout is itself part of that
+contract. It carries no `work_id` or `delivery_run_id` field of its own
+-- both are already the map key and the request-level `delivery_run_id`
+respectively, and duplicating them per entry would be redundant:
 
 | field | type | meaning |
 |---|---|---|
-| `work_id` | string | this Work's id |
-| `delivery_run_id` | string | echoes the request |
 | `state` | string | one of `READY`, `EXECUTING`, `ASSURING`, `ACCEPTED`, `BLOCKED`, `CANCELLED` (`docs/domain/state-machines/delivery.md`) |
-| `ready_confirmed` | bool | `true` once `FACT-WORK-READY` has been folded for this Work |
 | `attempt_number` | int | count of `FACT-EXEC-STARTED` folded for this Work's lineage (`INV-018`) |
-| `executions` | array of object | one entry per started Execution, in fold order; each is `{"execution_id": string, "outcome": "completed"\|"failed"\|null, "settled_fact": null\|Fact.to_dict()}`. `outcome`/`settled_fact` are `null` together while unsettled; `settled_fact` is always present as a key (`null` or a Fact), never omitted |
-| `current_execution_id` | string or null | the in-flight/most-recent Execution id, or `null` when none is open |
-| `candidates` | object | `{candidate_id: {"fingerprint": string, "execution_id": string}}`, one entry per distinct candidate ever observed |
-| `current_candidate_id` | string or null | the candidate currently bound (pending or settled assurance), or `null` |
-| `assurances` | array of object | one entry per started Assurance, in fold order; each starts as `{"assurance_id": string, "candidate_id": string, "execution_id": string, "verdict": null}` -- note **no `settled_fact` key at all** at this point, not even `null` -- and gains `"settled_fact": Fact.to_dict()` alongside a non-null `verdict` (`"accepted"\|"rejected"\|"inconclusive"`) once `FACT-ASSURE-SETTLED` folds for it. A distinct fourth `verdict` value, `"abandoned"`, is written onto the most recent (never-settled) entry by `FACT-ATTEMPT-ABANDONED` when that Assurance is unsettleable (`SCN-010`); this path never folds a `FACT-ASSURE-SETTLED`, so an `"abandoned"` entry never gains a `settled_fact` key either. A case asserting an unsettled `assurances[i]` entry under `expected` MUST NOT mention `settled_fact` (a key `expected` mentions that `observed` omits is a mismatch, per the subset-equality rule above) |
-| `current_assurance_id` | string or null | the `assurance_id` of the most recently started Assurance for the Work's *current* Execution attempt. Set when `FACT-ASSURE-STARTED` folds; reset to `null` only when the *next* `FACT-EXEC-STARTED` (a new attempt) folds. It is **not** cleared by that Assurance settling, at any verdict -- an `ACCEPTED` Work's `current_assurance_id` durably names the Assurance whose `accepted` verdict produced that terminal state, because `ACCEPTED` never folds a further `FACT-EXEC-STARTED` to clear it |
-| `assurance_started_for_current` | bool | `true` from the moment `FACT-ASSURE-STARTED` folds. `false` only: (a) the per-Work default, before any Assurance has ever started; (b) immediately after `FACT-CANDIDATE-OBSERVED` enters `ASSURING` for a newly (or exactly re-)observed candidate not yet assured under this Execution; (c) immediately after an in-budget `inconclusive` `FACT-ASSURE-SETTLED` that re-enters `ASSURING` for a same-candidate re-request. It is **not** reset by settlement of any other verdict -- exactly like `current_assurance_id`, an `ACCEPTED` Work retains `assurance_started_for_current: true` from its accepting Assurance |
-| `assurance_number` | int | `INV-021`'s per-execution-attempt assurance index of the most recently started Assurance for the current Execution (`0` when none has started yet) |
-| `claim_ref` | string or null | the recorded `FACT-WORK-CLAIMED` reference, or `null` |
+| `executions` | array of object | one entry per started Execution, in fold order; each is `{"execution_id": string, "outcome": "completed"\|"failed"\|null}`. `outcome` is `null` while that Execution is unsettled |
+| `candidates` | object | `{candidate_id: {"fingerprint": string, "execution_id": string}}`, one entry per distinct candidate ever observed; `execution_id` is that candidate's most recently re-attributed Execution (`INV-006`'s exact-identity candidate may move forward across a same-fingerprint re-observation) |
+| `current_candidate_id` | string or null | the candidate currently bound (pending or settled assurance), or `null`. Reset to `null` by `FACT-WORK-CANCELLED` |
+| `assurances` | array of object | one entry per started Assurance, in fold order; each is `{"assurance_id": string, "candidate_id": string, "execution_id": string, "verdict": "accepted"\|"rejected"\|"inconclusive"\|null, "abandoned": bool}`. `verdict` is `null` while unsettled and gains a `PROTOCOL-FACTS` `ASSURANCE_VERDICTS` value once `FACT-ASSURE-SETTLED` folds for it -- no other verdict value exists. `abandoned` is `true` only for the one entry `FACT-ATTEMPT-ABANDONED` marked unsettleable (`SCN-010`); this is *not* a fourth verdict value -- `verdict` stays `null` on that same entry, never a string `"abandoned"` |
+| `pending_execution_id` | string or null | the currently open (unsettled) Execution's id, derived by scanning `executions` for an entry with `outcome: null`; `null` when no Execution is open |
+| `pending_assurance_id` | string or null | the currently open (unsettled, non-abandoned) Assurance's id, derived by scanning `assurances` for an entry with `verdict: null` and `abandoned: false`; `null` when no Assurance is open |
+| `assurance_pending` | bool | `true` exactly when `pending_assurance_id` is non-null; a convenience boolean for a driver that would rather branch on a flag than a null check |
 | `blocked_reason` | string or null | one of `retry-budget-exhausted`, `assurance-inconclusive`, `attempt-abandoned`, or `null` when not `BLOCKED` |
 | `blocked_confirmed` | bool | `true` once a confirming `FACT-WORK-BLOCKED` has been folded |
-| `completed_confirmed` | bool | `true` once a confirming `FACT-WORK-COMPLETED` has been folded |
 | `cancelled_reason` | string or null | the recorded cancellation reason, or `null` |
 | `cancelled_confirmed` | bool | `true` once `FACT-WORK-CANCELLED` has been folded |
-| `candidate_conflict` | object or null | `{"candidate_id": string, "fact": Fact.to_dict(), "reason": "fingerprint-mismatch"\|"no-inheritable-verdict"}` while an unresolved re-observation conflict rests unresolved (`STATE-DELIVERY` mechanical fact sequencing item 9; `fact` is the re-observation's own `FACT-CANDIDATE-OBSERVED`), else `null` |
+| `candidate_conflict` | object or null | `{"candidate_id": string, "reason": "fingerprint-mismatch"\|"no-inheritable-verdict"}` while an unresolved re-observation conflict rests unresolved (`STATE-DELIVERY` mechanical fact sequencing item 9), else `null` |
 
 **A `decisions[work_id]` entry** is `null` when nothing is currently
 pending for that Work, else `{"decision": {...}, "effects": [...]}`.
 
-**`decision`** (canonical `Decision`): `{"id": string, "delivery_run_id": string, "work_id": string, "attribution": object, "basis": array of Fact.to_dict(), "data": object, "extensions": object}`.
-`basis` is one or two entries, each the exact `Fact.to_dict()` shape
-defined above -- never a driver-invented summary object -- naming the
-settled Fact(s) (`INV-011`/`INV-012`) that made this Decision current.
-`id` is one of `DEC-DISPATCH`, `DEC-RETRY`, `DEC-REQUEST-ASSURANCE`,
-`DEC-ACCEPT`, `DEC-BLOCK` (the five IDs `orc_werk.core.policy.decide` can
-produce; `docs/protocol/decisions.md` names the full ID vocabulary,
-including the two operator-only IDs this driver boundary never emits).
-`data` carries decision-specific fields named by that ID -- e.g.
-`DEC-BLOCK.data.reason` (the same three-value vocabulary as
-`blocked_reason` above), `DEC-REQUEST-ASSURANCE.data.candidate_id`/
-`assurance_number`/`max_assurance_attempts`.
+**`decision`** (this kit's normalized encoding of a `PROTOCOL-DECISIONS`
+decision): `{"id": string, "data": object}`. `id` is one of
+`DEC-DISPATCH`, `DEC-RETRY`, `DEC-REQUEST-ASSURANCE`, `DEC-ACCEPT`,
+`DEC-BLOCK` (the five IDs `orc_werk.core.policy.decide` can produce;
+`docs/protocol/decisions.md` names the full ID vocabulary, including the
+two operator-only IDs this driver boundary never emits). `data` carries
+decision-specific fields named by that ID -- e.g. `DEC-BLOCK.data.reason`
+(the same three-value vocabulary as `blocked_reason` above),
+`DEC-REQUEST-ASSURANCE.data.candidate_id`/`assurance_number`/
+`max_assurance_attempts`. `work_id` and `delivery_run_id` are omitted
+here for the same reason as the projection entry: both are already known
+from the enclosing map key and the top-level request.
 
-**Each `effects[]` entry** (canonical `Effect`): `{"id": string, "delivery_run_id": string, "work_id": string, "idempotency_key": string, "data": object, "extensions": object}`.
+**Each `effects[]` entry** (this kit's normalized encoding of a
+`PROTOCOL-EFFECTS` effect): `{"id": string, "data": object, "idempotency_scope": array}`.
 `id` is one of `FX-START-EXECUTION`, `FX-START-ASSURANCE`,
 `FX-COMPLETE-WORK`, `FX-BLOCK-WORK` (the four a `decide()` outcome can
 carry; `docs/protocol/effects.md` names the full ID vocabulary and each
-ID's target port). `idempotency_key` is the stable, deterministically
-derived key (`INV-020`) a port/adapter uses to detect a duplicate
-dispatch; its exact composition (delivery_run_id/work_id/attempt_number/
-effect_id, plus a trailing candidate_fingerprint/assurance_number pair
-for `FX-START-ASSURANCE`) is documented informative detail, never itself
-asserted byte-for-byte by a case unless that case is specifically about
-key derivation.
+ID's target port). `idempotency_scope` is this kit's own structured
+stand-in for `INV-020`'s idempotency key -- never itself the domain's
+opaque `|`-joined string, which is documented informative detail with no
+pinned wire form -- as the four- or five-element array
+`[delivery_run_id, work_id, execution_attempt_number, effect_id, assurance_number_or_null]`.
+`execution_attempt_number` is the exact attempt the effect targets (the
+*upcoming* attempt for `DEC-DISPATCH`/`DEC-RETRY`'s `FX-START-EXECUTION`,
+the Work's *current* attempt for every other decision); the fifth
+element is `decide()`'s `assurance_number` for `FX-START-ASSURANCE`,
+`null` otherwise (`INV-021`). A case comparing `idempotency_scope` pins
+this array shape, never a byte-for-byte reproduction of the domain's own
+`|`-joined key string.
 
 Any implementation satisfying steps 1-4 is a drop-in substitute for the
 reference driver via `checker.py --driver-cmd "<command>"`; the checker

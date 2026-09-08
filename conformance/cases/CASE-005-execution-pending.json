@@ -9,7 +9,7 @@
     "projection": {
       "A": {
         "attempt_number": 1,
-        "current_execution_id": "e1",
+        "pending_execution_id": "e1",
         "state": "EXECUTING"
       }
     }

@@ -8,8 +8,8 @@
     "outcome": "ok",
     "projection": {
       "A": {
-        "assurance_started_for_current": true,
-        "current_assurance_id": "a1",
+        "assurance_pending": true,
+        "pending_assurance_id": "a1",
         "current_candidate_id": "c1",
         "state": "ASSURING"
       }

@@ -7,7 +7,7 @@
     },
     "failing_fact_id": "FACT-ASSURE-SETTLED",
     "failing_fact_index": 6,
-    "failing_work_id": null,
+    "failing_work_id": "A",
     "outcome": "error"
   },
   "input": {

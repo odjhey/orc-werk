@@ -6,7 +6,7 @@
     "projection": {
       "B": {
         "current_candidate_id": null,
-        "current_execution_id": null,
+        "pending_execution_id": null,
         "state": "CANCELLED"
       }
     }

@@ -5,9 +5,9 @@
     "outcome": "ok",
     "projection": {
       "C": {
-        "assurance_started_for_current": false,
-        "current_assurance_id": null,
+        "assurance_pending": false,
         "current_candidate_id": null,
+        "pending_assurance_id": null,
         "state": "CANCELLED"
       }
     }
