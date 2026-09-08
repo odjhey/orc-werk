@@ -453,20 +453,26 @@ def _warn_verdict_inheritance(
     history, never re-fires this (no false positive off old state alone).
     The reducer's own fold is the sole authority for WHETHER inheritance
     occurred: every OTHER path a `FACT-CANDIDATE-OBSERVED` fold can rest
-    at within the same pass -- a brand-new candidate, or ADR-0006's
-    inconclusive-only re-attribution -- journals a fresh
-    `FACT-ASSURE-STARTED` for the same work in this same pass, and a
-    genuine identity collision (item 9) never matches at all (the reducer
-    requires the SAME `candidate_id` reused, per `INV-006`/`INV-007`/
-    `INV-008`, before it even compares fingerprints -- two different ids
-    that happen to share a fingerprint, e.g. a hand-scripted config's
-    coincidence, are never treated as the same candidate and never
-    inherit). Detecting "did this fold rest without requesting assurance"
-    this way, then using `_settled_fingerprints_by_work` (shared with
-    `orc show`'s identical JUDGED-section derivation, keyed by
-    `candidate_id` to match the reducer exactly) only to name WHICH prior
-    attempt/verdict is being reused, avoids re-deriving the reducer's
-    id/fingerprint gate a second time here."""
+    at within the same pass -- a brand-new candidate, ADR-0006's
+    inconclusive-only re-attribution, or a genuine identity collision
+    (item 9, same `candidate_id` but a DIFFERENT fingerprint) -- either
+    journals a fresh `FACT-ASSURE-STARTED` for the same work in this same
+    pass, or (item 9) never matches this lookup at all, because it is
+    keyed by the EXACT `(candidate_id, fingerprint)` pair the reducer
+    itself requires before it will inherit (`INV-006`/`INV-007`/
+    `INV-008`): a same-id-different-fingerprint re-observation is a
+    conflict, not an inheritance, and MUST NOT be reported as one. Two
+    different ids that happen to share a fingerprint (e.g. a hand-scripted
+    config's coincidence) are likewise never treated as the same candidate
+    and never inherit. Detecting "did this fold rest without requesting
+    assurance" this way, then using `_settled_fingerprints_by_work`
+    (shared with `orc show`'s identical JUDGED-section derivation) only to
+    name WHICH prior attempt/verdict is being reused, avoids re-deriving
+    the reducer's id/fingerprint gate a second time here. The lookup key
+    MUST use THIS record's own observed fingerprint -- never a frozen
+    candidate object's fingerprint read from elsewhere -- so a genuine
+    fingerprint-mismatch conflict correctly misses rather than falsely
+    hits."""
     started_work_ids = {
         record.get("data", {}).get("work_id")
         for record in new_records
@@ -481,7 +487,8 @@ def _warn_verdict_inheritance(
         candidate_id = record.get("data", {}).get("candidate_id")
         if not isinstance(candidate_id, str):
             continue
-        prior = _settled_fingerprints_by_work(history_before_advance, work_id).get(candidate_id)
+        fingerprint = record.get("data", {}).get("fingerprint")
+        prior = _settled_fingerprints_by_work(history_before_advance, work_id).get((candidate_id, fingerprint))
         if prior is None:
             continue
         attempt_number, prior_settled = prior

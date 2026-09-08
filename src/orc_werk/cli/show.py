@@ -184,19 +184,24 @@ def _segment_attempts(work_records: Sequence[Mapping[str, Any]]) -> list[tuple[A
 
 def _settled_fingerprints_by_work(
     history: Sequence[Mapping[str, Any]], work_id: str, *, before_attempt: Any = None,
-) -> dict[str, tuple[Any, Mapping[str, Any]]]:
-    """`candidate_id` -> (attempt_number, FACT-ASSURE-SETTLED record) for
-    every attempt of `work_id` in `history` that reached its OWN fresh,
-    INHERITABLE settlement (`accepted`/`rejected` only -- `INHERITABLE_
-    VERDICTS`, reused verbatim from `orc_werk.core.reducer` rather than
-    re-deriving the same filter: STATE-DELIVERY item 11's amendment,
-    `inconclusive` is never inherited). Keyed by `candidate_id`, matching
-    the reducer's own `_settled_assurance_for_candidate`/`projection.
-    candidates` keying (`INV-006`/`INV-007`) -- two different candidate
-    ids that happen to share a fingerprint (a hand-scripted config's
-    coincidence, or two independently-produced-but-byte-identical git
-    diffs) are never conflated, exactly as the reducer never conflates
-    them.
+) -> dict[tuple[str, Any], tuple[Any, Mapping[str, Any]]]:
+    """`(candidate_id, fingerprint)` -> (attempt_number, FACT-ASSURE-SETTLED
+    record) for every attempt of `work_id` in `history` that reached its
+    OWN fresh, INHERITABLE settlement (`accepted`/`rejected` only --
+    `INHERITABLE_VERDICTS`, reused verbatim from `orc_werk.core.reducer`
+    rather than re-deriving the same filter: STATE-DELIVERY item 11's
+    amendment, `inconclusive` is never inherited). Keyed by the EXACT pair
+    the reducer itself requires for inheritance (`FACT-CANDIDATE-OBSERVED`'s
+    `candidate_id` reused AND its `fingerprint` unchanged from what was
+    settled -- `INV-006`/`INV-007`/`INV-008`), matching
+    `_settled_assurance_for_candidate`'s `incoming_fp == prior_fp` gate
+    exactly: a re-observation that reuses `candidate_id` but carries a
+    DIFFERENT fingerprint is a candidate-observation conflict (item 9,
+    `fingerprint-mismatch`), never an inheritance, and correctly misses
+    this lookup rather than falsely matching on `candidate_id` alone. Two
+    different candidate ids that happen to share a fingerprint (a
+    hand-scripted config's coincidence, or two independently-produced-but-
+    byte-identical git diffs) are likewise never conflated.
 
     `before_attempt`, when given, folds ONLY attempts whose `attempt_
     number` is strictly less than it -- STATE-DELIVERY item 8 (verdict
@@ -208,8 +213,12 @@ def _settled_fingerprints_by_work(
     Shared by `_render_work`'s JUDGED section below (which passes this
     attempt's own `attempt_number` as `before_attempt`) and that warning,
     so both read the identical derivation instead of two separately
-    maintained heuristics."""
-    settled_by_candidate_id: dict[str, tuple[Any, Mapping[str, Any]]] = {}
+    maintained heuristics. Callers MUST look up using the CURRENTLY
+    OBSERVED candidate's own `(candidate_id, fingerprint)` -- never a
+    stale/frozen candidate object's fingerprint from elsewhere in the
+    projection -- so a genuine fingerprint-mismatch re-observation misses
+    rather than falsely hits."""
+    settled_by_identity: dict[tuple[str, Any], tuple[Any, Mapping[str, Any]]] = {}
     for attempt_number, attempt_records in _segment_attempts(_work_records(history, work_id)):
         if before_attempt is not None and not (attempt_number < before_attempt):
             continue
@@ -220,9 +229,10 @@ def _settled_fingerprints_by_work(
         if own_settled.get("data", {}).get("verdict") not in INHERITABLE_VERDICTS:
             continue
         candidate_id = candidate_observed.get("data", {}).get("candidate_id")
+        fingerprint = candidate_observed.get("data", {}).get("fingerprint")
         if isinstance(candidate_id, str):
-            settled_by_candidate_id[candidate_id] = (attempt_number, own_settled)
-    return settled_by_candidate_id
+            settled_by_identity[(candidate_id, fingerprint)] = (attempt_number, own_settled)
+    return settled_by_identity
 
 
 def _parse_observed_at(value: Any) -> Optional[datetime.datetime]:
@@ -560,18 +570,23 @@ def _render_work(
         inherited_from = None
         if own_settled is None and candidate_observed is not None:
             # STATE-DELIVERY item 8 (verdict inheritance): a re-observed
-            # candidate's `candidate_id` is looked up against this work's
-            # own settled-verdict map, causally scoped to strictly-prior
-            # attempts only -- shared with `orc_werk.cli.main`'s
-            # dispatch-pass inheritance warning (`_settled_fingerprints_
-            # by_work`).
+            # candidate's exact `(candidate_id, fingerprint)` is looked up
+            # against this work's own settled-verdict map, causally scoped
+            # to strictly-prior attempts only -- shared with
+            # `orc_werk.cli.main`'s dispatch-pass inheritance warning
+            # (`_settled_fingerprints_by_work`). Using this attempt's OWN
+            # observed fingerprint (never a frozen candidate object's
+            # fingerprint from elsewhere) means a same-id-different-
+            # fingerprint re-observation (item 9's `fingerprint-mismatch`
+            # conflict) correctly misses -- it is never rendered as
+            # inherited.
             candidate_id = candidate_observed.get("data", {}).get("candidate_id")
+            fingerprint = candidate_observed.get("data", {}).get("fingerprint")
             if isinstance(candidate_id, str):
-                settled_by_candidate_id = _settled_fingerprints_by_work(
+                settled_by_identity = _settled_fingerprints_by_work(
                     history, work_id, before_attempt=attempt_number
                 )
-                if candidate_id in settled_by_candidate_id:
-                    inherited_from = settled_by_candidate_id[candidate_id]
+                inherited_from = settled_by_identity.get((candidate_id, fingerprint))
 
         for line in _render_judged(attempt_records, run_id=run_id, inherited_from=inherited_from, wp=wp):
             print(line)

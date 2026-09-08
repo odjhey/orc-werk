@@ -123,9 +123,13 @@ class SegmentAttemptsUnitTest(unittest.TestCase):
 
 
 class SettledFingerprintsByWorkUnitTest(unittest.TestCase):
-    """Issue #295 (verify rejection): STATE-DELIVERY item 8's inheritance
-    map must key by `candidate_id` (matching the reducer's own `_settled_
-    assurance_for_candidate`/`projection.candidates` keying) and must be
+    """Issue #295 (VerifyBoundaries309's rejections): STATE-DELIVERY item
+    8's inheritance map must key by the EXACT `(candidate_id, fingerprint)`
+    pair the reducer itself requires before it inherits (`_settled_
+    assurance_for_candidate`'s `incoming_fp == prior_fp` gate,
+    `INV-006`/`INV-007`/`INV-008`) -- never `candidate_id` alone, which
+    would falsely treat a same-id-different-fingerprint re-observation
+    (item 9's `fingerprint-mismatch` conflict) as an inheritance. Also
     causally scoped -- a later attempt's fresh settlement must never
     explain an earlier attempt's fold."""
 
@@ -145,17 +149,31 @@ class SettledFingerprintsByWorkUnitTest(unittest.TestCase):
             )
         return records
 
-    def test_keys_by_candidate_id_not_fingerprint(self) -> None:
+    def test_keys_by_candidate_id_and_fingerprint_not_id_alone(self) -> None:
         # Two DIFFERENT candidate ids that happen to share a fingerprint
         # (a hand-scripted config's coincidence) must each keep their own
         # settlement -- neither may overwrite the other's map entry.
         records = self._attempt(1, candidate_id="cand-A", fingerprint="fp-shared", verdict="rejected")
         records += self._attempt(2, candidate_id="cand-B", fingerprint="fp-shared", verdict="accepted")
         settled = _settled_fingerprints_by_work(records, "w1")
-        self.assertEqual(settled["cand-A"][0], 1)
-        self.assertEqual(settled["cand-A"][1]["data"]["verdict"], "rejected")
-        self.assertEqual(settled["cand-B"][0], 2)
-        self.assertEqual(settled["cand-B"][1]["data"]["verdict"], "accepted")
+        self.assertEqual(settled[("cand-A", "fp-shared")][0], 1)
+        self.assertEqual(settled[("cand-A", "fp-shared")][1]["data"]["verdict"], "rejected")
+        self.assertEqual(settled[("cand-B", "fp-shared")][0], 2)
+        self.assertEqual(settled[("cand-B", "fp-shared")][1]["data"]["verdict"], "accepted")
+
+    def test_same_id_different_fingerprint_never_inherits(self) -> None:
+        # VerifyBoundaries309's exact rejection shape: attempt 1 settles
+        # cand-A/fp-1 rejected; attempt 2 re-observes the SAME candidate_id
+        # but a DIFFERENT fingerprint (fp-2) -- an unresolved
+        # candidate-observation conflict (item 9, `fingerprint-mismatch`),
+        # never an inheritance. Looking up attempt 2's OWN observed
+        # identity `("cand-A", "fp-2")` MUST miss; only the identity that
+        # was actually settled, `("cand-A", "fp-1")`, may be found.
+        records = self._attempt(1, candidate_id="cand-A", fingerprint="fp-1", verdict="rejected")
+        settled = _settled_fingerprints_by_work(records, "w1")
+        self.assertNotIn(("cand-A", "fp-2"), settled)
+        self.assertIn(("cand-A", "fp-1"), settled)
+        self.assertEqual(settled[("cand-A", "fp-1")][1]["data"]["verdict"], "rejected")
 
     def test_before_attempt_excludes_causally_later_settlements(self) -> None:
         # The exact issue #295 verify shape: attempt 1 (cand-A, rejected),
@@ -168,12 +186,12 @@ class SettledFingerprintsByWorkUnitTest(unittest.TestCase):
         records += self._attempt(3, candidate_id="cand-C", fingerprint="fp-3", verdict="accepted")
 
         as_of_attempt_2 = _settled_fingerprints_by_work(records, "w1", before_attempt=2)
-        self.assertEqual(set(as_of_attempt_2), {"cand-A"})
-        self.assertEqual(as_of_attempt_2["cand-A"][0], 1)
-        self.assertEqual(as_of_attempt_2["cand-A"][1]["data"]["verdict"], "rejected")
+        self.assertEqual(set(as_of_attempt_2), {("cand-A", "fp-1")})
+        self.assertEqual(as_of_attempt_2[("cand-A", "fp-1")][0], 1)
+        self.assertEqual(as_of_attempt_2[("cand-A", "fp-1")][1]["data"]["verdict"], "rejected")
 
         full_history = _settled_fingerprints_by_work(records, "w1")
-        self.assertEqual(set(full_history), {"cand-A", "cand-C"})
+        self.assertEqual(set(full_history), {("cand-A", "fp-1"), ("cand-C", "fp-3")})
 
     def test_inconclusive_verdict_is_never_inherited(self) -> None:
         # STATE-DELIVERY item 11's amendment: an `inconclusive` settlement

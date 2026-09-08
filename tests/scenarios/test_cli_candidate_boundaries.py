@@ -29,12 +29,16 @@ against a real temporary git repository, since `GitDiffCandidate`'s
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from orc_werk.cli.main import _warn_verdict_inheritance
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
@@ -272,6 +276,58 @@ class ScriptedDifferingIdSameFingerprintNoFalseWarningTest(unittest.TestCase):
             self.assertEqual(d2.returncode, 3, msg=d2.stdout + d2.stderr)
             self.assertIn("awaiting=assurance-verdict", d2.stdout)
             self.assertNotIn("inherited", d2.stderr)
+
+
+class WarnVerdictInheritanceUnitTest(unittest.TestCase):
+    """Issue #295 (VerifyBoundaries309's attempt-2 rejection): a direct,
+    adapter-independent unit test of `_warn_verdict_inheritance` itself --
+    the real git/scripted `CandidatePort` adapters both derive `candidate_
+    id` from a prefix of the fingerprint they compute (`cand-git-<fp[3:15]>`
+    / `cand-<execution_id>-<fp[3:15]>`), so a genuine same-`candidate_id`-
+    different-fingerprint re-observation cannot be constructed through a
+    real `orc dispatch` -- exactly the shape `PORT-CANDIDATE` nonetheless
+    permits for a different adapter (e.g. a stable PR-number id with a
+    content-derived fingerprint). Hand-crafts the journal records the
+    reducer would produce so the helper's own identity gate is exercised
+    directly, independent of any specific adapter's id-derivation scheme."""
+
+    @staticmethod
+    def _settled(work_id: str, *, candidate_id: str, fingerprint: str, verdict: str) -> list[dict]:
+        return [
+            {
+                "kind": "effect", "id": "FX-START-EXECUTION",
+                "data": {"work_id": work_id, "attempt_number": 1},
+            },
+            {
+                "kind": "fact", "id": "FACT-CANDIDATE-OBSERVED",
+                "data": {"work_id": work_id, "candidate_id": candidate_id, "fingerprint": fingerprint},
+            },
+            {"kind": "fact", "id": "FACT-ASSURE-SETTLED", "data": {"work_id": work_id, "verdict": verdict}},
+        ]
+
+    @staticmethod
+    def _observed(work_id: str, *, candidate_id: str, fingerprint: str) -> dict:
+        return {
+            "kind": "fact", "id": "FACT-CANDIDATE-OBSERVED",
+            "data": {"work_id": work_id, "candidate_id": candidate_id, "fingerprint": fingerprint},
+        }
+
+    def test_same_id_different_fingerprint_never_warns_inherited(self) -> None:
+        history_before_advance = self._settled("w1", candidate_id="cand-A", fingerprint="fp-1", verdict="rejected")
+        new_records = [self._observed("w1", candidate_id="cand-A", fingerprint="fp-2")]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            _warn_verdict_inheritance(new_records, history_before_advance)
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_same_id_same_fingerprint_warns_inherited(self) -> None:
+        history_before_advance = self._settled("w1", candidate_id="cand-A", fingerprint="fp-1", verdict="rejected")
+        new_records = [self._observed("w1", candidate_id="cand-A", fingerprint="fp-1")]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            _warn_verdict_inheritance(new_records, history_before_advance)
+        self.assertIn("inherited attempt", stderr.getvalue())
+        self.assertIn("STATE-DELIVERY item 8, verdict inheritance", stderr.getvalue())
 
 
 if __name__ == "__main__":
