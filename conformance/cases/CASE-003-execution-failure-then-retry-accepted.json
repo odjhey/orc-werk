@@ -25,6 +25,14 @@
     "history": [
       {
         "data": {
+          "dispatch_result": {
+            "works": [
+              {
+                "delivery_run_id": "run-1",
+                "id": "A"
+              }
+            ]
+          },
           "idempotency_key": "run-1|FX-CREATE-WORK",
           "max_attempts": 3,
           "plan": {

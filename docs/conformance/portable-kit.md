@@ -87,9 +87,30 @@ shape a real `.orc/*/journal.jsonl` line has (`PORT-JOURNAL-ENVELOPE`):
 
 `kind` is one of `"fact"`, `"decision"`, `"effect"`; `seq` is the replay
 order. A case's `history` always opens with an `FX-CREATE-WORK` effect
-envelope (carrying `data.plan` and, where the case is testing a specific
-or legacy budget, `data.max_attempts`/`data.max_assurance_attempts`)
-followed by `fact` envelopes in dispatch order. This is the *same*
+envelope, and that envelope's `data` is the *complete*, canonical
+`PORT-JOURNAL-003` settled-effect-record shape a real journal persists --
+not a reduced or driver-convenience subset:
+
+```json
+{"plan": {"works": [{"work_id": "A", "deps": []}]}, "max_attempts": 3, "max_assurance_attempts": 2, "dispatch_result": {"works": [{"id": "A", "delivery_run_id": "run-1"}]}}
+```
+
+`data.plan` names every planned Work (`PORT-WORK-001`); `data.dispatch_result`
+is the reserved key `PORT-JOURNAL-003` (`docs/contracts/ports/journal-port.md`)
+requires on every persisted effect record, carrying the dispatch outcome as
+portable data -- here, the `{"works": [...]}` shape `WorkGraphPort.create`
+actually returns on success (each entry is a `Work.to_dict()`:
+`{"id": ..., "delivery_run_id": ...}`), one entry per Work named in `plan`,
+in the same order. `data.max_attempts`/`data.max_assurance_attempts` are
+present where the case is testing a specific or legacy budget (a case
+testing the legacy fallback for one of these two fields omits it
+entirely, exactly as a pre-existing-field journal would). Every `fact`
+envelope's `data.work_id` names a Work that appears in this same
+`FX-CREATE-WORK` record's `data.plan.works` list -- a `history` naming a
+Work fact for a Work absent from the plan is not a legal
+`PORT-JOURNAL-ENVELOPE` history and is never a case in this kit.
+
+`fact` envelopes follow, in dispatch order. This is the *same*
 replay a real `JournalPort.load_projection` performs
 (`CONF-JOURNAL-003`): both run-scoped budgets are derived from the
 history's own `FX-CREATE-WORK` record, per `SCN-008`'s single-authority
@@ -160,13 +181,66 @@ A comparison against `expected.error` pins the canonical `error` id
 is documented informative-only and MAY vary by implementation/locale.
 
 This is the entire wire contract. It pins no Python dataclass layout, no
-incidental UUID, no private function name, and no field beyond the ones
-named above. `projection` and `decisions` entries mirror the canonical
-`WorkProjection`/`Decision`/`Effect.to_dict()` shapes documented in
-`docs/contracts/`, `docs/domain/state-delivery.md`,
-`docs/domain/facts.md`/`decisions.md`/`effects.md` -- a driver derives
-its own output shape from those normative documents, not from reading
-`src/orc_werk/core/*.py`.
+incidental UUID, and no private function name -- but it pins every field
+named below exactly, because no other document defines the JSON
+*serialization* of these shapes; `docs/domain/state-machines/delivery.md`
+and `docs/protocol/facts.md`/`decisions.md`/`effects.md` define the state
+vocabulary and each Fact's *required data fields* (what a producer must
+supply), not the JSON field-by-field output shape a consumer reads back.
+This document is that shape's normative source, stated here in full so a
+non-Python implementation never has to read `src/orc_werk/core/*.py` to
+derive it:
+
+**A `projection[work_id]` entry** (one per Work, canonical
+`WorkProjection`):
+
+| field | type | meaning |
+|---|---|---|
+| `work_id` | string | this Work's id |
+| `delivery_run_id` | string | echoes the request |
+| `state` | string | one of `READY`, `EXECUTING`, `ASSURING`, `ACCEPTED`, `BLOCKED`, `CANCELLED` (`docs/domain/state-machines/delivery.md`) |
+| `ready_confirmed` | bool | `true` once `FACT-WORK-READY` has been folded for this Work |
+| `attempt_number` | int | count of `FACT-EXEC-STARTED` folded for this Work's lineage (`INV-018`) |
+| `executions` | array of object | one entry per started Execution, in fold order; each is `{"execution_id": string, "outcome": "completed"\|"failed"\|null}` (`null` while unsettled) |
+| `current_execution_id` | string or null | the in-flight/most-recent Execution id, or `null` when none is open |
+| `candidates` | object | `{candidate_id: {"fingerprint": string, "execution_id": string}}`, one entry per distinct candidate ever observed |
+| `current_candidate_id` | string or null | the candidate currently bound (pending or settled assurance), or `null` |
+| `assurances` | array of object | one entry per started Assurance, in fold order; each is `{"assurance_id": string, "candidate_id": string, "execution_id": string, "verdict": "accepted"\|"rejected"\|"inconclusive"\|"abandoned"\|null}` (`null` while unsettled) |
+| `current_assurance_id` | string or null | the in-flight Assurance id, or `null` |
+| `assurance_started_for_current` | bool | `true` while an Assurance for the current candidate is in flight (started, not yet settled) |
+| `assurance_number` | int | `INV-021`'s per-execution-attempt assurance index of the most recently started Assurance for the current Execution (`0` when none has started yet) |
+| `claim_ref` | string or null | the recorded `FACT-WORK-CLAIMED` reference, or `null` |
+| `blocked_reason` | string or null | one of `retry-budget-exhausted`, `assurance-inconclusive`, `attempt-abandoned`, or `null` when not `BLOCKED` |
+| `blocked_confirmed` | bool | `true` once a confirming `FACT-WORK-BLOCKED` has been folded |
+| `completed_confirmed` | bool | `true` once a confirming `FACT-WORK-COMPLETED` has been folded |
+| `cancelled_reason` | string or null | the recorded cancellation reason, or `null` |
+| `cancelled_confirmed` | bool | `true` once `FACT-WORK-CANCELLED` has been folded |
+| `candidate_conflict` | object or null | `{"candidate_id": string, "reason": string}` while an unresolved re-observation conflict rests unresolved (`STATE-DELIVERY` mechanical fact sequencing item 9), else `null` |
+
+**A `decisions[work_id]` entry** is `null` when nothing is currently
+pending for that Work, else `{"decision": {...}, "effects": [...]}`.
+
+**`decision`** (canonical `Decision`): `{"id": string, "delivery_run_id": string, "work_id": string, "attribution": object, "basis": array of object, "data": object, "extensions": object}`.
+`id` is one of `DEC-DISPATCH`, `DEC-RETRY`, `DEC-REQUEST-ASSURANCE`,
+`DEC-ACCEPT`, `DEC-BLOCK` (the five IDs `orc_werk.core.policy.decide` can
+produce; `docs/protocol/decisions.md` names the full ID vocabulary,
+including the two operator-only IDs this driver boundary never emits).
+`data` carries decision-specific fields named by that ID -- e.g.
+`DEC-BLOCK.data.reason` (the same three-value vocabulary as
+`blocked_reason` above), `DEC-REQUEST-ASSURANCE.data.candidate_id`/
+`assurance_number`/`max_assurance_attempts`.
+
+**Each `effects[]` entry** (canonical `Effect`): `{"id": string, "delivery_run_id": string, "work_id": string, "idempotency_key": string, "data": object, "extensions": object}`.
+`id` is one of `FX-START-EXECUTION`, `FX-START-ASSURANCE`,
+`FX-COMPLETE-WORK`, `FX-BLOCK-WORK` (the four a `decide()` outcome can
+carry; `docs/protocol/effects.md` names the full ID vocabulary and each
+ID's target port). `idempotency_key` is the stable, deterministically
+derived key (`INV-020`) a port/adapter uses to detect a duplicate
+dispatch; its exact composition (delivery_run_id/work_id/attempt_number/
+effect_id, plus a trailing candidate_fingerprint/assurance_number pair
+for `FX-START-ASSURANCE`) is documented informative detail, never itself
+asserted byte-for-byte by a case unless that case is specifically about
+key derivation.
 
 Any implementation satisfying steps 1-4 is a drop-in substitute for the
 reference driver via `checker.py --driver-cmd "<command>"`; the checker
@@ -268,13 +342,47 @@ and fails the run -- this is how the kit demonstrates its own comparison
 actually discriminates right from wrong output, rather than trivially
 accepting anything.
 
+## CI drift protection
+
+`tests/conformance/test_portable_kit_corpus.py` runs inside the same
+`env -u ORC_JOURNAL_DIR bash scripts/check.sh` gate every other
+conformance suite runs under -- the corpus is not a standalone,
+unexercised artifact. It asserts, against the real reference core:
+
+- every case in `conformance/manifest.json` passes
+  `conformance/checker.py` (a regression in either the corpus or
+  `orc_werk.core` turns this test, and therefore the gate, red);
+- every `--probe` falsification probe correctly detects its corrupted
+  claim (a false-accept regression in `subset_equal` turns this test
+  red);
+- a **deliberately wrong** `expected` value (an in-test mutation, never
+  a corpus file on disk) is rejected by `subset_equal` against the real
+  driver's real output -- this is the drift-protection proof itself:
+  it demonstrates that a wrong acceptance claim reaching this corpus
+  would fail the gate, not merely that today's corpus happens to agree
+  with today's code.
+
 ## Extending the kit
 
 A new case is a new `conformance/cases/CASE-NNN-*.json` file plus a new
 entry in `conformance/manifest.json`; both are additive, so adding a
-case never invalidates an existing consumer. A case's `expected` block
-MUST be authored by asserting it against the real reference core's
-actual output (never hand-guessed), so that a case can never enshrine a
-core bug as the "expected" behavior; where a real bug is found through
-this process it is fixed in `src/orc_werk/core`, never worked around by
-loosening a fixture.
+case never invalidates an existing consumer.
+
+**`docs/contracts/`, `docs/scenarios/`, and `docs/domain/` are the
+authority for what `expected` must say -- never the reference
+implementation's current output.** A case's `expected` block is authored
+first from the specific `SCN-*`/`INV-*`/`CONF-*` requirement named in its
+`maps_to`/`description` (what the contract says must happen), and only
+then checked by running the real reference core (`conformance/checker.py`)
+to catch transcription mistakes -- a typo'd state name, a wrong field
+path, an off-by-one index. If the reference core's actual output
+disagrees with what the cited contract requires, that is a candidate
+core bug: it is investigated and, if confirmed, fixed in
+`src/orc_werk/core` and the contract docs are left standing (issue
+#313's fail-closed rule) -- a case's `expected` is never quietly
+loosened, and the reference run is never treated as itself defining
+correctness. `tests/conformance/test_portable_kit_corpus.py`'s gate
+membership is what keeps this true over time: a later change to
+`src/orc_werk/core` that silently drifts a case's real output away from
+its contract-derived `expected` fails the gate rather than passing
+unnoticed.
