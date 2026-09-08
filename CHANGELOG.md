@@ -14,6 +14,8 @@ the running version; finding reports should include it.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-09-08
+
 No breaking changes. No migration: every journal written before this release
 folds under an assurance budget of `1`, which reproduces its previous
 behavior exactly, and assurance 1's `FX-START-ASSURANCE` idempotency key is
@@ -65,6 +67,32 @@ unchanged.
   identity, full attempt cost, and the no-supersession/no-budget-waiver
   rule are unchanged; an exhausted run still requires a new run. Docs-only —
   no new Decision, port Effect, or CLI flag.
+- **`orc census [--as-of ISO8601Z] [--journal DIR] [--json]`** (issue #285,
+  #307): a read-only, whole-ledger aggregate over every settled assurance
+  Fact (`accepted`/`rejected`/`inconclusive`), discovered through the same
+  canonical new-and-legacy per-run enumeration every other whole-ledger
+  listing uses, dated by the existing observed-at times sidecar (inclusive
+  UTC cutoff, defaulting to the ledger's own latest recorded settlement),
+  and grouped by the exact self-reported `executor-identity/v1` model
+  string × verdict × UTC day. Undated settlements and unreadable runs are
+  disclosed, never silently dropped. `--json` emits the new
+  `orc-census/v1` machine document.
+- **`orc onboard --omp`** (`TASK-M5-007`, #291): a fifth idempotent
+  onboarding step that scaffolds the `.omp/` OMP seat pattern —
+  `.omp/agents/{scout,ship,verify}.md`, `.omp/config.yml`,
+  `.omp/RULES.md` — sourced from the installed package, never a second
+  hand-maintained copy, with the same never-clobber/`--force` discipline
+  as the existing skill and agents-block steps. Implied automatically
+  when the target already has a `.omp/` directory. Each scaffolded
+  agent template's `model:` line carries an inline comment instructing
+  the operator to substitute a model available in their own account;
+  `verify.md`'s comment additionally names `ADR-0007`'s V7 ruling that
+  the verify seat must run a different model family than ship.
+- **orc-ledger skill v6** (#275): §3 ("Know your seat") now points
+  each role at its OMP-native realization —
+  `.omp/agents/{scout,ship,verify}.md` — including the V7 rule that
+  verify's model list is every non-Anthropic family since ship runs on
+  `anthropic/*`. Recording semantics are unchanged.
 
 ### Changed
 - `FX-START-ASSURANCE`'s `INV-020` key gains an `assurance_number` component
@@ -90,6 +118,38 @@ unchanged.
   cancellation state machine, and no port Effect is dispatched by the
   abandon invocation itself (still journal-only, `INV-003`/`INV-009`
   intact).
+- **`--state active` no longer includes terminal `BLOCKED` runs forever**
+  (issue #254, #274): `BLOCKED` is a terminal state per
+  `STATE-DELIVERY`, exactly like `ACCEPTED` and `CANCELLED`; the
+  active-run rollup previously excluded only `ACCEPTED`, so a
+  retry-budget-exhausted run stayed visible under `--state active`
+  forever with no way to retire it.
+- **Config-recorded verdicts now bind to the candidate observed by their
+  own attempt** (issue #269, #270): a scripted-candidate config
+  previously indexed observed candidates positionally, so a run whose
+  attempt 1 settled without a candidate could never bind attempt 2's
+  verdict to the right candidate. Verdict lookup is now keyed by the
+  attempt number journaled on the matching execution.
+- **Re-observing a candidate now reattributes it to the current
+  execution** (issue #266, #276): a candidate re-observed across
+  executions previously kept pointing at the first execution that
+  identified it; it now points at the current one (the candidate's own
+  identity — its fingerprint — is unchanged). `orc-status/v1`'s JSON
+  document gains an additive `assurance_number` field mirroring the
+  text status line's `assurance=N` fragment; the schema string is
+  unchanged (additive-compatible per repo rule 10).
+
+### Docs
+- **The OMP `tool_call` seat-enforcement hook is retired, not merely
+  descoped** (`ADR-0007`, #290, #296, #297, #298, #299, #300): three
+  independent verify seats found three escape classes (command-text
+  predicates, path canonicalization, and scheme adjudication) across
+  three attempt cycles; the mechanism never shipped past an unmerged
+  branch. Boundary enforcement documented across `ADR-0007`, the OMP
+  adapter docs, and the scaffolded `.omp/agents/verify.md` template is
+  tool restriction, GitHub branch protection on `master`, and
+  after-the-fact ledger audit — never a live hook. `orc onboard --omp`
+  ships the corrected, hook-free template and docs.
 
 ## [0.9.0] — 2026-09-04
 
