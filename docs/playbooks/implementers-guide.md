@@ -148,9 +148,10 @@ shape:
   namespaced, versioned key satisfying `CONTRACT-EXTENSIONS` is legal
   (`EXT-001` requires only that the identifier itself be stable and
   versioned, not that it appear in this repository's own extension
-  registry) — see §4 below for the shape and the two extensions already
-  registered in this repository that you can reuse as templates:
-  `EXT-EXECUTOR-IDENTITY-V1`, `EXT-REVIEW-FINDINGS-V1`.
+  registry) — see §4 below for the shape and the extensions already
+  registered in this repository, reusable as templates:
+  `EXT-EXECUTOR-IDENTITY-V1`, `EXT-REVIEW-FINDINGS-V1` (not an exhaustive
+  set).
 
 Portability constraint, carried from `ADR-0003`: canonical persisted/
 interchange records must not depend on pickle, language-native class
@@ -172,13 +173,19 @@ a checklist because they are the ones an implementer forgets:
   decide what state to transition to, that information belongs in a
   canonical Fact/Decision field instead, not an extension.
 - A component that promises lossless round-trip (your own `history`
-  implementation, for instance) must preserve an *unknown* extension key
-  byte-for-byte, even though it does not understand it — `EXT-005`. This is
-  how two independently-tailored implementations can share one journal file
-  and safely ignore each other's private payloads.
+  implementation, for instance) preserves an *unknown* extension's
+  identifier and payload canonically/byte-semantically unchanged
+  according to its own published serialization contract, even though it
+  does not understand the extension — `EXT-005`/`CONF-EXT-003`. This is
+  not a literal-byte guarantee across arbitrary re-serialization: it is
+  "round-trips to the same canonical value," which is how independently-
+  tailored implementations can share one journal file and safely ignore
+  each other's private payloads.
 
-Two extensions are already registered and worth reading as a template for
-your own: `EXT-EXECUTOR-IDENTITY-V1` (seat/model/session provenance riding
+Two extensions are already registered in this repository and worth
+reading as examples for your own — not an exhaustive set; register
+others following the same `EXT-001` shape as needed:
+`EXT-EXECUTOR-IDENTITY-V1` (seat/model/session provenance riding
 an execution or assurance entry's `extensions` slot) and
 `EXT-REVIEW-FINDINGS-V1` (structured verifier findings). Full schema/
 semantics/examples live under `docs/extensions/<name>/`.
@@ -302,10 +309,16 @@ resting, for as long as it takes, with no Fact journaled for the wait
 important thing to get right if you are building any kind of polling or
 CLI loop on top of your implementation: **absence of an observation is not
 itself an observation.** Do not invent a timeout-triggered synthetic
-`failed`/`rejected` Fact — if you want a deadline, implement it as an
-operator-driven `DEC-ABANDON-ATTEMPT` (item 9) or `DEC-CANCEL` (item 10),
-both of which are explicit, attributed, and journaled as exactly what they
-are, never as a fabricated settlement.
+`failed`/`rejected` Fact, and do not treat deadline expiry itself as
+grounds for `DEC-ABANDON-ATTEMPT`. That Decision is legal only for an
+`ASSURING`-with-no-settlement rest, under two narrow operator-ruling bases
+(`STATE-DELIVERY` item 9): the provider will never respond, or
+out-of-band evidence shows the bound Candidate no longer matches the real
+subject — never for an ordinary unsettled `EXECUTING` Work, and never as
+an automatic, timeout-triggered transition. The legal general terminal
+closure available from any non-terminal state is an explicit, attributed
+`DEC-CANCEL` (item 10): a journaled Decision only, never a claim that
+journaling it also kills whatever process is still running.
 
 Terminal states reachable in v0 are `ACCEPTED`, `BLOCKED`, `CANCELLED`
 (`STATE-DELIVERY`'s canonical v0 states section). `FAILED` and
@@ -376,6 +389,21 @@ hand against the rules in §3 through §8 — not excerpts, not pseudocode.
 Field values (ids, hashes) are illustrative; your implementation generates
 its own.
 
+**A note on `FX-CREATE-WORK`'s `dispatch_result` shape.** `PORT-WORK-001`
+(`work-graph-port.md`) defines `create`'s *input* (a `Plan` of `works`/
+`deps`) but does not publish a canonical schema for its *output* — the
+`dispatch_result` an adapter chooses to record is adapter-specific, not a
+generic core contract. The examples below use the illustrative shape
+`{"works":[{"id":"<planned work id>","delivery_run_id":"<run id>"}]}` —
+this is this example adapter's own receipt convention, not something
+`PORT-WORK-001` requires or that any other conforming adapter must match.
+Validate it only against its own declared shape, never against a
+fabricated "generic create-result contract"; the canonical fields that
+matter for replay are `FACT-WORK-CREATED`'s `work_id`/`delivery_run_id`
+and `FX-CREATE-WORK`'s own `data.plan`/`data.max_attempts`/
+`data.max_assurance_attempts`, all of which `PROTOCOL-FACTS`/
+`PORT-JOURNAL` do define canonically.
+
 ### 12.1 Single attempt, straight to acceptance
 
 One Work, one execution, one assurance, accepted on the first try — the
@@ -383,7 +411,7 @@ shortest legal complete run. Seventeen records, `seq` 1 through 17:
 
 ```jsonl
 {"schema_version":1,"seq":1,"delivery_run_id":"run-1","kind":"fact","id":"FACT-INTENT-SUBMITTED","data":{"intent_id":"run-1","text":"ship the widget"},"extensions":{}}
-{"schema_version":1,"seq":2,"delivery_run_id":"run-1","kind":"effect","id":"FX-CREATE-WORK","data":{"idempotency_key":"run-1|FX-CREATE-WORK","plan":{"works":[{"work_id":"work-1","deps":[]}]},"max_attempts":3,"max_assurance_attempts":2,"dispatch_result":{"works":[{"work_id":"work-1"}]}},"extensions":{}}
+{"schema_version":1,"seq":2,"delivery_run_id":"run-1","kind":"effect","id":"FX-CREATE-WORK","data":{"idempotency_key":"run-1|FX-CREATE-WORK","plan":{"works":[{"work_id":"work-1","deps":[]}]},"max_attempts":3,"max_assurance_attempts":2,"dispatch_result":{"works":[{"id":"work-1","delivery_run_id":"run-1"}]}},"extensions":{}}
 {"schema_version":1,"seq":3,"delivery_run_id":"run-1","kind":"fact","id":"FACT-WORK-CREATED","data":{"work_id":"work-1","delivery_run_id":"run-1"},"extensions":{}}
 {"schema_version":1,"seq":4,"delivery_run_id":"run-1","kind":"fact","id":"FACT-WORK-READY","data":{"work_id":"work-1"},"extensions":{}}
 {"schema_version":1,"seq":5,"delivery_run_id":"run-1","kind":"decision","id":"DEC-DISPATCH","data":{"work_id":"work-1","attempt_number":1,"attribution":{"policy":"v0-deterministic"},"basis":[{"id":"FACT-WORK-READY","kind":"fact","data":{"work_id":"work-1"}}]},"extensions":{}}
@@ -435,7 +463,7 @@ keeps its prior identity instead. `DEC-RETRY` cites the rejecting
 
 ```jsonl
 {"schema_version":1,"seq":1,"delivery_run_id":"run-2","kind":"fact","id":"FACT-INTENT-SUBMITTED","data":{"intent_id":"run-2","text":"ship the widget, v2"},"extensions":{}}
-{"schema_version":1,"seq":2,"delivery_run_id":"run-2","kind":"effect","id":"FX-CREATE-WORK","data":{"idempotency_key":"run-2|FX-CREATE-WORK","plan":{"works":[{"work_id":"work-1","deps":[]}]},"max_attempts":3,"max_assurance_attempts":2,"dispatch_result":{"works":[{"work_id":"work-1"}]}},"extensions":{}}
+{"schema_version":1,"seq":2,"delivery_run_id":"run-2","kind":"effect","id":"FX-CREATE-WORK","data":{"idempotency_key":"run-2|FX-CREATE-WORK","plan":{"works":[{"work_id":"work-1","deps":[]}]},"max_attempts":3,"max_assurance_attempts":2,"dispatch_result":{"works":[{"id":"work-1","delivery_run_id":"run-2"}]}},"extensions":{}}
 {"schema_version":1,"seq":3,"delivery_run_id":"run-2","kind":"fact","id":"FACT-WORK-CREATED","data":{"work_id":"work-1","delivery_run_id":"run-2"},"extensions":{}}
 {"schema_version":1,"seq":4,"delivery_run_id":"run-2","kind":"fact","id":"FACT-WORK-READY","data":{"work_id":"work-1"},"extensions":{}}
 {"schema_version":1,"seq":5,"delivery_run_id":"run-2","kind":"decision","id":"DEC-DISPATCH","data":{"work_id":"work-1","attempt_number":1,"attribution":{"policy":"v0-deterministic"},"basis":[{"id":"FACT-WORK-READY","kind":"fact","data":{"work_id":"work-1"}}]},"extensions":{}}
