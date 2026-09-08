@@ -1,0 +1,171 @@
+{
+  "case_id": "CASE-003-execution-failure-then-retry-accepted",
+  "description": "Execution 1 fails outright (no candidate observed); Execution 2 completes and its candidate is accepted.",
+  "expected": {
+    "outcome": "ok",
+    "projection": {
+      "A": {
+        "attempt_number": 2,
+        "executions": [
+          {
+            "execution_id": "e1",
+            "outcome": "failed"
+          },
+          {
+            "execution_id": "e2",
+            "outcome": "completed"
+          }
+        ],
+        "state": "ACCEPTED"
+      }
+    }
+  },
+  "input": {
+    "delivery_run_id": "run-1",
+    "history": [
+      {
+        "data": {
+          "idempotency_key": "run-1|FX-CREATE-WORK",
+          "max_attempts": 3,
+          "plan": {
+            "works": [
+              {
+                "deps": [],
+                "work_id": "A"
+              }
+            ]
+          },
+          "work_id": ""
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FX-CREATE-WORK",
+        "kind": "effect",
+        "schema_version": 1,
+        "seq": 1
+      },
+      {
+        "data": {
+          "delivery_run_id": "run-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-CREATED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 2
+      },
+      {
+        "data": {
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-READY",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 3
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 4
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "outcome": "failed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 5
+      },
+      {
+        "data": {
+          "execution_id": "e2",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 6
+      },
+      {
+        "data": {
+          "execution_id": "e2",
+          "outcome": "completed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 7
+      },
+      {
+        "data": {
+          "candidate_id": "c1",
+          "execution_id": "e2",
+          "fingerprint": "fp-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-CANDIDATE-OBSERVED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 8
+      },
+      {
+        "data": {
+          "assurance_id": "a1",
+          "candidate_id": "c1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 9
+      },
+      {
+        "data": {
+          "assurance_id": "a1",
+          "candidate_fingerprint": "fp-1",
+          "verdict": "accepted",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 10
+      }
+    ]
+  },
+  "maps_to": [
+    "SCN-003",
+    "INV-003",
+    "INV-004",
+    "INV-018"
+  ],
+  "schema_version": 1,
+  "title": "Execution failure is retried without overwriting attempt history"
+}

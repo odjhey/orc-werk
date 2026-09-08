@@ -1,0 +1,177 @@
+{
+  "case_id": "CASE-004-execution-budget-exhausted",
+  "description": "All three permitted executions fail; a fourth is never dispatched and policy emits DEC-BLOCK/FX-BLOCK-WORK with reason retry-budget-exhausted.",
+  "expected": {
+    "decisions": {
+      "A": {
+        "decision": {
+          "data": {
+            "reason": "retry-budget-exhausted"
+          },
+          "id": "DEC-BLOCK"
+        },
+        "effects": [
+          {
+            "data": {
+              "reason": "retry-budget-exhausted"
+            },
+            "id": "FX-BLOCK-WORK"
+          }
+        ]
+      }
+    },
+    "outcome": "ok",
+    "projection": {
+      "A": {
+        "attempt_number": 3,
+        "blocked_confirmed": false,
+        "executions": [
+          {
+            "execution_id": "e1",
+            "outcome": "failed"
+          },
+          {
+            "execution_id": "e2",
+            "outcome": "failed"
+          },
+          {
+            "execution_id": "e3",
+            "outcome": "failed"
+          }
+        ],
+        "state": "BLOCKED"
+      }
+    }
+  },
+  "input": {
+    "delivery_run_id": "run-1",
+    "history": [
+      {
+        "data": {
+          "idempotency_key": "run-1|FX-CREATE-WORK",
+          "max_attempts": 3,
+          "plan": {
+            "works": [
+              {
+                "deps": [],
+                "work_id": "A"
+              }
+            ]
+          },
+          "work_id": ""
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FX-CREATE-WORK",
+        "kind": "effect",
+        "schema_version": 1,
+        "seq": 1
+      },
+      {
+        "data": {
+          "delivery_run_id": "run-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-CREATED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 2
+      },
+      {
+        "data": {
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-READY",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 3
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 4
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "outcome": "failed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 5
+      },
+      {
+        "data": {
+          "execution_id": "e2",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 6
+      },
+      {
+        "data": {
+          "execution_id": "e2",
+          "outcome": "failed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 7
+      },
+      {
+        "data": {
+          "execution_id": "e3",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 8
+      },
+      {
+        "data": {
+          "execution_id": "e3",
+          "outcome": "failed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 9
+      }
+    ]
+  },
+  "maps_to": [
+    "SCN-004",
+    "INV-018",
+    "INV-019"
+  ],
+  "schema_version": 1,
+  "title": "Retry budget prevents a fourth execution; policy resolves to DEC-BLOCK"
+}

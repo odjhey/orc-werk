@@ -1,0 +1,184 @@
+{
+  "case_id": "CASE-021-inconclusive-rerequest-then-accepted",
+  "description": "Assurance 2 of C1 accepts after assurance 1 was inconclusive. attempt_number remains 1 throughout: no execution retry was ever consumed by the re-request.",
+  "expected": {
+    "decisions": {
+      "A": {
+        "decision": {
+          "id": "DEC-ACCEPT"
+        }
+      }
+    },
+    "outcome": "ok",
+    "projection": {
+      "A": {
+        "assurances": [
+          {
+            "assurance_id": "a1",
+            "verdict": "inconclusive"
+          },
+          {
+            "assurance_id": "a2",
+            "verdict": "accepted"
+          }
+        ],
+        "attempt_number": 1,
+        "state": "ACCEPTED"
+      }
+    }
+  },
+  "input": {
+    "delivery_run_id": "run-1",
+    "history": [
+      {
+        "data": {
+          "idempotency_key": "run-1|FX-CREATE-WORK",
+          "max_assurance_attempts": 2,
+          "max_attempts": 3,
+          "plan": {
+            "works": [
+              {
+                "deps": [],
+                "work_id": "A"
+              }
+            ]
+          },
+          "work_id": ""
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FX-CREATE-WORK",
+        "kind": "effect",
+        "schema_version": 1,
+        "seq": 1
+      },
+      {
+        "data": {
+          "delivery_run_id": "run-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-CREATED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 2
+      },
+      {
+        "data": {
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-READY",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 3
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 4
+      },
+      {
+        "data": {
+          "execution_id": "e1",
+          "outcome": "completed",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-EXEC-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 5
+      },
+      {
+        "data": {
+          "candidate_id": "c1",
+          "execution_id": "e1",
+          "fingerprint": "fp-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-CANDIDATE-OBSERVED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 6
+      },
+      {
+        "data": {
+          "assurance_id": "a1",
+          "candidate_id": "c1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 7
+      },
+      {
+        "data": {
+          "assurance_id": "a1",
+          "candidate_fingerprint": "fp-1",
+          "verdict": "inconclusive",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 8
+      },
+      {
+        "data": {
+          "assurance_id": "a2",
+          "candidate_id": "c1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-STARTED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 9
+      },
+      {
+        "data": {
+          "assurance_id": "a2",
+          "candidate_fingerprint": "fp-1",
+          "verdict": "accepted",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-ASSURE-SETTLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 10
+      }
+    ]
+  },
+  "maps_to": [
+    "SCN-021",
+    "INV-007",
+    "INV-009",
+    "INV-018",
+    "INV-020",
+    "INV-021",
+    "CONF-ASSURE-004"
+  ],
+  "schema_version": 1,
+  "title": "The re-requested second assurance of the same candidate accepts, completing the work"
+}

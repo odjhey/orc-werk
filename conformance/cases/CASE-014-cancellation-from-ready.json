@@ -1,0 +1,88 @@
+{
+  "case_id": "CASE-014-cancellation-from-ready",
+  "description": "Work A cancels directly from READY. No port Effect is emitted and no verdict is fabricated.",
+  "expected": {
+    "decisions": {
+      "A": null
+    },
+    "outcome": "ok",
+    "projection": {
+      "A": {
+        "cancelled_confirmed": true,
+        "cancelled_reason": "superseded by a later run",
+        "state": "CANCELLED"
+      }
+    }
+  },
+  "input": {
+    "delivery_run_id": "run-1",
+    "history": [
+      {
+        "data": {
+          "idempotency_key": "run-1|FX-CREATE-WORK",
+          "max_attempts": 3,
+          "plan": {
+            "works": [
+              {
+                "deps": [],
+                "work_id": "A"
+              }
+            ]
+          },
+          "work_id": ""
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FX-CREATE-WORK",
+        "kind": "effect",
+        "schema_version": 1,
+        "seq": 1
+      },
+      {
+        "data": {
+          "delivery_run_id": "run-1",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-CREATED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 2
+      },
+      {
+        "data": {
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-READY",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 3
+      },
+      {
+        "data": {
+          "reason": "superseded by a later run",
+          "work_id": "A"
+        },
+        "delivery_run_id": "run-1",
+        "extensions": {},
+        "id": "FACT-WORK-CANCELLED",
+        "kind": "fact",
+        "schema_version": 1,
+        "seq": 4
+      }
+    ]
+  },
+  "maps_to": [
+    "SCN-011",
+    "INV-003",
+    "INV-009",
+    "INV-011",
+    "INV-012",
+    "CONF-JOURNAL-004"
+  ],
+  "schema_version": 1,
+  "title": "Operator cancellation from READY closes the work as terminal CANCELLED, not a verdict"
+}

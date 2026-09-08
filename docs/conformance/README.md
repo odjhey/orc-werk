@@ -83,3 +83,10 @@ See [extension conformance](extensions.md) for `CONF-EXT-001` through `CONF-EXT-
   default cutoff only from `observed_at` values already recorded in the
   ledger (the latest dated settlement's own timestamp), never wall-clock
   time. See `SCN-022`.
+
+## Portable conformance kit
+See [the portable conformance kit](portable-kit.md) (`CONFORMANCE-PORTABLE-KIT`)
+for a versioned, language-neutral JSON fixture corpus under `conformance/`
+that lets an implementation without Python check its observable results
+against the reference core for a named, bounded subset of the scenarios
+above -- a conformance transport, not a substitute for this document.
