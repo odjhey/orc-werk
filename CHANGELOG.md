@@ -16,9 +16,14 @@ the running version; finding reports should include it.
 
 ## [0.10.0] — 2026-09-08
 
-No breaking changes. No migration: every journal written before this release
-folds under an assurance budget of `1`, which reproduces its previous
-behavior exactly, and assurance 1's `FX-START-ASSURANCE` idempotency key is
+No breaking changes. No migration: a legacy journal whose `FX-CREATE-WORK`
+record carries no recorded `max_assurance_attempts` value folds under an
+assurance budget of `1` on read (`ADR-0006`), reproducing that journal's
+previous behavior exactly. A journal that already recorded an explicit
+budget — including this repository's own pre-release production
+journals — keeps that recorded value as the single authority, unchanged;
+the fallback is a legacy-read default, never a rewrite of what was
+journaled. Assurance 1's `FX-START-ASSURANCE` idempotency key is
 unchanged.
 
 ### Added
@@ -59,6 +64,16 @@ unchanged.
   (`STATE-DELIVERY` item 8). Neither warning changes any journaled Fact,
   retry/assurance budget, or acceptance outcome — they only make an
   already-legal kernel resting point legible to the operator.
+- **Candidate-only blocking for verify seats** (issue #295,
+  `PLAYBOOK-AGENT-CLI` §4 item 4): a verify seat may no longer reject
+  acceptance over a defect confined to a PR's own mutable prose
+  (title/description) — the candidate is the diff at the derived sha,
+  never that prose. Such a defect must still be reported (prefixed
+  `NON-BLOCKING` in `findings`), and the watchtower now carries an
+  explicit merge-gate obligation to fix it before merging; editing PR
+  text never changes the fingerprint a verdict already judged, so it
+  never re-triggers verification. Docs-only — no new Decision, port
+  Effect, or CLI flag.
 - **Operator abandon for externally-invalidated candidates documented**
   (#289): `STATE-DELIVERY` item 9, `SCN-010`, and `PLAYBOOK-CLI-USAGE` now
   explicitly name a real-Git `HEAD` moving underneath a frozen
