@@ -36,6 +36,12 @@ BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED = "retry-budget-exhausted"
 # was exhausted by `inconclusive` verdicts (ADR-0006), never the execution
 # retry budget.
 BLOCKED_REASON_ASSURANCE_INCONCLUSIVE = "assurance-inconclusive"
+# STATE-DELIVERY item 9 (TASK-M3B-001): the operator's `DEC-ABANDON-
+# ATTEMPT` exhausted the retry budget on resolution (issue #288) --
+# `core/policy.py`'s `_block_reason` already returns this exact literal;
+# named here for the same CLI-presentation-only reason as its two
+# siblings above.
+BLOCKED_REASON_ATTEMPT_ABANDONED = "attempt-abandoned"
 
 DEFAULT_JOURNAL_DIR = ".orc"
 
@@ -385,6 +391,7 @@ def _diagnose_replay_conflict(exc: CoreError, *, run_id: str, self_is_status: bo
 
 __all__ = [
     "BLOCKED_REASON_ASSURANCE_INCONCLUSIVE",
+    "BLOCKED_REASON_ATTEMPT_ABANDONED",
     "BLOCKED_REASON_RETRY_BUDGET_EXHAUSTED",
     "DEFAULT_JOURNAL_DIR",
     "ORC_JOURNAL_DIR_ENV",

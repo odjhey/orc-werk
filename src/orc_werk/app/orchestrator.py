@@ -852,6 +852,28 @@ class Orchestrator:
                 reason=reason,
             )
         )
+        # Issue #288 (`STATE-DELIVERY` item 9's "immediately followed by
+        # the ordinary `DEC-BLOCK`... in the same operator step" branch):
+        # the reducer's own `FACT-ATTEMPT-ABANDONED` fold already moved
+        # this Work straight to `BLOCKED` when the retry budget was
+        # exhausted, but left it unconfirmed (no `FACT-WORK-BLOCKED` yet,
+        # so `blocked_reason` is still `None`). `decide()`'s existing
+        # `STATE_BLOCKED and not blocked_confirmed` branch is the single
+        # source of the `reason` vocabulary (`_block_reason`, which
+        # already special-cases this exact trigger fact into
+        # `attempt-abandoned`); applying it here folds the confirming
+        # `FACT-WORK-BLOCKED` before this method returns, so text/JSON
+        # readers never observe the unconfirmed gap. `FX-BLOCK-WORK` is
+        # journal-only (no port Effect), so this is safe even though
+        # `--abandon-work` forces the run's adapters to `scripted`
+        # (issue #165): a Work left at `READY` instead falls through
+        # untouched -- only `decide()`'s `STATE_READY`/`FX-START-EXECUTION`
+        # branch would be unsafe here, and it is never reached from
+        # `STATE_BLOCKED`.
+        wp = self.projection().works[work_id]
+        if wp.state == STATE_BLOCKED and not wp.blocked_confirmed:
+            history = self.journal.history(delivery_run_id=self.delivery_run_id)
+            self._apply_decision(wp, history)
         self._assert_replay_consistent()
 
     def cancel_work(self, *, work_id: str, reason: str, by: str) -> None:
