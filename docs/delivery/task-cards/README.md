@@ -69,3 +69,7 @@ M5 card in particular:
    (issue #281) and the `orc cancel`/record-before-yield structural
    boundary (issue #293), both resolved per operator ruling. Docs-only;
    no dependency on other cards in this list.
+3. `TASK-FIX-285` — `orc census`, a whole-ledger, as-of-dated tally of
+   settled assurance verdicts (issue #285), closing the hand-rolled-join
+   defect class `docs/reports/2026-09-07-m5-pilot-retrospective.md` §4
+   diagnosed. No dependency on other cards in this list.

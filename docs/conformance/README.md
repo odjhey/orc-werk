@@ -49,3 +49,37 @@ See [extension conformance](extensions.md) for `CONF-EXT-001` through `CONF-EXT-
 - `CONF-JOURNAL-002`: history is immutable/append-preserving.
 - `CONF-JOURNAL-003`: replay reconstructs the same canonical projection, folding under the run's own durably recorded retry budget (`FX-CREATE-WORK` effect record `data.max_attempts`, `PORT-JOURNAL-005`) and assurance budget (`data.max_assurance_attempts`, `INV-021`) rather than an adapter default — including when the run's terminal state is `BLOCKED` (retry-budget exhaustion) and when replaying a legacy journal that predates either recorded budget. The two legacy fallbacks differ and are not interchangeable: a missing `max_attempts` falls back to the reducer's schema default, while a missing `max_assurance_attempts` falls back to `1` (the pre-`ADR-0006` behavior), never to that field's schema default of `2`. See `SCN-008` and `SCN-021`.
 - `CONF-JOURNAL-004`: replay of operator cancellation deterministically reconstructs a clean, confirmed terminal `CANCELLED` projection; cancellation is rejected from every terminal state and never emits a port Effect or fabricates an assurance verdict. See `SCN-011`.
+
+### CLI
+- `CONF-CLI-CENSUS-001`: whole-ledger discovery — `orc census` enumerates
+  runs through the canonical new-and-legacy per-run layout discriminator
+  (`layout.discover_run_ids`), never a new-layout-only glob; a run present
+  under either layout is never silently omitted from the totals. See
+  `SCN-022` and issue #285.
+- `CONF-CLI-CENSUS-002`: only settlement events are counted — every
+  `FACT-ASSURE-SETTLED` counts exactly once by verdict
+  (`accepted`/`rejected`/`inconclusive`); an inherited verdict reuse
+  (`STATE-DELIVERY` item 8) journals no new Fact and MUST NOT be counted
+  as a fresh settlement. See `SCN-022`.
+- `CONF-CLI-CENSUS-003`: dated totals are as-of a stated inclusive UTC
+  cutoff and exclude every settled Fact whose times-sidecar entry does
+  not parse (missing sidecar, missing entry, or non-conforming value);
+  excluded Facts are disclosed through an always-present `undated` count
+  — never silently dropped and never assigned a fabricated time. See
+  `SCN-022` and `CONTRACT-DURABILITY`'s times-sidecar row.
+- `CONF-CLI-CENSUS-004`: model grouping preserves the exact self-reported
+  `executor-identity/v1` string; a settled Fact with no such extension
+  and one with the extension present but no `model` field MUST be
+  reported as distinguishable, never-collided groups, and neither MAY be
+  assigned a fabricated placeholder model string. See `SCN-022` and
+  `EXT-EXECUTOR-IDENTITY-V1-SEMANTICS`.
+- `CONF-CLI-CENSUS-005`: a run whose journal cannot be replayed
+  (`PORT-JOURNAL`'s durable-journal recovery clause) degrades per run —
+  it is named in an `unreadable_runs` list, the remaining runs' totals
+  stay complete, and the command still exits `0`. See `SCN-022`.
+- `CONF-CLI-CENSUS-006`: determinism — two invocations against an
+  unchanged journal directory at the same explicit `--as-of` produce
+  byte-identical totals and groups; an omitted `--as-of` derives its
+  default cutoff only from `observed_at` values already recorded in the
+  ledger (the latest dated settlement's own timestamp), never wall-clock
+  time. See `SCN-022`.

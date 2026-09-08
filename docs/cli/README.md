@@ -738,6 +738,69 @@ orc verdict my-run-id
 orc verdict my-run-id --journal ./.orc
 ```
 
+### `orc census`
+
+```text
+usage: orc census [-h] [--as-of ISO8601Z] [--journal JOURNAL] [--json]
+```
+
+Read-only, whole-ledger aggregate (`TASK-FIX-285`, issue #285): tallies
+every settled assurance Fact (`FACT-ASSURE-SETTLED`;
+`accepted`/`rejected`/`inconclusive` -- never an inherited verdict reuse,
+which journals no new Fact) across every run under the journal directory,
+discovered through the same new-and-legacy per-run-layout enumeration
+every other whole-ledger listing uses, dated by the existing observed-at
+times sidecar, and grouped by the exact self-reported
+`executor-identity/v1` model string x verdict x UTC day.
+
+`--as-of` names an inclusive UTC cutoff (`Z`-suffixed ISO-8601, optional
+fractional seconds -- a bare offset, a naive string, or a date-only value
+is `ERR-VALIDATION`). Omitted, it defaults to the latest recorded
+settlement timestamp already present in the ledger, never wall-clock
+`now()`, so a default run stays reproducible against an unchanged
+journal; an empty or all-undated ledger reports `as_of: null` rather than
+a fabricated cutoff. A settled Fact whose times-sidecar entry does not
+parse (missing sidecar, missing entry, or a non-conforming value) is
+excluded from the dated totals and disclosed through an always-present
+`undated` count -- never silently dropped. This is a dated, reproducible
+*current* read, not a promise of an immutable historical snapshot: the
+sidecar is documented best-effort (`CONTRACT-DURABILITY`), and a future
+re-stamp or clock change is not guaranteed against.
+
+Model grouping is verbatim, per `EXT-EXECUTOR-IDENTITY-V1-SEMANTICS`'s
+no-fabrication rule: `claude-sonnet-5` and `anthropic/claude-sonnet-5`
+are always two distinct groups, never merged. A settled Fact carrying no
+`executor-identity/v1` extension at all and one carrying the extension
+without a `model` field are also kept distinguishable rather than
+collapsed onto the same fabricated placeholder.
+
+A run whose journal cannot be replayed (`PORT-JOURNAL`'s durable-journal
+recovery clause) degrades per run into an `unreadable_runs` list; the
+remaining runs' totals stay complete and the command still exits `0`.
+
+```bash
+orc census
+orc census --as-of 2026-09-07T12:11:25Z
+orc census --journal ./.orc --json
+```
+
+```text
+3 settled assurance verdicts at or before 2026-09-07T12:11:25.000000Z (source: flag) in /abs/path/.orc
+accepted=1 rejected=1 inconclusive=1
+  claude-sonnet-5  day=2026-09-05  accepted=1 rejected=0 inconclusive=0
+  (no executor-identity/v1)  day=2026-09-06  accepted=0 rejected=1 inconclusive=1
+0 settled verdicts undated (no parseable times-sidecar entry) -- excluded from the as-of window
+```
+
+`--json` emits one `orc-census/v1` document (schema-tagged, additive
+within one version, `sort_keys=True` -- the same byte-discipline and
+versioning convention `orc_werk.cli.jsonview` documents for
+`orc-status/v1`/`orc-index/v1`); the shape is documented in
+`src/orc_werk/cli/census.py`'s module docstring, this command's own
+code-adjacent home for it. `orc census --json` is deterministic:
+byte-identical across repeated invocations of an unchanged journal at the
+same `--as-of`.
+
 ### `orc history`
 
 ```text
