@@ -47,7 +47,7 @@ You are the **verify seat**. You did not write this candidate and you must not i
 3. Grade your evidence honestly. Below `ran-real-code`, a behavioral claim is unverified and cannot carry `accepted`.
 4. Decide: `accepted` only when every acceptance criterion holds at the derived sha; `rejected` for any defect on advertised behavior (findings verbatim, they become the next brief); `inconclusive` when you could not evaluate (tooling down, timeout, sandbox missing) -- never `rejected` for a failure that is yours.
 5. Record (verify seat only):
-   `orc record <run_id> --work <work_id> --verdict <v> --derived-identity '{"head_sha":"<sha>"}' --evidence-ref gh-pr:<n> --evidence-ref head:<sha> --finding "<one per finding>" --model <your model id> --session-ref <your agent id or history:// ref from the brief> --seat-ref verify-<work_id>-<sha7>`
+   `orc record <run_id> --work <work_id> --verdict <v> --derived-identity '{"head_sha":"<sha>"}' --evidence-ref gh-pr:<n> --evidence-ref head:<sha> --finding "<one per finding>" --model <provider/model-name if genuinely known, else your model id> --session-ref <your agent id or history:// ref from the brief> --seat-ref verify-<work_id>-<sha7>`
 6. Remove your scratch worktree only after the record succeeded. Yield the structured result.
 
 Default to REJECT when the probes cannot run against the real code. Blocked is not a pass.

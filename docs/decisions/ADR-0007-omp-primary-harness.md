@@ -515,12 +515,30 @@ recording protocol calls only `orc record`, never `orc cancel`
 (`docs/cli/README.md` "`orc cancel`", "Operator-only terminal
 closure") — but that is protocol prose describing intended use, not a
 kernel-enforced distinction between an operator and a seat holding the
-same OS identity. Issue #293 leaves open whether cancel-from-any-state
-is intended, whether the record-before-yield rung needs to say
-explicitly that it covers only the assurance-bearing paths, and whether
-caller-role authorization is even meaningful given every seat
-authenticates identically (rung 4 below); none of those questions is
-resolved by this amendment, and no code fix is proposed here.
+same OS identity.
+
+Issue #293 is resolved as follows, per operator ruling: cancel-from-any-
+non-terminal-state is retained exactly as `STATE-DELIVERY` item 10
+already specifies — this is not a defect, and no transition-table
+change is made. The record-before-yield rung above is precise, not
+broad: it is structurally enforced only for the paths gated by bound
+assurance — a fresh `ACCEPTED`, an `ACCEPTED` inherited from a prior
+assurance verdict (item 8; inheritance reuses real recorded evidence,
+it never fabricates one), and the assurance-triggered branch of
+`BLOCKED`. It is **not** claimed for a `BLOCKED` reached by plain
+retry-budget exhaustion after repeated failed executions with no
+assurance ever requested, nor for `CANCELLED`, which is deliberately
+assurance-free by design. No caller-role authorization gate and no
+provenance-only `--by` flag are added to `orc cancel`: every seat in
+this repository shares one OS identity and one GitHub credential
+(rung 4 above), so a CLI-side role check would be self-asserted and
+trivially bypassed by the same identity it claims to gate. The
+standing posture for this gap, like rung 4's, is after-the-fact
+ledger/PR audit: it **detects** an escape once it has happened and
+**never prevents** one from happening. This resolution is specific to
+this harness-adoption amendment; the generic core contracts
+(`docs/contracts/`, `docs/domain/`) stay harness-agnostic and do not
+encode "record-before-yield" vocabulary.
 
 **4. Merge authority ("only the watchtower may merge") → open residue,
 no enforcement rung, prose plus after-the-fact detection only.**
