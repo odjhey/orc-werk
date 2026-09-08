@@ -73,3 +73,7 @@ M5 card in particular:
    settled assurance verdicts (issue #285), closing the hand-rolled-join
    defect class `docs/reports/2026-09-07-m5-pilot-retrospective.md` §4
    diagnosed. No dependency on other cards in this list.
+4. `TASK-FIX-288` — `--abandon-work` landing a Work at `BLOCKED`
+   derives `blocked_reason=attempt-abandoned` eagerly instead of leaving
+   it `None` until a later dispatch's confirmation (issue #288). No new
+   field, no dependency on other cards in this list.

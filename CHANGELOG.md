@@ -52,6 +52,25 @@ unchanged.
   The first assurance keeps the pre-decision key form verbatim.
 - `orc validate`'s per-attempt assurance echo now names the assurance number.
 
+### Fixed
+- **`--abandon-work` blocked_reason no longer reads `None`** (#288,
+  `SCN-010`, `STATE-DELIVERY` item 9): when an operator abandon
+  (`DEC-ABANDON-ATTEMPT`) lands a Work at `BLOCKED` because the retry
+  budget is exhausted, `blocked_reason` is now derived eagerly, in the
+  same reducer fold as `FACT-ATTEMPT-ABANDONED`, to the literal
+  `attempt-abandoned` — the same eager-derivation convention every
+  other `BLOCKED` row already uses. Previously the field stayed `None`
+  until a later dispatch's confirming `FACT-WORK-BLOCKED` arrived,
+  making a deliberate operator abandon indistinguishable from an
+  ordinary in-flight resting point in both text and JSON output. The
+  operator's free-form `--abandon-reason` prose was always durable on
+  `FACT-ATTEMPT-ABANDONED` in history and remains there unchanged; only
+  the discriminator `blocked_reason` field and the `next:` guidance
+  that reads it were fixed. No new field, no change to the retry or
+  cancellation state machine, and no port Effect is dispatched by the
+  abandon invocation itself (still journal-only, `INV-003`/`INV-009`
+  intact).
+
 ## [0.9.0] — 2026-09-04
 
 No breaking changes. No migration.
