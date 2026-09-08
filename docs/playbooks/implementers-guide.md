@@ -310,15 +310,22 @@ important thing to get right if you are building any kind of polling or
 CLI loop on top of your implementation: **absence of an observation is not
 itself an observation.** Do not invent a timeout-triggered synthetic
 `failed`/`rejected` Fact, and do not treat deadline expiry itself as
-grounds for `DEC-ABANDON-ATTEMPT`. That Decision is legal only for an
-`ASSURING`-with-no-settlement rest, under two narrow operator-ruling bases
-(`STATE-DELIVERY` item 9): the provider will never respond, or
+grounds for `DEC-ABANDON-ATTEMPT` on its own. That Decision is
+operator-attributed and legal only at three exact resting points
+(`STATE-DELIVERY` transition table rows 48-49, item 9): (1) `EXECUTING`
+with an unresolved candidate-observation conflict (§6 above); (2)
+`EXECUTING` after its Execution has settled `completed` but
+`FX-IDENTIFY-CANDIDATE` returned no candidate to bind; (3) `ASSURING`
+while its current Assurance remains unsettled, under one of item 9's two
+named operator-ruling bases — the provider will never respond, or
 out-of-band evidence shows the bound Candidate no longer matches the real
-subject — never for an ordinary unsettled `EXECUTING` Work, and never as
-an automatic, timeout-triggered transition. The legal general terminal
-closure available from any non-terminal state is an explicit, attributed
-`DEC-CANCEL` (item 10): a journaled Decision only, never a claim that
-journaling it also kills whatever process is still running.
+subject. An ordinary unsettled `EXECUTING` Work waiting on nothing but a
+deadline satisfies neither `EXECUTING` precondition, so it is not
+eligible under any of the three. The legal general terminal closure
+available from any non-terminal state regardless of these preconditions
+is an explicit, attributed `DEC-CANCEL` (item 10): a journaled Decision
+only, never a claim that journaling it also kills whatever process is
+still running.
 
 Terminal states reachable in v0 are `ACCEPTED`, `BLOCKED`, `CANCELLED`
 (`STATE-DELIVERY`'s canonical v0 states section). `FAILED` and
