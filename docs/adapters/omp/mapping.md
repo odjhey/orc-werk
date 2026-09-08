@@ -167,11 +167,16 @@ top to bottom, first match wins — the blocker order is:
 3. `UNRESOLVED-THREADS` — one or more unresolved review threads.
 4. `CI-FAILING` — the status-check rollup contains a failed check.
 5. `MERGE-GATE` — draft, or changes requested.
-6. `CI-PENDING` — status checks still running, or the platform has not
-   yet computed a merge state.
+6. `CI-PENDING` — status checks are still running.
 7. `NEEDS-UPDATE-BRANCH` — the branch is behind base (`gh pr
    update-branch` is the fix).
-8. `READY` — the platform reports the PR mergeable.
+8. `CI-PENDING` — the platform has not yet computed a merge state
+   (`mergeStateStatus` absent or `UNKNOWN`).
+9. `READY` — `mergeStateStatus` is `CLEAN`, or the platform's
+   `mergeable` flag is `MERGEABLE`.
+10. `MERGE-GATE` — the final fallback: any other, non-clean,
+    non-mergeable platform merge state (e.g. `DIRTY`, `BLOCKED`,
+    `UNSTABLE`) that none of the checks above matched.
 
 `--verified-sha SHA` binds the watcher to the sha an assurance verdict
 judged, per `PLAYBOOK-WATCHTOWER`'s "a verdict is stale the moment the

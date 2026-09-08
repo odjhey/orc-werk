@@ -16,9 +16,13 @@ agent running under OMP is an **external executor pushing its own
 observations** into the ledger through the ordinary `orc`/`orc record` CLI,
 exactly as a human operator typing the same commands would (`ADR-0005`'s
 push-recording model). OMP changes *who occupies a seat and how strongly
-its boundaries are enforced* (agent frontmatter instead of prose, a
-blocking hook instead of a convention); it does not change what a seat is
-allowed to record or how the kernel decides.
+its boundaries are enforced* (agent frontmatter and tool restriction
+instead of prose, GitHub branch protection on `master` instead of a bare
+convention for the one rule that needs an action-decidable rung; no
+`tool_call` hook ships anywhere in this repository — `capabilities.md`'s
+findings table and `ADR-0007`'s 2026-09-07 hook-retirement amendment
+record why); it does not change what a seat is allowed to record or how
+the kernel decides.
 
 ## What this is not
 

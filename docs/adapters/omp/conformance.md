@@ -3,7 +3,7 @@ id: ADAPTER-OMP-CONFORMANCE
 type: conformance-report
 status: current
 authority: informative
-description: OMP conformance status -- CONF-EXT-001 through CONF-EXT-006 for executor-identity/v1, plus TASK-M5-001's pending harness capability-test evidence.
+description: OMP conformance status -- CONF-EXT-001 through CONF-EXT-006 for executor-identity/v1, plus TASK-M5-001's landed harness capability-test evidence.
 ---
 
 # OMP conformance
