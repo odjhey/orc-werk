@@ -224,6 +224,7 @@ Mirror reference resolution uses `bd list --status all` because `bd list` defaul
 | `ASSURING` | `in_progress` | `assuring` | See above. |
 | `BLOCKED` | `blocked` | `blocked` | Plus `blocked_reason=<value>` when the kernel recorded one (e.g. `retry-budget-exhausted`). |
 | `ACCEPTED` | `closed` (via `bd close --reason accepted`, not `--status`) | `accepted` | The metadata `update` call runs first, then `close`. |
+| `CANCELLED` | `closed` (via `bd close --reason cancelled`, not `--status`) | `cancelled` | Same two-call pattern as `ACCEPTED`: metadata `update` first, then `close`. Operator-driven terminal (`STATE-DELIVERY` item 10); `close --reason` is the only `bd`-side terminal projection since `bd`'s builtin vocabulary has no cancelled-like status. |
 
 `claim_ref`, when the kernel has recorded one (`WorkProjection.claim_ref`
 -- persists across all retry attempts within one Work lineage, per the

@@ -87,6 +87,7 @@ from orc_werk.core.state import (
     STATE_ACCEPTED,
     STATE_ASSURING,
     STATE_BLOCKED,
+    STATE_CANCELLED,
     STATE_EXECUTING,
     STATE_READY,
     DeliveryProjection,
@@ -394,6 +395,14 @@ class BeadsMirror:
                 update_argv += ["--set-metadata", kv]
             calls = [self._invoke(update_argv)]
             calls.append(self._invoke(["close", bd_id, "--reason", "accepted"]))
+            return calls
+
+        if state == STATE_CANCELLED:
+            update_argv = ["update", bd_id]
+            for kv in metadata:
+                update_argv += ["--set-metadata", kv]
+            calls = [self._invoke(update_argv)]
+            calls.append(self._invoke(["close", bd_id, "--reason", "cancelled"]))
             return calls
 
         if state == STATE_BLOCKED and blocked_reason:
