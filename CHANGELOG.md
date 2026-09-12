@@ -14,6 +14,10 @@ the running version; finding reports should include it.
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-09-12
+
+No breaking changes. No migration.
+
 ### Added
 - **Tool-independent adoption paths** (#312): practice-only delivery and
   bring-your-own-CLI implementation guides, with portable record examples
@@ -22,6 +26,13 @@ the running version; finding reports should include it.
   a documented language-neutral driver boundary, and 14 falsification
   probes. A frozen, docs-only Node implementation passed the complete
   corpus; this bounded replay proof is not full-engine certification.
+
+### Fixed
+- **Beads mirror now projects CANCELLED terminal state** (#316):
+  `BeadsMirror` had no projection for `CANCELLED` — operator-cancelled
+  runs stayed `open`/`in_progress` forever on any `bd` board. Now follows
+  the same two-call pattern as `ACCEPTED`: `bd update --set-metadata
+  state=cancelled` then `bd close --reason cancelled`.
 
 ## [0.10.0] — 2026-09-08
 
