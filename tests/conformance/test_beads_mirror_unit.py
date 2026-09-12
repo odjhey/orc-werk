@@ -31,7 +31,7 @@ from orc_werk.adapters.scripted.assurance import ScriptedAssurance
 from orc_werk.adapters.scripted.candidate import ScriptedCandidate
 from orc_werk.adapters.scripted.execution import ScriptedExecution
 from orc_werk.app.orchestrator import Orchestrator, RunConfig
-from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, STATE_EXECUTING, STATE_READY
+from orc_werk.core.state import STATE_ACCEPTED, STATE_BLOCKED, STATE_CANCELLED, STATE_EXECUTING, STATE_READY
 from tests.conformance.support_beads_stub import install_stub, read_calls, verbs
 from tests.conformance.test_work_graph_conformance import _chain_plan, _fanin_plan
 from tests.scenarios.support import build_run, predicted_execution_id
@@ -240,6 +240,31 @@ class StatusVocabularyTest(_StubBeadsCase):
         # write-only echo, never a trigger: `close` is NEVER called for a
         # blocked Work.
         self.assertNotIn("close", self.verbs())
+
+    def test_cancelled_updates_metadata_then_closes_with_reason(self) -> None:
+        """CANCELLED is operator-driven terminal (STATE-DELIVERY item 10).
+        Same two-call pattern as ACCEPTED: metadata update first, then
+        `bd close --reason cancelled`. `bd`'s builtin vocabulary has no
+        cancelled-like status, so `close --reason` is the only bd-side
+        terminal projection."""
+        orch, journal, _wg = build_run(delivery_run_id="dr-cancelled", attempts_by_work={"work-1": []})
+        orch.bootstrap(intent_id="dr-cancelled", text="t")
+        orch.cancel_work(work_id="work-1", reason="operator closure", by="test-operator")
+        projection = orch.projection()
+        self.assertEqual(projection.works["work-1"].state, STATE_CANCELLED)
+        history = journal.history(delivery_run_id="dr-cancelled")
+        report = self.mirror.project_run(
+            delivery_run_id="dr-cancelled", history=history, projection=projection, intent_text="t"
+        )
+        self.assertFalse(report.degraded)
+        self.assertIn("update", self.verbs())
+        self.assertIn("close", self.verbs())
+        update_argv = next(c for c in self.calls() if c[3] == "update")
+        self.assertIn("state=cancelled", update_argv)
+        close_argv = next(c for c in self.calls() if c[3] == "close")
+        self.assertIn("--reason", close_argv)
+        self.assertEqual(close_argv[close_argv.index("--reason") + 1], "cancelled")
+        self.assertEqual(close_argv[4], "dr-cancelled--work-1")
 
 
 class ConfWorkAnalogsTest(_StubBeadsCase):
